@@ -43,13 +43,50 @@ const (
 	// reach the decoder.
 	fieldBudget = 55
 
-	// allocated is the ID range this directory's rules may use, per the map in
-	// rules/ambit_mcp_rules.xml. A rule outside it risks colliding with the shapes
-	// docs/03-detection.md reserves for other detectors, and Wazuh refuses a ruleset
-	// with duplicate ids at manager start.
-	minRuleID = 100230
-	maxRuleID = 100249
+	// Groups that exempt a rule from the "must match a real fixture" requirement, for
+	// the two reasons a rule can legitimately match nothing today.
+	//
+	// groupPendingEmitter: the field is in the flattened schema but nothing populates it
+	// yet — the policy engine (M3), the provenance engine (M2), goal-drift scoring (M4),
+	// or agent_entrypoint, which is specified and has no emitter anywhere. Such a rule
+	// must match NOTHING in the real fixtures: if it matches, the emitter exists and the
+	// marker is stale, which is worse than missing because it hides a working detector.
+	//
+	// groupWazuhSourced: the input is a Wazuh-internal alert — a syscheck FIM event or an
+	// SCA result — not one of our JSON events. Our fixtures cannot contain one by
+	// construction, so wazuh-logtest against a real alert is the only check.
+	groupPendingEmitter = "ambit_pending_emitter"
+	groupWazuhSourced   = "ambit_wazuh_sourced"
 )
+
+// allocated maps each rule file to the ID ranges it may use. The full map with its
+// reasoning lives in rules/ambit_mcp_rules.xml; this is the enforced copy.
+//
+// Wazuh refuses a ruleset with duplicate ids at manager start, so a collision takes the
+// whole manager down rather than degrading one detector. That makes the allocation worth
+// testing rather than documenting.
+var allocated = map[string][][2]int{
+	"ambit_agent_rules.xml":      {{100200, 100229}}, // D1, D2, D3
+	"ambit_mcp_rules.xml":        {{100230, 100249}}, // D4, D5
+	"ambit_integrity_rules.xml":  {{100250, 100279}}, // D6, D11, D12
+	"ambit_provenance_rules.xml": {{100280, 100299}}, // D10, D8
+	"ambit_egress_rules.xml":     {{100300, 100309}}, // D9
+	"ambit_telemetry_rules.xml":  {{100310, 100319}}, // D7
+}
+
+// externalParents are rule IDs owned by Wazuh's shipped ruleset, not by us: syscheck FIM
+// alerts and SCA results. A rule chaining from one of these is reading an event our
+// fixtures cannot contain, so it must declare groupWazuhSourced.
+//
+// These values are UNVERIFIED against the shipped ruleset (docs/00-sources.md) and are
+// listed here so the set is at least explicit: a wrong parent SID does not error, the
+// rule simply never fires.
+var externalParents = map[int]string{
+	550:   "syscheck: integrity checksum changed",
+	553:   "syscheck: file deleted",
+	554:   "syscheck: file added",
+	19007: "sca: policy check failed",
+}
 
 type ruleFile struct {
 	XMLName xml.Name `xml:"group"`
@@ -83,6 +120,60 @@ type field struct {
 }
 
 func (r rule) isCorrelation() bool { return r.IfMatchedSI != "" }
+
+func (r rule) hasGroup(name string) bool { return strings.Contains(r.Groups, name) }
+
+// parentIDs parses if_sid, which Wazuh allows as a comma-separated list.
+func (r rule) parentIDs(t *testing.T) []int {
+	t.Helper()
+	return parseIDList(t, r.IfSID)
+}
+
+func parseIDList(t *testing.T, raw string) []int {
+	t.Helper()
+	var out []int
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		var id int
+		if _, err := fmt.Sscanf(part, "%d", &id); err != nil {
+			t.Errorf("unparseable rule id %q in %q", part, raw)
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// readsExternalEvent reports whether the rule ultimately reads a Wazuh-owned event.
+//
+// The chain has to be followed rather than only the immediate parent: a correlation over
+// an SCA-sourced rule is still SCA-sourced, and its own parent is one of ours.
+func readsExternalEvent(r rule, byID map[int]rule, t *testing.T) bool {
+	t.Helper()
+	return readsExternalDepth(r, byID, t, 0)
+}
+
+func readsExternalDepth(r rule, byID map[int]rule, t *testing.T, depth int) bool {
+	t.Helper()
+	if depth > 8 {
+		t.Errorf("rule %d: parent chain deeper than 8, or a cycle", r.ID)
+		return false
+	}
+	for _, raw := range []string{r.IfSID, r.IfMatchedSI} {
+		for _, id := range parseIDList(t, raw) {
+			if _, ok := externalParents[id]; ok {
+				return true
+			}
+			if parent, ok := byID[id]; ok && readsExternalDepth(parent, byID, t, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // loadRules reads every rule file in the directory.
 func loadRules(t *testing.T) []rule {
@@ -157,7 +248,11 @@ func schemaFields() (all map[string]bool, arrays map[string]bool) {
 	// than pattern-matched so adding one is a decision.
 	for _, extra := range []string{
 		"agent.name", "agent.id", "agent.ip",
-		"sca.policy_id", "sca.check.title", "sca.check.result",
+		"sca.policy_id", "sca.check.id", "sca.check.title", "sca.check.result",
+		// syscheck (FIM) alert fields. "file" is the path in a syscheck alert;
+		// syscheck.audit.* comes from whodata, which is what answers "which process
+		// wrote this". All UNVERIFIED at the field-name level (docs/00-sources.md).
+		"file", "syscheck.path", "syscheck.audit.process.name", "syscheck.uname_after",
 		"full_log", "decoder.name",
 	} {
 		all[extra] = true
@@ -167,13 +262,35 @@ func schemaFields() (all map[string]bool, arrays map[string]bool) {
 
 func TestRuleIDsAreUniqueAndInRange(t *testing.T) {
 	seen := map[int]string{}
+	files := map[string]bool{}
 	for _, r := range loadRules(t) {
+		base := filepath.Base(r.file)
+		files[base] = true
 		if prev, dup := seen[r.ID]; dup {
 			t.Errorf("rule id %d appears twice (%s and %s); Wazuh refuses a ruleset with duplicate ids at manager start", r.ID, prev, r.file)
 		}
 		seen[r.ID] = r.file
-		if r.ID < minRuleID || r.ID > maxRuleID {
-			t.Errorf("rule %d (%s) is outside the allocated range %d-%d; see the ID map in the rule file", r.ID, r.file, minRuleID, maxRuleID)
+
+		ranges, known := allocated[base]
+		if !known {
+			t.Errorf("%s has no allocated ID range; add one to the map in this test and to the map in ambit_mcp_rules.xml", base)
+			continue
+		}
+		var ok bool
+		for _, rg := range ranges {
+			if r.ID >= rg[0] && r.ID <= rg[1] {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			t.Errorf("rule %d is in %s, whose allocated ranges are %v", r.ID, base, ranges)
+		}
+	}
+	// Every allocated file should exist, or the map is describing rules nobody wrote.
+	for base := range allocated {
+		if !files[base] {
+			t.Errorf("the allocation map names %s but no such rule file was loaded", base)
 		}
 	}
 }
@@ -208,19 +325,25 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 			if r.Level == 0 && r.DecodedAs == "" && r.IfSID == "" {
 				t.Error("a level-0 rule that matches nothing and chains from nothing is dead")
 			}
-			// Parents must exist, or the child silently never fires.
-			for _, parent := range []string{r.IfSID, r.IfMatchedSI} {
-				if parent == "" {
-					continue
+			// Parents must exist, or the child silently never fires. A parent may be
+			// one of ours or one of Wazuh's; anything else is a typo.
+			for _, raw := range []string{r.IfSID, r.IfMatchedSI} {
+				for _, id := range parseIDList(t, raw) {
+					_, ours := byID[id]
+					_, external := externalParents[id]
+					if !ours && !external {
+						t.Errorf("parent rule %d is neither one of ours nor a known Wazuh parent; the rule would never fire", id)
+					}
 				}
-				var id int
-				if _, err := fmt.Sscanf(parent, "%d", &id); err != nil {
-					t.Errorf("unparseable parent id %q", parent)
-					continue
-				}
-				if _, ok := byID[id]; !ok {
-					t.Errorf("parent rule %d does not exist in this directory", id)
-				}
+			}
+			// A rule reading a Wazuh-internal alert must say so, because that is what
+			// excuses it from fixture coverage.
+			external := readsExternalEvent(r, byID, t)
+			if external && !r.hasGroup(groupWazuhSourced) {
+				t.Errorf("reads a Wazuh-owned event but does not declare %s", groupWazuhSourced)
+			}
+			if r.hasGroup(groupWazuhSourced) && !external {
+				t.Errorf("declares %s but reads no Wazuh-owned event", groupWazuhSourced)
 			}
 			if r.isCorrelation() {
 				if r.Frequency <= 0 || r.Timeframe <= 0 {
@@ -308,8 +431,13 @@ func matches(r rule, ev map[string]any, byID map[int]rule) (bool, error) {
 	}
 	if r.IfSID != "" {
 		var id int
-		if _, err := fmt.Sscanf(r.IfSID, "%d", &id); err != nil {
+		if _, err := fmt.Sscanf(strings.Split(r.IfSID, ",")[0], "%d", &id); err != nil {
 			return false, err
+		}
+		if _, external := externalParents[id]; external {
+			// A syscheck or SCA alert is not one of our JSON events, and pretending to
+			// evaluate one against a fixture would produce a confident wrong answer.
+			return false, fmt.Errorf("rule %d reads a Wazuh-internal alert; matching is not modelled", r.ID)
 		}
 		parent, ok := byID[id]
 		if !ok {
@@ -390,6 +518,12 @@ func TestEveryRuleMatchesAFixture(t *testing.T) {
 			// structural checks are in TestEveryRuleIsWellFormed.
 			if r.isCorrelation() {
 				t.Skip("correlation rule: parent coverage is asserted separately")
+			}
+			if r.hasGroup(groupWazuhSourced) {
+				t.Skip("reads a Wazuh-internal alert: only wazuh-logtest can check it")
+			}
+			if r.hasGroup(groupPendingEmitter) {
+				t.Skip("pending emitter: asserted to match nothing by TestPendingRulesMatchNothingYet")
 			}
 			var hits int
 			for i, ev := range fixtures {
@@ -577,5 +711,149 @@ func TestOrdinaryDriftDoesNotPage(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Error("no drift-without-findings fixture: the false-positive control has nothing to test against; regenerate with `make fixtures`")
+	}
+}
+
+// TestPendingRulesMatchNothingYet is the other half of the pending-emitter marker. A rule
+// marked pending that in fact matches a real event is worse than an unmarked one: the
+// marker tells a reader the detector is inert, so a working detector would be ignored and
+// its alerts dismissed as impossible.
+func TestPendingRulesMatchNothingYet(t *testing.T) {
+	rules := loadRules(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+	fixtures := loadFixtures(t)
+
+	var pending int
+	for _, r := range rules {
+		if !r.hasGroup(groupPendingEmitter) || r.isCorrelation() || r.hasGroup(groupWazuhSourced) {
+			continue
+		}
+		pending++
+		for i, ev := range fixtures {
+			if isSynthetic(ev) {
+				continue
+			}
+			ok, err := matches(r, ev, byID)
+			if err != nil {
+				t.Fatalf("rule %d, fixture %d: %v", r.ID, i+1, err)
+			}
+			if ok {
+				t.Errorf("rule %d is marked %s but matches real fixture %d; the emitter exists, so remove the marker",
+					r.ID, groupPendingEmitter, i+1)
+			}
+		}
+	}
+	if pending == 0 {
+		t.Log("no pending-emitter rules; delete this test when the last marker goes")
+	}
+}
+
+// isSynthetic reports whether a fixture line was hand-written rather than generated. The
+// synthetic lines exist to exercise M2-shaped events, so a pending rule is expected to
+// match them — that is what they are for — and only the generated lines answer the
+// question "does an emitter exist today".
+func isSynthetic(ev map[string]any) bool {
+	id, _ := ev["event_id"].(string)
+	return strings.HasPrefix(id, "01JSYNTH") || ev["kind"] == "sink_gap"
+}
+
+// TestRulesStayQuietWhereTheyShould pins the negative expectations that matter, one per
+// detector whose quiet case is easy to get wrong. Each entry is a real fixture shape and
+// a rule that must not fire on it.
+//
+// Without this, a rule that matched everything would pass every other test in this file:
+// "matches at least one fixture" is satisfied by matching all of them.
+func TestRulesStayQuietWhereTheyShould(t *testing.T) {
+	rules := loadRules(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+
+	cases := []struct {
+		name string
+		rule int
+		// pick selects the fixture this rule must not match.
+		pick func(map[string]any) bool
+		why  string
+	}{
+		{
+			name: "D8 does not fire on a trusted instruction file",
+			rule: 100290,
+			pick: func(ev map[string]any) bool {
+				return ev["kind"] == "instructions_loaded" && ev["config_trusted"] == true
+			},
+			why: "a CLAUDE.md from a trusted repo path is every session's normal startup",
+		},
+		{
+			name: "D8's untrusted-zone rule does not fire on a home-zone file",
+			rule: 100291,
+			pick: func(ev map[string]any) bool {
+				return ev["kind"] == "instructions_loaded" && ev["config_zone"] == "home"
+			},
+			why: "the zone escalation is for dependency and download paths, not the user's own home",
+		},
+		{
+			name: "D1's credential rule does not fire outside bypassPermissions",
+			rule: 100201,
+			pick: func(ev map[string]any) bool {
+				return ev["kind"] == "tool_pre" && ev["permission_mode"] == "default"
+			},
+			why: "a credential read in a prompting session is D2's business, not D1's",
+		},
+		{
+			name: "D2's sweep base does not fire on a credential write",
+			rule: 100210,
+			pick: func(ev map[string]any) bool {
+				return ev["path_zone"] == "credential" && ev["path_op"] == "write"
+			},
+			why: "the read threshold and the write alert are separate detectors of separate things",
+		},
+		{
+			name: "D7 does not fire on a healthy heartbeat",
+			rule: 100311,
+			pick: func(ev map[string]any) bool {
+				return ev["kind"] == "ambitd_health" && ev["health_status"] == "ok"
+			},
+			why: "every endpoint heartbeats on a timer; alerting on a healthy one is pure volume",
+		},
+		{
+			name: "D6's system-zone rule does not fire on a home-zone config change",
+			rule: 100253,
+			pick: func(ev map[string]any) bool {
+				return ev["kind"] == "config_change" && ev["config_zone"] == "home"
+			},
+			why: "a developer editing their own settings is not a managed-settings change",
+		},
+	}
+
+	fixtures := loadFixtures(t)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, ok := byID[c.rule]
+			if !ok {
+				t.Fatalf("rule %d not found", c.rule)
+			}
+			var tested int
+			for i, ev := range fixtures {
+				if !c.pick(ev) {
+					continue
+				}
+				tested++
+				got, err := matches(r, ev, byID)
+				if err != nil {
+					t.Fatalf("fixture %d: %v", i+1, err)
+				}
+				if got {
+					t.Errorf("rule %d matches fixture %d, which it should not: %s", c.rule, i+1, c.why)
+				}
+			}
+			if tested == 0 {
+				t.Skipf("no fixture of this shape; regenerate with `make fixtures` or drop the case")
+			}
+		})
 	}
 }

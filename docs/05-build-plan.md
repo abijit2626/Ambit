@@ -125,14 +125,15 @@ cheap high-confidence detectors alerting.
   [03](03-detection.md) flags as unverified.
 - Wazuh rules for D4, D5, D6, D7, D8, D11, D12, plus D10's scalar
   `prov_fp_notable` tripwire — nearly free once the field exists.
-  **D4 and D5 are written** (`deploy/wazuh/rules/ambit_mcp_rules.xml`, IDs
-  100230–100248), validated offline against fixtures generated from the real pipeline,
-  and still need one confirmation on a live manager: how a `<field>` regex matches an
-  array-valued field ([00](00-sources.md)). D6, D7, D8, D11, D12 and D10's tripwire
-  remain.
-- Runbooks for each, written for an external analyst. **D4 and D5 are written**
-  (`deploy/wazuh/runbooks/`); the exit criterion that someone outside the team executes
-  one against a sample alert is still open, and it is the half that actually tests them.
+  **All twelve are written** across six files under `deploy/wazuh/rules/` (IDs
+  100200–100319), validated offline against fixtures generated from the real pipeline.
+  What remains is confirmation on a live manager of three things that fail silently: the
+  syscheck parent SIDs, the SCA parent SID, and how a `<field>` regex matches an
+  array-valued field ([00](00-sources.md)).
+- Runbooks for each, written for an external analyst. **All twelve are written**
+  (`deploy/wazuh/runbooks/`), each with the six required sections and each naming its own
+  expected false positives. The exit criterion that someone outside the team executes one
+  against a sample alert is still open, and it is the half that actually tests them.
 - Alerting to the Wazuh review queue. **Still no blocking.**
 
 **Exit criteria:** every MCP server the cohort uses is inventoried with an approved

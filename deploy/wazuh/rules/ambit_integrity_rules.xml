@@ -1,0 +1,204 @@
+<!--
+  ambit D6, D11 and D12 — config tamper, fail-open runs, managed-settings drift.
+
+  Manager-side. IDs 100250-100279. Allocation map in ambit_mcp_rules.xml.
+
+  These are the suppression detectors: they fire when something has interfered with the
+  monitoring rather than when an agent has done something. That makes their failure mode
+  worse than a missed detection, because a suppressed monitor produces a calm alert
+  stream, so several of them alert on facts that are individually unremarkable.
+
+  TWO GROUPS OF RULES HERE DO NOT READ AMBIT EVENTS, and are marked
+  ambit_wazuh_sourced:
+
+  - FIM-sourced rules chain from Wazuh's own syscheck alerts, whose fields are
+    syscheck.* rather than our flattened schema. Our JSON fixtures cannot contain a FIM
+    alert, so `go test ./deploy/wazuh/` cannot validate them; wazuh-logtest with a real
+    syscheck alert is the only check.
+  - SCA-sourced rules chain from an SCA policy result, same situation.
+
+  UNVERIFIED PARENT SIDs. The syscheck parents (550 checksum changed, 553 deleted, 554
+  added) and the SCA parent (19007) are the widely used values, but they were not read
+  from the shipped ruleset during research, and neither were the exact syscheck.* and
+  sca.* field names (docs/00-sources.md). Confirm all of them on the deployed version
+  before relying on these five rules: 100254, 100255, 100256, 100270 and 100271. A wrong
+  parent SID does not error — the rule simply never fires.
+-->
+
+<group name="ambit,ambit_integrity,">
+
+  <!-- ===================== D6 — config tamper ===================== -->
+
+  <!--
+    In-session configuration change, reported by Claude Code rather than by the
+    filesystem. This is the half FIM cannot see: a settings change that never lands on
+    disk, or one made through a path FIM is not watching.
+
+    Note what the alert can and cannot say. config_zone and config_source are cleartext;
+    the path is a keyed digest. So a rule can tell "user settings changed" from "project
+    settings changed", but only digest resolution can say which file.
+  -->
+  <rule id="100250" level="7">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^config_change$</field>
+    <description>ambit D6: Claude Code configuration changed in-session - source $(config_source), zone $(config_zone) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d6,runbook_D6,</group>
+  </rule>
+
+  <!--
+    A file Claude Code itself reports as changed. In the M0 bundle this covers the paths
+    that matter for adversary A3: a new or edited .mcp.json introducing a server nobody
+    reviewed.
+  -->
+  <rule id="100251" level="7">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^file_changed$</field>
+    <description>ambit D6: watched file changed - zone $(config_zone) on $(endpoint_id) (session $(session_id))</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d6,runbook_D6,</group>
+  </rule>
+
+  <!--
+    Churn: several configuration changes inside one session. One change is a developer
+    adjusting a setting. Repeated changes in minutes is either a script or someone
+    searching for a configuration that stops being blocked.
+  -->
+  <rule id="100252" level="12" frequency="3" timeframe="600" ignore="600">
+    <if_matched_sid>100250</if_matched_sid>
+    <same_field>session_id</same_field>
+    <description>ambit D6: 3+ configuration changes in one session within 600s</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d6,runbook_D6,</group>
+  </rule>
+
+  <!--
+    A configuration change in the system zone: /etc or a managed-settings location rather
+    than a developer's home. Managed settings are the anchor every other control rests
+    on, and a change there is a different story from a user tweaking their own settings.
+  -->
+  <rule id="100253" level="13">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^config_change$</field>
+    <field name="config_zone">^system$</field>
+    <description>ambit D6: SYSTEM-zone configuration change on $(endpoint_id) - source $(config_source)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d6,runbook_D6,</group>
+  </rule>
+
+  <!--
+    FIM-sourced, UNVERIFIED PARENTS. syscheck reports the path in cleartext and, with
+    whodata, the process that wrote it — which is the question that matters for adversary
+    A1, where malware edits agent configuration. Our own events cannot answer it: ambitd
+    sees that config changed, not who changed it.
+  -->
+  <rule id="100254" level="13">
+    <if_sid>550,553,554</if_sid>
+    <field name="file">managed-settings\.json$</field>
+    <description>ambit D6: managed-settings file modified on disk - $(file) by $(syscheck.audit.process.name)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d6,ambit_wazuh_sourced,runbook_D6,</group>
+  </rule>
+
+  <rule id="100255" level="12">
+    <if_sid>550,553,554</if_sid>
+    <field name="file">\.mcp\.json$</field>
+    <description>ambit D6: MCP server configuration modified on disk - $(file) by $(syscheck.audit.process.name)</description>
+    <mitre>
+      <id>T1195.002</id>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d6,ambit_wazuh_sourced,runbook_D6,</group>
+  </rule>
+
+  <!--
+    The interposer's baseline store, edited outside an approval run. The store is written
+    by a process running as the developer, so this is observable rather than preventable
+    — and a rewritten baseline makes a rug pull read as approved, which is the one way to
+    turn D4 off without killing anything.
+  -->
+  <rule id="100256" level="13">
+    <if_sid>550,553,554</if_sid>
+    <field name="file">/baselines/.*\.json$</field>
+    <description>ambit D6: MCP baseline store modified - $(file) by $(syscheck.audit.process.name); D4 may now compare against an attacker-chosen baseline</description>
+    <mitre>
+      <id>T1562.001</id>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d6,ambit_d4,ambit_wazuh_sourced,runbook_D6,</group>
+  </rule>
+
+  <!-- ===================== D11 — fail-open run ===================== -->
+
+  <!--
+    PENDING EMITTER for both D11 rules. policy_decision is in the schema and fail_open is
+    one of its values, but ambitd has no policy engine before M3 and emits no decision at
+    all, so nothing can set it yet. The rules are written now because the field, the
+    value and the shape are settled; they are marked so nobody reads their silence as
+    evidence that ambitd is never unavailable.
+  -->
+  <rule id="100260" level="5">
+    <decoded_as>json</decoded_as>
+    <field name="policy_decision">^fail_open$</field>
+    <description>ambit: ambitd unavailable, tool call failed open on $(endpoint_id)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d11,ambit_pending_emitter,runbook_D11,</group>
+  </rule>
+
+  <rule id="100261" level="12" frequency="5" timeframe="300" ignore="600">
+    <if_matched_sid>100260</if_matched_sid>
+    <same_field>endpoint_id</same_field>
+    <description>ambit D11: sustained fail-open - ambitd repeatedly unavailable on one endpoint</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d11,ambit_pending_emitter,runbook_D11,</group>
+  </rule>
+
+  <!-- ===================== D12 — managed-settings drift ===================== -->
+
+  <!--
+    SCA-sourced, UNVERIFIED PARENT. The SCA policy asserts the managed-settings bundle is
+    present and correct; a failed check raises an SCA alert natively and this rule raises
+    the severity and attaches the runbook. Managed settings sit above every other
+    configuration scope, so an assertion failure means the anchor everything rests on has
+    moved.
+  -->
+  <rule id="100270" level="12">
+    <if_sid>19007</if_sid>
+    <field name="sca.policy_id">^ambit_managed_settings$</field>
+    <description>ambit D12: managed-settings assertion failed - $(sca.check.title) on $(agent.name)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d12,ambit_wazuh_sourced,runbook_D12,</group>
+  </rule>
+
+  <!--
+    The same policy failing repeatedly on one endpoint. A single failure can be a race
+    with a configuration deployment; a persistent one is a configuration that is not
+    coming back on its own.
+  -->
+  <rule id="100271" level="13" frequency="3" timeframe="7200" ignore="7200">
+    <if_matched_sid>100270</if_matched_sid>
+    <same_field>agent.name</same_field>
+    <description>ambit D12: managed-settings assertion failing persistently on $(agent.name)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d12,ambit_wazuh_sourced,runbook_D12,</group>
+  </rule>
+
+</group>

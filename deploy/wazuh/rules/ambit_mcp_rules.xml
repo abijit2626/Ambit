@@ -14,15 +14,17 @@
   ID ALLOCATION. IDs must not collide, and a collision is discovered at manager start
   as a refused ruleset, so the map is written down rather than remembered:
 
-    100200-100209  reserved (D1 session with no human)
-    100210-100219  D2 credential sweep          — shape in docs/03-detection.md
-    100220-100229  reserved (D3 bypass attempt)
-    100230-100240  D4 MCP metadata drift        — this file
-    100241-100249  D5 instruction-shaped metadata — this file
-    100250-100259  reserved (D6 config tamper, D8 poisoned instruction file)
-    100260-100269  D11 fail-open run            — shape in docs/03-detection.md
-    100270-100279  D12 managed-settings drift   — shape in docs/03-detection.md
-    100280-100289  D10 propagation tripwire     — shape in docs/03-detection.md
+    100200-100229  ambit_agent_rules.xml       D1 (00-09), D2 (10-19), D3 (20-29)
+    100230-100249  ambit_mcp_rules.xml         D4 (30-40), D5 (41-49)  — this file
+    100250-100279  ambit_integrity_rules.xml   D6 (50-59), D11 (60-69), D12 (70-79)
+    100280-100299  ambit_provenance_rules.xml  D10 (80-89), D8 (90-99)
+    100300-100309  ambit_egress_rules.xml      D9
+    100310-100319  ambit_telemetry_rules.xml   D7
+    100320-100329  reserved: R2 gate alerts (M3)
+    100330-100339  reserved: goal-drift scoring (M4)
+
+  rules_test.go holds the enforced copy of this map, so a rule outside its file's range
+  fails the build rather than colliding at manager start.
 
   WHICH EVENT IS WHICH. One listing produces a per-server summary event plus one
   event per tool that has something to say. The two are told apart by a field rather

@@ -145,7 +145,7 @@ internal/sink/           JSON-lines writer with rotation and gap markers
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
 deploy/wazuh/            localfile, syscheck, SCA policy, logtest fixtures
-deploy/wazuh/rules/      D4 and D5 detector rules, validated by go test
+deploy/wazuh/rules/      all twelve detectors, six files, validated by go test
 deploy/wazuh/runbooks/   one per detector, for an analyst with no access to our source
 deploy/claude-code/      managed-settings bundle (M0: observation only)
 ```
@@ -216,13 +216,19 @@ fraction** — are still open.
 From M1, the **endpoint half is built**: `mcp-interpose` implements D4 (metadata
 hashing against an approved baseline, with an explicit operator approval step) and D5
 (instruction-shaped metadata and cross-server references), carries MCP annotations
-stricter-only, and emits `mcp_list` events through `ambitd`. The **Wazuh half of D4 and D5 is also written**:
-rules at IDs 100230–100248 with a runbook each, validated offline by `go test` against
-fixtures generated from the real pipeline rather than hand-written. What M1 still needs
-is the rules for the remaining detectors, the MCP inventory across the cohort, one
-confirmation on a live manager of how a rule matches an array-valued field, and the
-exit criterion that actually tests a runbook: someone outside the team executing one
-against a sample alert. Two limits are stated in
+stricter-only, and emits `mcp_list` events through `ambitd`. The **Wazuh half of M1 is also written**: rules for
+all twelve detectors (IDs 100200–100319, six files) with a runbook each, validated offline
+by `go test` against fixtures generated from the real pipeline rather than hand-written.
+
+Three of those rules are inert and marked as such rather than shipped as if they worked —
+`agent_entrypoint` has no emitter anywhere, MCP annotations do not reach tool-call events,
+and the policy engine that sets `policy_decision` is M3. Sandbox allowlist denials have no
+schema field at all. [03-detection.md](docs/03-detection.md) records all four.
+
+What M1 still needs is the MCP inventory across a real cohort, confirmation on a live
+manager of three things that fail silently (the syscheck and SCA parent SIDs, and how a
+rule matches an array-valued field), and the exit criterion that actually tests a runbook:
+someone outside the team executing one against a sample alert. Two limits are stated in
 the code and in [02-architecture.md](docs/02-architecture.md) rather than implied: a
 stdio wrapper does not cover MCP servers reached over HTTP/SSE, and `mcp_list` events
 usually carry no session id because MCP does not carry one. M2 onward is design only.

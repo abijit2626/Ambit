@@ -1,0 +1,109 @@
+<!--
+  ambit D7 — telemetry gap.
+
+  Manager-side. IDs 100310-100319. Allocation map in ambit_mcp_rules.xml.
+
+  D7 answers "has the monitoring stopped", which is the question an adversary who can kill
+  processes makes urgent. It has four signals and they come from three different places on
+  purpose, because a monitor reporting on its own health is the one report an attacker can
+  suppress:
+
+  1. **The endpoint went dark** — Wazuh's own rule 504, `Wazuh agent disconnected`, level
+     3, already tagged T1562.001 in the shipped ruleset. Nothing is added here for it: a
+     child rule chaining from 504 would re-alert every disconnect in the fleet at higher
+     severity, which is a fleet-wide routing change and not ours to make. Tune
+     agents_disconnection_time and agents_disconnection_alert_time on the manager instead,
+     as the README describes.
+  2. **ambitd is gone while the agent lives** — SCA check 10007 ("ambitd process is
+     running"). The signal comes from a different process than the one being watched,
+     which is what makes it worth having.
+  3. **ambitd is present but wedged** — the heartbeat below. SCA cannot tell a wedged
+     daemon from a healthy one; a stale heartbeat with the process present can.
+  4. **One collection path is silent while the other reports** — ambitd compares its hook
+     and OTel streams and sets its own health to degraded, which arrives as the same
+     heartbeat event.
+
+  ABSENCE IS STILL NOT EXPRESSIBLE. A Wazuh rule fires on an event, so "no heartbeat for
+  N minutes" cannot be a rule. Signal 2 is the substitute and it is why the SCA check
+  exists; a scheduled indexer query remains the only way to alert on heartbeat staleness
+  directly, and docs/03-detection.md recommends against relying on it as primary.
+
+  UNVERIFIED PARENT SID. The SCA parent (19007) and the sca.* field names were not read
+  from the shipped ruleset (docs/00-sources.md). Rule 100314 is the intended shape.
+-->
+
+<group name="ambit,ambit_integrity,">
+
+  <!--
+    Base: the heartbeat. Level 0 — it arrives on a timer on every endpoint and alerting on
+    a healthy one would be pure volume.
+  -->
+  <rule id="100310" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^ambitd_health$</field>
+    <description>ambit: ambitd heartbeat from $(endpoint_id) - status $(health_status)</description>
+    <group>ambit_d7,</group>
+  </rule>
+
+  <!--
+    ambitd reporting that something is wrong with collection: events dropped, a sink write
+    failing, an OTLP export rejected for the wrong encoding, or exactly one of the two
+    collection paths silent while the other is active. Any of those means the event stream
+    is now incomplete, and an incomplete stream looks calm.
+  -->
+  <rule id="100311" level="10">
+    <if_sid>100310</if_sid>
+    <field name="health_status">^degraded$</field>
+    <description>ambit D7: ambitd reports DEGRADED collection on $(endpoint_id) - the event stream is incomplete</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d7,runbook_D7,</group>
+  </rule>
+
+  <!--
+    Sustained degradation. One degraded heartbeat can be a transient disk or a restart
+    race; three inside fifteen minutes is a condition that is not clearing.
+  -->
+  <rule id="100312" level="13" frequency="3" timeframe="900" ignore="900">
+    <if_matched_sid>100311</if_matched_sid>
+    <same_field>endpoint_id</same_field>
+    <description>ambit D7: ambitd degraded persistently on $(endpoint_id) - treat collection from this endpoint as unreliable</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d7,runbook_D7,</group>
+  </rule>
+
+  <!--
+    Events were dropped rather than written. The field is omitted when zero, so its mere
+    presence is the signal and no threshold regex is needed. Dropped events are
+    unrecoverable: the sink emits a gap marker and moves on, so this is the only record
+    that a window is missing.
+  -->
+  <rule id="100313" level="12">
+    <if_sid>100310</if_sid>
+    <field name="health_dropped_events">\.+</field>
+    <description>ambit D7: $(health_dropped_events) events dropped on $(endpoint_id) - a window of the stream is unrecoverable</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d7,runbook_D7,</group>
+  </rule>
+
+  <!--
+    SCA-sourced, UNVERIFIED PARENT: the daemon is not running, reported by the Wazuh agent
+    rather than by ambitd itself. This is the signal that survives an adversary who kills
+    ambitd, because the process making the report is not the process being reported on.
+  -->
+  <rule id="100314" level="13">
+    <if_sid>19007</if_sid>
+    <field name="sca.check.id">^10007$</field>
+    <description>ambit D7: ambitd is not running on $(agent.name) - the endpoint is heartbeating with no event collection</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d7,ambit_wazuh_sourced,runbook_D7,</group>
+  </rule>
+
+</group>
