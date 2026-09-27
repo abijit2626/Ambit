@@ -110,8 +110,10 @@ thing about how a developer's session behaves, it has failed.
 cheap high-confidence detectors alerting.
 
 - `mcp-interpose`: wraps configured servers, captures `tools/list`, hashes name +
-  description + schema per tool, records annotations, labels results. Build-vs-adopt
-  decision first ([07](07-open-questions.md) Q2).
+  description + schema per tool, records annotations, labels results. **Build-vs-adopt
+  is decided — purpose-built, in Go, per server** ([08](08-mcp-interpose-decision.md));
+  the open sub-question is HTTP/SSE servers, which a stdio wrapper does not cover and
+  which M0's stream tells us whether the cohort uses.
 - Approval baseline: first-seen metadata hash per server/tool, with an explicit
   operator approval step.
 - **SCA policy for the managed-settings bundle (D12)** — and confirm the SCA alert
