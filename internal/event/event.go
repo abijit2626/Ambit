@@ -189,6 +189,16 @@ type MCP struct {
 	ScanRules   []string `json:"scan_rules,omitempty"`
 	// ToolCount is the size of the advertised surface, on the per-server summary.
 	ToolCount int `json:"tool_count,omitempty"`
+	// Worst is the listing's worst per-tool verdict, set on the per-server summary
+	// only, and deliberately NOT projected into the flattened schema.
+	//
+	// The reason is the rule engine. A Wazuh rule tests field presence and equality
+	// and cannot easily test absence, so if the summary and the per-tool events both
+	// carried baseline_state, every drift would raise two alerts and no rule could
+	// tell the roll-up from the finding. Keeping the roll-up under a different name,
+	// local to the spool, means mcp_baseline_state appears on exactly the events that
+	// describe one tool. A listing-level view is a correlation over those.
+	Worst string `json:"worst,omitempty"`
 	// NewCount, DriftCount and RemovedCount summarize the listing. They stay local:
 	// the per-tool events that cross carry the same information addressably, and a
 	// rule that wants a count can use frequency over those.

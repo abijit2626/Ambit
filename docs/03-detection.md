@@ -259,6 +259,38 @@ eight unrelated reads across the fleet. Thresholds are placeholders to be set fr
 M2 baseline data, not from intuition — a repo with forty `.env` files in a monorepo
 will trip 8-in-120s during an ordinary build.
 
+### D4 and D5 — shipped
+
+These two are no longer shapes. The rules are in
+`deploy/wazuh/rules/ambit_mcp_rules.xml` (IDs 100230–100248) with runbooks in
+`deploy/wazuh/runbooks/`, and they read the `mcp_list` events `mcp-interpose` produces:
+`mcp_baseline_state` for D4's verdict, `mcp_changed_fields` for what moved,
+`mcp_scan_classes` for D5's finding classes.
+
+Three decisions there are worth repeating here, because each was forced by the rule
+engine rather than chosen:
+
+1. **The listing roll-up and the per-tool verdict use different field names.** A Wazuh
+   rule tests presence and equality and cannot easily test absence, so if the per-server
+   summary and the per-tool events both carried `baseline_state`, every drift would
+   raise two alerts and no rule could tell the roll-up from the finding. The summary
+   carries `mcp_tool_count`; only per-tool events carry `mcp_baseline_state`. The
+   roll-up stays in the spool as `mcp.worst`.
+2. **Per-tool events cross only when they say something.** [04](04-data-model.md)
+   budgets `mcp_list` at one event per server per session, and a 60-tool server matching
+   its approved baseline would otherwise spend 60 events per session saying so. The
+   filter drops the quiet ones; the spool keeps them.
+3. **Array-valued fields are matched with unanchored literals.** How a `<field>` regex
+   matches a multi-valued field is unverified ([00](00-sources.md)), and an unanchored
+   literal is the form that works under either behavior. A test fails the build if
+   anyone anchors one.
+
+The false-positive posture is stated in the D5 runbook rather than implied: two of its
+five classes — `sensitive_file_ref` and `sensitive_action` — are expected to fire on
+servers whose job involves secrets or HTTP, which is why they sit at level 7 with the
+false positive named, and why every finding carries a pattern id so a noisy pattern can
+be retired on evidence during M1.
+
 ### D11 — fail-open run, same shape
 
 ```xml

@@ -116,6 +116,16 @@ warns that "poor implementation of rules and responses might increase the vulner
 of an endpoint." The `location` values and `timeout_allowed` were **not** read from the
 how-to-configure page — **unverified** at that level of detail.
 
+**Unverified — how a `<field>` regex matches a multi-valued field.** The JSON decoder
+documentation states arrays of scalars are supported ("lists with zero or more values"),
+but not whether a rule's `<field>` pattern is tested against each value or against one
+joined string. Two of the shipped D4/D5 fields are arrays (`mcp_changed_fields`,
+`mcp_scan_classes`). The rules in `deploy/wazuh/rules/ambit_mcp_rules.xml` therefore
+match array contents with **unanchored literals**, which work under either behavior, and
+`deploy/wazuh/rules_test.go` fails the build if a pattern on an array field is anchored.
+Confirm with `wazuh-logtest` against the committed fixtures before relying on rules
+100241–100247.
+
 **Unverified — SCA alert rule IDs.** The parent SID and `sca.*` field names used in
 [03](03-detection.md)'s D12 rule were not checked against the shipped SCA ruleset. That
 snippet is the intended shape, not working configuration.

@@ -45,9 +45,12 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 	summary := c.interposeEvent(rep, st)
 	summary.Tool = &event.Tool{
 		MCP: &event.MCP{
-			Server:        rep.Server,
-			Trust:         trust,
-			BaselineState: rep.Worst,
+			Server: rep.Server,
+			Trust:  trust,
+			// The roll-up goes in Worst, not BaselineState: the flattened schema
+			// carries baseline_state on per-tool events only, so a Wazuh rule
+			// matching it cannot double-fire on the summary. See event.MCP.Worst.
+			Worst:         rep.Worst,
 			ToolCount:     rep.Counts.Tools,
 			NewCount:      rep.Counts.New,
 			DriftCount:    rep.Counts.Drift,
