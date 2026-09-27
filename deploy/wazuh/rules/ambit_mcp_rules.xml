@@ -1,0 +1,338 @@
+<!--
+  ambit D4 and D5 — MCP metadata drift and instruction-shaped tool metadata.
+
+  Install as /var/ossec/etc/rules/ambit_mcp_rules.xml on the MANAGER (rules are a
+  manager-side artifact; the agent ships events, the manager decides). Restart
+  wazuh-manager, then verify with wazuh-logtest against
+  ../fixtures/events.sample.jsonl before trusting any of this — see the README.
+
+  These rules read the flattened events mcp-interpose produces and ambitd writes to
+  events.jsonl. The endpoint half computes the verdict; every rule here only
+  classifies, correlates and attaches a runbook. No rule blocks anything: enforcement
+  is M3 and lives in ambitd, never in the SIEM (docs/02-architecture.md).
+
+  ID ALLOCATION. IDs must not collide, and a collision is discovered at manager start
+  as a refused ruleset, so the map is written down rather than remembered:
+
+    100200-100209  reserved (D1 session with no human)
+    100210-100219  D2 credential sweep          — shape in docs/03-detection.md
+    100220-100229  reserved (D3 bypass attempt)
+    100230-100240  D4 MCP metadata drift        — this file
+    100241-100249  D5 instruction-shaped metadata — this file
+    100250-100259  reserved (D6 config tamper, D8 poisoned instruction file)
+    100260-100269  D11 fail-open run            — shape in docs/03-detection.md
+    100270-100279  D12 managed-settings drift   — shape in docs/03-detection.md
+    100280-100289  D10 propagation tripwire     — shape in docs/03-detection.md
+
+  WHICH EVENT IS WHICH. One listing produces a per-server summary event plus one
+  event per tool that has something to say. The two are told apart by a field rather
+  than by absence, because a Wazuh rule cannot easily test that a field is missing:
+
+    mcp_tool_count present     -> the per-server summary (the inventory record)
+    mcp_baseline_state present -> one tool's D4 verdict, with mcp_scan_classes for D5
+
+  A tool matching an approved baseline with no findings does not cross to Wazuh at
+  all; it stays in the endpoint's spool. So the absence of per-tool events under a
+  summary means the surface was quiet, not that collection failed.
+
+  UNVERIFIED — ARRAY FIELD MATCHING. mcp_changed_fields and mcp_scan_classes are JSON
+  arrays of strings. The decoder documentation says arrays of scalars are supported
+  ("lists with zero or more values"), but HOW a <field> regex matches a multi-valued
+  field — against each value, or against one joined string — was not verified during
+  research (docs/00-sources.md). Every rule here therefore matches array contents
+  with an UNANCHORED literal, which works under either behavior. Confirm with
+  wazuh-logtest before relying on these five rules: 100241-100245 and 100246.
+
+  LEVELS. 12 and above pages under most routing; 7 to 10 queues for review; 3 to 5 is
+  context an analyst reads while triaging something else. Drift from an approved
+  baseline is 12 because a human reviewed that surface and it changed. Change before
+  approval is 7 because nobody reviewed it yet, which is weaker. Anything both drifted
+  and instruction-shaped is 13: that combination is a rug pull that has already
+  happened, not a possibility.
+-->
+
+<group name="ambit,ambit_mcp,">
+
+  <!--
+    Base rule. Level 0 raises no alert and exists so the children can chain with
+    if_sid rather than each re-matching the decoder and the kind. Matching on kind
+    alone, not also on src, is deliberate: a second emitter of mcp_list later would
+    silently stop matching a parent that pinned src=interpose.
+  -->
+  <rule id="100230" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^mcp_list$</field>
+    <description>ambit: MCP tool listing observed</description>
+    <group>ambit_mcp,</group>
+  </rule>
+
+  <!--
+    The inventory record. M1's exit criterion is that every MCP server the cohort
+    uses is inventoried with an approved baseline, and this is the event that answers
+    it: one per server per session, carrying how many tools that server advertised.
+    \.+ is the Wazuh idiom for "this field is present with any value".
+  -->
+  <rule id="100231" level="3">
+    <if_sid>100230</if_sid>
+    <field name="mcp_tool_count">\.+</field>
+    <description>ambit: MCP server $(tool_mcp_server) advertised $(mcp_tool_count) tools on $(endpoint_id) (trigger $(mcp_trigger))</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!-- D4: a tool nobody has seen before. Inventory growth, not yet a finding. -->
+  <rule id="100232" level="5">
+    <if_sid>100230</if_sid>
+    <field name="mcp_baseline_state">^new$</field>
+    <description>ambit D4: new MCP tool recorded - $(tool_name) on $(endpoint_id), pending operator approval</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!--
+    D4: the metadata changed, but this server's baseline was never approved, so there
+    is no reviewed state to have deviated from. Real, weaker, and common early in a
+    rollout — which is why it is a separate rule and a separate level rather than
+    being folded into drift.
+  -->
+  <rule id="100233" level="7">
+    <if_sid>100230</if_sid>
+    <field name="mcp_baseline_state">^drift_unapproved$</field>
+    <description>ambit D4: MCP tool metadata changed before approval - $(tool_name), fields $(mcp_changed_fields)</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!--
+    D4 proper: the rug pull. A human approved this tool's name, description and input
+    schema, and what the server advertised this session differs from it. The alert
+    carries both hashes and names which fields moved.
+  -->
+  <rule id="100234" level="12">
+    <if_sid>100230</if_sid>
+    <field name="mcp_baseline_state">^drift$</field>
+    <description>ambit D4: MCP metadata drift from an APPROVED baseline - $(tool_name) changed $(mcp_changed_fields) ($(mcp_prev_metadata_hash) -> $(tool_mcp_metadata_hash))</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!--
+    D4: a tool that was in the approved surface is no longer advertised. Benign as a
+    deprecation and interesting as half of a remove-and-reintroduce, which is why the
+    endpoint keeps the removed tool on record: if it comes back with new metadata it
+    is compared against what was approved, not against nothing.
+  -->
+  <rule id="100235" level="10">
+    <if_sid>100230</if_sid>
+    <field name="mcp_baseline_state">^removed$</field>
+    <description>ambit D4: MCP tool removed from an approved surface - $(tool_name) no longer advertised by $(tool_mcp_server)</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!--
+    D4 escalated: the drifted tool is one the server itself marks destructive. The
+    annotation is a hint and never relaxes anything, but it may make policy stricter,
+    and a changed contract on a tool that deletes things is worth paging for.
+  -->
+  <rule id="100236" level="13">
+    <if_sid>100234</if_sid>
+    <field name="tool_mcp_destructive_hint">^true$</field>
+    <description>ambit D4: metadata drift on a DESTRUCTIVE MCP tool - $(tool_name) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1195.002</id>
+      <id>T1485</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!--
+    D4 escalated: the drift arrived mid-session. The server sent
+    notifications/tools/list_changed, the client re-listed, and the new surface
+    differs from what was approved. That is a tool description being replaced after
+    the session had already started trusting it.
+  -->
+  <rule id="100237" level="13">
+    <if_sid>100234</if_sid>
+    <field name="mcp_trigger">^list_changed$</field>
+    <description>ambit D4: MID-SESSION MCP metadata drift - $(tool_name) changed after the server announced a tool-surface change</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!--
+    Context: the announcement itself, before the client has re-listed. Low level on
+    purpose — a legitimate server may announce a change after an upgrade — but it
+    exists so the warning is in the timeline even when the re-listing never arrives.
+  -->
+  <rule id="100238" level="5">
+    <if_sid>100230</if_sid>
+    <field name="mcp_trigger">^list_changed_notification$</field>
+    <description>ambit D4: MCP server $(tool_mcp_server) announced a tool-surface change on $(endpoint_id)</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!--
+    Integrity, not detection: the interposer could not read or write its baseline
+    store, so nothing was compared. This must alert, because the alternative is a
+    quiet endpoint that looks identical to one where every tool matched.
+  -->
+  <rule id="100239" level="8">
+    <if_sid>100230</if_sid>
+    <field name="mcp_baseline_state">^unavailable$</field>
+    <description>ambit D4 BLIND: baseline unavailable on $(endpoint_id) - drift cannot be detected for $(tool_mcp_server)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d4,ambit_integrity,runbook_D4,</group>
+  </rule>
+
+  <!--
+    D4 correlation: several tools on the same server drifted at once. One changed
+    description is a change; a whole surface changing together is a version swap or a
+    rug pull, and the distinction is the server's own version, which the runbook
+    resolves from the endpoint.
+
+    same_field on tool_mcp_server is what makes this "one server" rather than three
+    unrelated drifts across the fleet. The threshold is a placeholder to be set from
+    M1 data: a server that renames its tools in a major release will trip it legitimately.
+  -->
+  <rule id="100240" level="12" frequency="3" timeframe="300" ignore="600">
+    <if_matched_sid>100234</if_matched_sid>
+    <same_field>tool_mcp_server</same_field>
+    <description>ambit D4: MCP server $(tool_mcp_server) changed 3+ approved tool descriptions within 300s - surface-wide drift</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,runbook_D4,</group>
+  </rule>
+
+  <!--
+    D5 rules. These match ARRAY contents with unanchored literals; see the
+    UNVERIFIED note in the header before relying on them.
+
+    The classes are ordered here by how much a hit means. Concealed instructions and
+    role assertions are the tool-poisoning signature. A cross-server reference is the
+    shadowing signature and has the lowest false-positive rate of the five, because a
+    server naming another server's tools has few innocent reasons to. Sensitive file
+    and action references are the noisy pair: a secret-management server describes
+    secrets for a living, which is why they sit at 7 with the false positive named in
+    the runbook rather than at 12 where they would train an analyst to ignore them.
+  -->
+  <rule id="100241" level="10">
+    <if_sid>100230</if_sid>
+    <field name="mcp_scan_classes">hidden_instruction</field>
+    <description>ambit D5: concealed instruction in MCP tool metadata - $(tool_name) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d5,runbook_D5,</group>
+  </rule>
+
+  <rule id="100242" level="10">
+    <if_sid>100230</if_sid>
+    <field name="mcp_scan_classes">role_assertion</field>
+    <description>ambit D5: role assertion in MCP tool metadata - $(tool_name) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d5,runbook_D5,</group>
+  </rule>
+
+  <rule id="100243" level="12">
+    <if_sid>100230</if_sid>
+    <field name="mcp_scan_classes">cross_server_ref</field>
+    <description>ambit D5: MCP tool metadata references another server's tools - $(tool_name) on $(endpoint_id) (shadowing)</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d5,runbook_D5,</group>
+  </rule>
+
+  <rule id="100244" level="7">
+    <if_sid>100230</if_sid>
+    <field name="mcp_scan_classes">sensitive_file_ref</field>
+    <description>ambit D5: MCP tool metadata references credential or secret paths - $(tool_name) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1195.002</id>
+      <id>T1552.001</id>
+    </mitre>
+    <group>ambit_d5,runbook_D5,</group>
+  </rule>
+
+  <rule id="100245" level="7">
+    <if_sid>100230</if_sid>
+    <field name="mcp_scan_classes">sensitive_action</field>
+    <description>ambit D5: MCP tool metadata describes exfiltration-shaped actions - $(tool_name) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1195.002</id>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_d5,runbook_D5,</group>
+  </rule>
+
+  <!--
+    D4 and D5 together, and the highest-confidence alert in this file: an approved
+    tool's metadata changed, and what it changed into is instruction-shaped. Neither
+    half alone is conclusive — descriptions change, and legitimate ones sometimes read
+    like instructions — but a surface that drifted INTO concealed-instruction language
+    is the documented tool-poisoning sequence rather than a candidate for it.
+  -->
+  <rule id="100246" level="13">
+    <if_sid>100234</if_sid>
+    <field name="mcp_scan_classes">hidden_instruction</field>
+    <description>ambit D4+D5: APPROVED MCP tool drifted into instruction-shaped metadata - $(tool_name) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d4,ambit_d5,runbook_D5,</group>
+  </rule>
+
+  <!--
+    A finding on a surface that was approved and has NOT changed. This is not the
+    server's behavior, it is ours: somebody approved instruction-shaped metadata, or a
+    scan rule was added after the approval. Routed to review rather than paged,
+    because the action is an approval review or a rule retirement, not an incident.
+  -->
+  <rule id="100247" level="8">
+    <if_sid>100230</if_sid>
+    <field name="mcp_baseline_state">^approved$</field>
+    <field name="mcp_scan_classes">hidden_instruction</field>
+    <description>ambit D5: instruction-shaped metadata on an APPROVED, unchanged MCP tool - $(tool_name); review the approval or retire the rule</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d5,runbook_D5,</group>
+  </rule>
+
+  <!--
+    D5 correlation: findings across several tools of one server. A single poisoned
+    description is one tool; a pattern across the surface suggests the server itself,
+    or its supply chain, rather than one bad entry.
+  -->
+  <rule id="100248" level="12" frequency="3" timeframe="300" ignore="600">
+    <if_matched_sid>100241</if_matched_sid>
+    <same_field>tool_mcp_server</same_field>
+    <description>ambit D5: MCP server $(tool_mcp_server) advertises concealed instructions in 3+ tools within 300s</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d5,runbook_D5,</group>
+  </rule>
+
+</group>

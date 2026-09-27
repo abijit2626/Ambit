@@ -1,0 +1,581 @@
+// Package wazuh holds no code: it exists so the Wazuh rules, the fixtures they are
+// tested against and the runbooks they reference can be validated by `go test ./...`
+// like anything else in this repository.
+//
+// The reason this exists is that a broken Wazuh rule does not fail loudly. It simply
+// never matches, and a detector that never fires is indistinguishable from a fleet
+// with nothing to report. `wazuh-logtest` is the real check and the README says to run
+// it, but it needs a Wazuh install, so it is not run in CI and not run by a contributor
+// changing a field name. These tests are what catch that change: they read the
+// flattened schema out of internal/event by reflection, so renaming a field breaks the
+// build rather than silently retiring a rule.
+//
+// What these tests do NOT do: implement Wazuh. They model the small subset of matching
+// the rules in this directory use — decoded_as json, if_sid chaining, and field regexes
+// — well enough to prove each rule can match a real event. Correlation semantics
+// (frequency, timeframe, ignore) are checked structurally only. Where the model and
+// Wazuh could disagree, the tests assert the rules stay inside the subset where they
+// cannot, which is why an unanchored-literal rule on an array field is a test of its
+// own.
+package wazuh
+
+import (
+	"encoding/json"
+	"encoding/xml"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/abijit2626/ambit/internal/event"
+)
+
+const (
+	rulesGlob    = "rules/*.xml"
+	fixturesPath = "fixtures/events.sample.jsonl"
+	runbooksDir  = "runbooks"
+
+	// fieldBudget mirrors internal/event's per-kind budget. A fixture wider than the
+	// events the schema is allowed to produce would be testing something that cannot
+	// reach the decoder.
+	fieldBudget = 55
+
+	// allocated is the ID range this directory's rules may use, per the map in
+	// rules/ambit_mcp_rules.xml. A rule outside it risks colliding with the shapes
+	// docs/03-detection.md reserves for other detectors, and Wazuh refuses a ruleset
+	// with duplicate ids at manager start.
+	minRuleID = 100230
+	maxRuleID = 100249
+)
+
+type ruleFile struct {
+	XMLName xml.Name `xml:"group"`
+	Name    string   `xml:"name,attr"`
+	Rules   []rule   `xml:"rule"`
+}
+
+type rule struct {
+	ID          int     `xml:"id,attr"`
+	Level       int     `xml:"level,attr"`
+	Frequency   int     `xml:"frequency,attr"`
+	Timeframe   int     `xml:"timeframe,attr"`
+	Ignore      int     `xml:"ignore,attr"`
+	DecodedAs   string  `xml:"decoded_as"`
+	IfSID       string  `xml:"if_sid"`
+	IfMatchedSI string  `xml:"if_matched_sid"`
+	SameField   string  `xml:"same_field"`
+	Description string  `xml:"description"`
+	Groups      string  `xml:"group"`
+	Fields      []field `xml:"field"`
+	Mitre       struct {
+		IDs []string `xml:"id"`
+	} `xml:"mitre"`
+	file string
+}
+
+type field struct {
+	Name    string `xml:"name,attr"`
+	Type    string `xml:"type,attr"`
+	Pattern string `xml:",chardata"`
+}
+
+func (r rule) isCorrelation() bool { return r.IfMatchedSI != "" }
+
+// loadRules reads every rule file in the directory.
+func loadRules(t *testing.T) []rule {
+	t.Helper()
+	paths, err := filepath.Glob(rulesGlob)
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatalf("no rule files matched %s", rulesGlob)
+	}
+	var out []rule
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		var rf ruleFile
+		if err := xml.Unmarshal(raw, &rf); err != nil {
+			t.Fatalf("%s is not parseable XML: %v", p, err)
+		}
+		if !strings.HasPrefix(rf.Name, "ambit") {
+			t.Errorf("%s: group name %q should start with ambit so the whole ruleset is addressable as one group", p, rf.Name)
+		}
+		for _, r := range rf.Rules {
+			r.file = p
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func loadFixtures(t *testing.T) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(fixturesPath)
+	if err != nil {
+		t.Fatalf("read fixtures: %v (regenerate with: make fixtures)", err)
+	}
+	var out []map[string]any
+	for i, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("fixture line %d is not valid JSON: %v", i+1, err)
+		}
+		out = append(out, m)
+	}
+	if len(out) == 0 {
+		t.Fatal("no fixtures")
+	}
+	return out
+}
+
+// schemaFields returns the flattened schema's field names, and which of them are
+// arrays, by reflection over event.SIEMEvent. Reflection rather than a hand-kept list
+// is the point: a renamed field then fails this test instead of quietly retiring a rule.
+func schemaFields() (all map[string]bool, arrays map[string]bool) {
+	all, arrays = map[string]bool{}, map[string]bool{}
+	st := reflect.TypeOf(event.SIEMEvent{})
+	for i := 0; i < st.NumField(); i++ {
+		tag := st.Field(i).Tag.Get("json")
+		name := strings.Split(tag, ",")[0]
+		if name == "" || name == "-" {
+			continue
+		}
+		all[name] = true
+		ft := st.Field(i).Type
+		if ft.Kind() == reflect.Slice {
+			arrays[name] = true
+		}
+	}
+	// Fields Wazuh itself supplies on an alert rather than the event. Listed rather
+	// than pattern-matched so adding one is a decision.
+	for _, extra := range []string{
+		"agent.name", "agent.id", "agent.ip",
+		"sca.policy_id", "sca.check.title", "sca.check.result",
+		"full_log", "decoder.name",
+	} {
+		all[extra] = true
+	}
+	return all, arrays
+}
+
+func TestRuleIDsAreUniqueAndInRange(t *testing.T) {
+	seen := map[int]string{}
+	for _, r := range loadRules(t) {
+		if prev, dup := seen[r.ID]; dup {
+			t.Errorf("rule id %d appears twice (%s and %s); Wazuh refuses a ruleset with duplicate ids at manager start", r.ID, prev, r.file)
+		}
+		seen[r.ID] = r.file
+		if r.ID < minRuleID || r.ID > maxRuleID {
+			t.Errorf("rule %d (%s) is outside the allocated range %d-%d; see the ID map in the rule file", r.ID, r.file, minRuleID, maxRuleID)
+		}
+	}
+}
+
+func TestEveryRuleIsWellFormed(t *testing.T) {
+	rules := loadRules(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+
+	runbookRE := regexp.MustCompile(`runbook_D\d+`)
+	for _, r := range rules {
+		name := fmt.Sprintf("rule_%d", r.ID)
+		t.Run(name, func(t *testing.T) {
+			if strings.TrimSpace(r.Description) == "" {
+				t.Error("no description: an alert with no description is untriageable")
+			}
+			if r.Level < 0 || r.Level > 16 {
+				t.Errorf("level %d is outside 0-16", r.Level)
+			}
+			// A level-0 rule raises no alert and exists only as a parent, so it needs
+			// neither a runbook nor a technique; everything that alerts needs both.
+			if r.Level > 0 {
+				if !runbookRE.MatchString(r.Groups) {
+					t.Errorf("groups %q name no runbook; every alerting rule carries runbook_Dn per docs/03-detection.md", r.Groups)
+				}
+				if len(r.Mitre.IDs) == 0 {
+					t.Error("no MITRE technique: external firms expect a technique id on every alert")
+				}
+			}
+			if r.Level == 0 && r.DecodedAs == "" && r.IfSID == "" {
+				t.Error("a level-0 rule that matches nothing and chains from nothing is dead")
+			}
+			// Parents must exist, or the child silently never fires.
+			for _, parent := range []string{r.IfSID, r.IfMatchedSI} {
+				if parent == "" {
+					continue
+				}
+				var id int
+				if _, err := fmt.Sscanf(parent, "%d", &id); err != nil {
+					t.Errorf("unparseable parent id %q", parent)
+					continue
+				}
+				if _, ok := byID[id]; !ok {
+					t.Errorf("parent rule %d does not exist in this directory", id)
+				}
+			}
+			if r.isCorrelation() {
+				if r.Frequency <= 0 || r.Timeframe <= 0 {
+					t.Errorf("correlation rule needs frequency and timeframe, got %d/%d", r.Frequency, r.Timeframe)
+				}
+				if r.SameField == "" {
+					t.Error("correlation with no same_field fires on unrelated events across the fleet")
+				}
+			}
+		})
+	}
+}
+
+func TestRuleFieldsExistInTheSchema(t *testing.T) {
+	all, _ := schemaFields()
+	for _, r := range loadRules(t) {
+		for _, f := range r.Fields {
+			if !all[f.Name] {
+				t.Errorf("rule %d matches field %q, which is not in the flattened schema; the rule would never fire", r.ID, f.Name)
+			}
+		}
+		if r.SameField != "" && !all[r.SameField] {
+			t.Errorf("rule %d correlates on same_field %q, which is not in the flattened schema", r.ID, r.SameField)
+		}
+	}
+}
+
+// TestDescriptionInterpolationsExist catches the other half of a rename: an alert
+// description referring to $(some_old_field) renders the literal text to the analyst.
+func TestDescriptionInterpolationsExist(t *testing.T) {
+	all, _ := schemaFields()
+	interp := regexp.MustCompile(`\$\(([^)]+)\)`)
+	for _, r := range loadRules(t) {
+		for _, m := range interp.FindAllStringSubmatch(r.Description, -1) {
+			if !all[m[1]] {
+				t.Errorf("rule %d interpolates $(%s), which is not in the flattened schema; the alert would show the literal text", r.ID, m[1])
+			}
+		}
+	}
+}
+
+// TestArrayFieldRulesUseUnanchoredLiterals is the test that keeps an unverified
+// assumption from becoming a silent failure.
+//
+// How a <field> regex matches a multi-valued field — against each value, or against
+// one joined string — was not verified during research (docs/00-sources.md). An
+// unanchored literal matches under either behavior; an anchored one matches under at
+// most one. So rules on array fields must stay unanchored, and this test enforces it
+// rather than trusting a comment.
+func TestArrayFieldRulesUseUnanchoredLiterals(t *testing.T) {
+	_, arrays := schemaFields()
+	for _, r := range loadRules(t) {
+		for _, f := range r.Fields {
+			if !arrays[f.Name] {
+				continue
+			}
+			pattern := strings.TrimSpace(f.Pattern)
+			if strings.HasPrefix(pattern, "^") || strings.HasSuffix(pattern, "$") {
+				t.Errorf("rule %d anchors a pattern (%q) against array field %q; anchoring depends on unverified decoder behavior for multi-valued fields",
+					r.ID, pattern, f.Name)
+			}
+		}
+	}
+}
+
+// matches models the subset of Wazuh matching these rules use, for one event.
+//
+// Deliberately narrow: presence via the \.+ idiom, otherwise the pattern as a regexp,
+// with array values joined by commas. Anchors behave identically in OS_Regex and Go
+// regexp for the literal patterns used here; anything more exotic would need the real
+// wazuh-logtest, which the README tells an operator to run.
+func matches(r rule, ev map[string]any, byID map[int]rule) (bool, error) {
+	// A correlation rule fires on N matches of its parent within a timeframe, which
+	// this model does not simulate. Refusing is deliberate: silently ignoring
+	// if_matched_sid would make such a rule look unconditional and match every event,
+	// which is the opposite of the truth and would hide a real failure behind a
+	// green test.
+	if r.isCorrelation() {
+		return false, fmt.Errorf("rule %d is a correlation rule; matching is not modelled", r.ID)
+	}
+	if r.DecodedAs == "json" {
+		if _, ok := ev["schema_v"]; !ok {
+			return false, nil
+		}
+	}
+	if r.IfSID != "" {
+		var id int
+		if _, err := fmt.Sscanf(r.IfSID, "%d", &id); err != nil {
+			return false, err
+		}
+		parent, ok := byID[id]
+		if !ok {
+			return false, fmt.Errorf("rule %d: parent %d missing", r.ID, id)
+		}
+		ok, err := matches(parent, ev, byID)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	for _, f := range r.Fields {
+		raw, present := ev[f.Name]
+		if !present {
+			return false, nil
+		}
+		value := renderValue(raw)
+		pattern := strings.TrimSpace(f.Pattern)
+		if pattern == `\.+` {
+			// The Wazuh idiom for "present with any value".
+			if value == "" {
+				return false, nil
+			}
+			continue
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return false, fmt.Errorf("rule %d: field %s pattern %q does not compile: %w", r.ID, f.Name, pattern, err)
+		}
+		if !re.MatchString(value) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func renderValue(raw any) string {
+	switch v := raw.(type) {
+	case string:
+		return v
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case float64:
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v))
+		}
+		return fmt.Sprintf("%g", v)
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, e := range v {
+			parts = append(parts, renderValue(e))
+		}
+		return strings.Join(parts, ",")
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+// TestEveryRuleMatchesAFixture is the central test. A rule that matches nothing in a
+// fixture set generated from the real pipeline is a rule that will match nothing in
+// production, and it will say so by never alerting.
+func TestEveryRuleMatchesAFixture(t *testing.T) {
+	rules := loadRules(t)
+	fixtures := loadFixtures(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+
+	for _, r := range rules {
+		t.Run(fmt.Sprintf("rule_%d", r.ID), func(t *testing.T) {
+			// A correlation rule fires on N matches of its parent, which this model
+			// does not simulate; its parent is covered by its own subtest, and the
+			// structural checks are in TestEveryRuleIsWellFormed.
+			if r.isCorrelation() {
+				t.Skip("correlation rule: parent coverage is asserted separately")
+			}
+			var hits int
+			for i, ev := range fixtures {
+				ok, err := matches(r, ev, byID)
+				if err != nil {
+					t.Fatalf("fixture %d: %v", i+1, err)
+				}
+				if ok {
+					hits++
+				}
+			}
+			if hits == 0 {
+				t.Errorf("rule %d (%s) matches no fixture; regenerate fixtures with `make fixtures` or fix the rule", r.ID, strings.TrimSpace(r.Description))
+			}
+			t.Logf("rule %d matched %d/%d fixtures", r.ID, hits, len(fixtures))
+		})
+	}
+}
+
+// TestSummaryAndPerToolEventsAreDistinguishable pins the discriminator the rules rely
+// on. If a per-tool event ever carried mcp_tool_count, or a summary carried
+// mcp_baseline_state, every drift would raise two alerts and no rule could tell the
+// roll-up from the finding.
+func TestSummaryAndPerToolEventsAreDistinguishable(t *testing.T) {
+	var summaries, perTool int
+	for i, ev := range loadFixtures(t) {
+		if ev["kind"] != string(event.KindMCPList) {
+			continue
+		}
+		_, hasCount := ev["mcp_tool_count"]
+		_, hasState := ev["mcp_baseline_state"]
+		if hasCount && hasState {
+			t.Errorf("fixture %d carries both mcp_tool_count and mcp_baseline_state; the rules cannot tell a listing roll-up from a per-tool finding", i+1)
+		}
+		switch {
+		case hasCount:
+			summaries++
+			if _, hasTool := ev["tool_mcp_tool"]; hasTool {
+				t.Errorf("fixture %d is a per-server summary but names a tool", i+1)
+			}
+		case hasState:
+			perTool++
+			if _, hasTool := ev["tool_mcp_tool"]; !hasTool {
+				t.Errorf("fixture %d is a per-tool verdict but names no tool", i+1)
+			}
+		}
+	}
+	if summaries == 0 || perTool == 0 {
+		t.Errorf("fixtures need both shapes: %d summaries, %d per-tool", summaries, perTool)
+	}
+}
+
+func TestFixturesStayInsideTheFieldBudget(t *testing.T) {
+	for i, ev := range loadFixtures(t) {
+		if len(ev) > fieldBudget {
+			t.Errorf("fixture %d has %d fields, budget is %d: an event this wide risks the decoder rejecting it, which is silent detection loss", i+1, len(ev), fieldBudget)
+		}
+	}
+}
+
+func TestFixturesCarryNoCleartextSecrets(t *testing.T) {
+	raw, err := os.ReadFile(fixturesPath)
+	if err != nil {
+		t.Fatalf("read fixtures: %v", err)
+	}
+	// The fixtures are committed to the repository and pasted into wazuh-logtest by
+	// whoever verifies the rules, so they are held to the same standard as the sink
+	// they came from.
+	for _, banned := range []string{
+		"/home/dev", ".ssh", "id_ed25519", "id_rsa", ".aws",
+		"Ignore all previous", "exfil.attacker.test", "billing",
+	} {
+		if strings.Contains(string(raw), banned) {
+			t.Errorf("fixtures contain %q in cleartext; the SIEM-bound sink must not carry it, so neither may a fixture generated from it", banned)
+		}
+	}
+}
+
+func TestEveryReferencedRunbookExists(t *testing.T) {
+	runbookRE := regexp.MustCompile(`runbook_(D\d+)`)
+	wanted := map[string]int{}
+	for _, r := range loadRules(t) {
+		for _, m := range runbookRE.FindAllStringSubmatch(r.Groups, -1) {
+			wanted[m[1]] = r.ID
+		}
+	}
+	if len(wanted) == 0 {
+		t.Fatal("no rule names a runbook")
+	}
+	for detector, ruleID := range wanted {
+		matches, err := filepath.Glob(filepath.Join(runbooksDir, detector+"-*.md"))
+		if err != nil {
+			t.Fatalf("glob: %v", err)
+		}
+		if len(matches) == 0 {
+			t.Errorf("rule %d names runbook_%s but no %s/%s-*.md exists; an alert whose runbook is missing is an alert an external analyst cannot action",
+				ruleID, detector, runbooksDir, detector)
+		}
+	}
+}
+
+// TestRunbooksCoverTheRequiredSections checks the structure docs/03-detection.md
+// requires, because the one thing an external analyst cannot do is improvise the parts
+// that need us.
+func TestRunbooksCoverTheRequiredSections(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join(runbooksDir, "*.md"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Skip("no runbooks yet")
+	}
+	required := []string{
+		"What this alert asserts",
+		"What it does not assert",
+		"Triage",
+		"What requires us",
+		"Containment",
+		"Escalation",
+	}
+	for _, p := range paths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		body := string(raw)
+		for _, section := range required {
+			if !strings.Contains(body, section) {
+				t.Errorf("%s has no %q section; docs/03-detection.md requires all six, in order", p, section)
+			}
+		}
+	}
+}
+
+// TestOrdinaryDriftDoesNotPage is the false-positive control, and the reason the
+// fixtures include a description change that is merely different rather than hostile.
+//
+// The common real cause of drift is a package upgrade shipping better descriptions. If
+// that pages an analyst, the rule gets an exception carved out and then it protects
+// nothing. So: an ordinary drift must raise the level-12 D4 alert and must not satisfy
+// any D5 rule or the level-13 combination rule.
+func TestOrdinaryDriftDoesNotPage(t *testing.T) {
+	rules := loadRules(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+
+	var checked int
+	for i, ev := range loadFixtures(t) {
+		if ev["mcp_baseline_state"] != event.MCPStateDrift {
+			continue
+		}
+		if _, hasFindings := ev["mcp_scan_classes"]; hasFindings {
+			continue
+		}
+		checked++
+
+		// Drift is still drift: the D4 alert must fire.
+		ok, err := matches(byID[100234], ev, byID)
+		if err != nil {
+			t.Fatalf("fixture %d: %v", i+1, err)
+		}
+		if !ok {
+			t.Errorf("fixture %d is a drift event but rule 100234 does not match it", i+1)
+		}
+
+		// Nothing that reads a D5 finding may fire, including the level-13 rule that
+		// combines drift with concealed instructions. Correlation rules are excluded
+		// because they fire on repeated matches of a parent, and that parent is
+		// checked here in its own right.
+		for _, r := range rules {
+			if !strings.Contains(r.Groups, "ambit_d5") || r.isCorrelation() {
+				continue
+			}
+			ok, err := matches(r, ev, byID)
+			if err != nil {
+				t.Fatalf("fixture %d, rule %d: %v", i+1, r.ID, err)
+			}
+			if ok {
+				t.Errorf("rule %d (level %d, %q) matches an ordinary description change with no findings; a benign upgrade would page",
+					r.ID, r.Level, strings.TrimSpace(r.Description))
+			}
+		}
+	}
+	if checked == 0 {
+		t.Error("no drift-without-findings fixture: the false-positive control has nothing to test against; regenerate with `make fixtures`")
+	}
+}

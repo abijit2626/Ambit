@@ -3,7 +3,7 @@ BIN2    := mcp-interpose
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
-.PHONY: all build test race vet fmt check clean cross smoke
+.PHONY: all build test race vet fmt check clean cross smoke fixtures
 
 all: check build
 
@@ -43,6 +43,12 @@ cross:
 smoke: build
 	./scripts/smoke.sh
 	./scripts/interpose-smoke.sh
+
+# Wazuh rule fixtures are generated from the real pipeline, never hand-edited: a
+# fixture that has drifted from the schema tests nothing while looking like it tests
+# everything. Depends on build so it can never be generated from stale binaries.
+fixtures: build
+	./scripts/gen-fixtures.sh
 
 clean:
 	rm -rf bin

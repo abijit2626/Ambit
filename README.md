@@ -145,6 +145,8 @@ internal/sink/           JSON-lines writer with rotation and gap markers
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
 deploy/wazuh/            localfile, syscheck, SCA policy, logtest fixtures
+deploy/wazuh/rules/      D4 and D5 detector rules, validated by go test
+deploy/wazuh/runbooks/   one per detector, for an analyst with no access to our source
 deploy/claude-code/      managed-settings bundle (M0: observation only)
 ```
 
@@ -155,6 +157,7 @@ make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
 make cross   # static binaries for darwin/linux, arm64/amd64
+make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 ```
 
 `mcp-interpose` goes in front of one MCP server, per server, so Claude Code still sees
@@ -213,9 +216,13 @@ fraction** — are still open.
 From M1, the **endpoint half is built**: `mcp-interpose` implements D4 (metadata
 hashing against an approved baseline, with an explicit operator approval step) and D5
 (instruction-shaped metadata and cross-server references), carries MCP annotations
-stricter-only, and emits `mcp_list` events through `ambitd`. What M1 still needs is the
-other half — the Wazuh rules that read these events and a runbook per rule an external
-analyst can execute — plus the MCP inventory across the cohort. Two limits are stated in
+stricter-only, and emits `mcp_list` events through `ambitd`. The **Wazuh half of D4 and D5 is also written**:
+rules at IDs 100230–100248 with a runbook each, validated offline by `go test` against
+fixtures generated from the real pipeline rather than hand-written. What M1 still needs
+is the rules for the remaining detectors, the MCP inventory across the cohort, one
+confirmation on a live manager of how a rule matches an array-valued field, and the
+exit criterion that actually tests a runbook: someone outside the team executing one
+against a sample alert. Two limits are stated in
 the code and in [02-architecture.md](docs/02-architecture.md) rather than implied: a
 stdio wrapper does not cover MCP servers reached over HTTP/SSE, and `mcp_list` events
 usually carry no session id because MCP does not carry one. M2 onward is design only.

@@ -113,15 +113,24 @@ func TestApprovedToolsDoNotCrossButDriftDoes(t *testing.T) {
 }
 
 func TestInterposeSummaryCarriesTheInventory(t *testing.T) {
-	c, events, _ := newTestCollector(t)
+	c, events, traj := newTestCollector(t)
 	c.HandleInterpose(listingReport())
+
+	// The roll-up is still recorded locally, for investigation and for a dashboard
+	// that wants "servers with drift" without correlating.
+	if got := traj.decode(t, 0)["tool"].(map[string]any)["mcp"].(map[string]any)["worst"]; got != event.MCPStateDrift {
+		t.Errorf("spool summary worst = %v, want %q", got, event.MCPStateDrift)
+	}
 
 	summary := events.decode(t, 0)
 	if summary["tool_mcp_tool"] != nil {
 		t.Errorf("the summary event should name no tool, got %v", summary["tool_mcp_tool"])
 	}
-	if summary["mcp_baseline_state"] != event.MCPStateDrift {
-		t.Errorf("summary state = %v, want the worst finding %q", summary["mcp_baseline_state"], event.MCPStateDrift)
+	// The roll-up must NOT appear as mcp_baseline_state: a rule matching that field
+	// would then fire twice for one drifted tool, once on the finding and once on the
+	// listing, and could not tell them apart.
+	if _, present := summary["mcp_baseline_state"]; present {
+		t.Errorf("the summary carried mcp_baseline_state (%v); that field belongs to per-tool events only", summary["mcp_baseline_state"])
 	}
 	if summary["mcp_tool_count"] != float64(2) {
 		t.Errorf("mcp_tool_count = %v, want 2: the summary is the inventory record", summary["mcp_tool_count"])
