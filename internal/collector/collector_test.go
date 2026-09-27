@@ -393,3 +393,48 @@ func TestConcurrentHandleIsSafe(t *testing.T) {
 		t.Errorf("spool got %d events, want 400", traj.count())
 	}
 }
+
+// TestUntrustedZoneOverridesTrustedRepoPrefix is D8's main case, and it was wrong until
+// writing the Wazuh rules exposed it.
+//
+// A CLAUDE.md inside node_modules of a trusted repository is dependency-carried
+// instruction content — the repo-carried injection route the detector exists for — but
+// the trusted-repo prefix check alone calls it trusted, because the dependency directory
+// sits under a trusted path. Zone classification is what catches it, so the zone wins.
+func TestUntrustedZoneOverridesTrustedRepoPrefix(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+
+	cases := []struct {
+		name    string
+		path    string
+		zone    string
+		trusted bool
+	}{
+		{"instruction file in the trusted repo root", "/home/dev/src/myrepo/CLAUDE.md", event.ZoneWorkdir, true},
+		{"instruction file inside a dependency of that repo", "/home/dev/src/myrepo/node_modules/pkg/CLAUDE.md", event.ZoneUntrusted, false},
+		{"instruction file in an unlisted repo", "/home/dev/src/cloned/CLAUDE.md", event.ZoneHome, false},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c.Handle(&hook.Payload{
+				HookEventName: hook.EvInstructionsLoaded,
+				SessionID:     "s1",
+				CWD:           "/home/dev/src/myrepo",
+				FilePath:      tc.path,
+				LoadReason:    "session_start",
+			})
+			cfg, ok := traj.decode(t, i)["config"].(map[string]any)
+			if !ok {
+				t.Fatalf("event %d has no config block", i)
+			}
+			if cfg["zone"] != tc.zone {
+				t.Errorf("zone = %v, want %v", cfg["zone"], tc.zone)
+			}
+			if cfg["trusted"] != tc.trusted {
+				t.Errorf("trusted = %v, want %v: an untrusted zone must override the repo prefix, or D8 misses dependency-carried instructions",
+					cfg["trusted"], tc.trusted)
+			}
+		})
+	}
+}

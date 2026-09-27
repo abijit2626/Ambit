@@ -193,6 +193,13 @@ func (f *Filter) decideTool(e *event.Event) Verdict {
 			return Verdict{true, ReasonNetworkCmd}
 		}
 		if m := t.MCP; m != nil {
+			// Inert until M2, and deliberately left in place. Annotations reach us from
+			// tools/list, which only mcp-interpose sees; a hook payload for a tool CALL
+			// carries none, so this is never true on a tool event today. The criterion
+			// stays because the join — ambitd caching the interposer's per-tool
+			// annotations and enriching call events — is M2 work, and because the next
+			// criterion makes those same events cross anyway, so nothing is missed in
+			// the meantime.
 			if m.Annotations.DestructiveHint != nil && *m.Annotations.DestructiveHint {
 				return Verdict{true, ReasonMCPRisk}
 			}

@@ -304,7 +304,13 @@ func (c *Collector) fillConfig(e *event.Event, p *hook.Payload, st *sessionState
 	if path != "" {
 		ci.PathDigest = c.ext.Digest(path)
 		ci.Zone = st.zone(path)
-		ci.Trusted = c.isTrustedRepoPath(path)
+		// An untrusted zone overrides the trusted-repo prefix, and that precedence is
+		// the whole point of D8. A CLAUDE.md inside node_modules of a trusted
+		// repository is dependency-carried instruction content — the repo-carried
+		// injection route — yet the prefix check alone calls it trusted, because the
+		// dependency directory sits under a trusted path. Zone classification exists
+		// to catch exactly that, so it wins.
+		ci.Trusted = c.isTrustedRepoPath(path) && ci.Zone != event.ZoneUntrusted
 	}
 	e.Config = ci
 }

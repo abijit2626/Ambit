@@ -126,6 +126,14 @@ match array contents with **unanchored literals**, which work under either behav
 Confirm with `wazuh-logtest` against the committed fixtures before relying on rules
 100241–100247.
 
+**Unverified — syscheck (FIM) alert rule IDs and field names.** The FIM-sourced rules in
+`deploy/wazuh/rules/ambit_integrity_rules.xml` chain from syscheck parents 550 (integrity
+checksum changed), 553 (deleted) and 554 (added), and read `file` and
+`syscheck.audit.process.name`. These are the widely used values but were not read from the
+shipped ruleset during research. Same failure mode as the SCA case below: a wrong parent SID
+does not error, the rule simply never fires, so the runbooks tell an analyst to suspect the
+wiring if a FIM-sourced rule has never fired anywhere.
+
 **Unverified — SCA alert rule IDs.** The parent SID and `sca.*` field names used in
 [03](03-detection.md)'s D12 rule were not checked against the shipped SCA ruleset. That
 snippet is the intended shape, not working configuration.
