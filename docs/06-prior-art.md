@@ -78,6 +78,47 @@ good host, our contribution is a plugin that does metadata hashing and baseline
 diffing plus event emission in our schema — not another gateway. Flagged in
 [07](07-open-questions.md) as a real build-vs-adopt decision, not a formality.
 
+### The fleet plane: Wazuh
+
+**Decision made: Wazuh is the fleet plane.** Not evaluated here — applied. What
+matters for this document is what that deletes from our scope.
+
+| Capability | Wazuh provides | Our remaining work |
+| --- | --- | --- |
+| Event store, retention, archiving | indexer | choose retention; keep `logall_json` off |
+| Alerting, severity, review queue | manager + dashboard | write rules and runbooks |
+| Enrollment, endpoint roster | agent registration | enrol the cohort |
+| Heartbeat / agent liveness | **rule 504, `Wazuh agent disconnected`, level 3, already tagged MITRE T1562.001** in the shipped ruleset | tune `agents_disconnection_time` / `agents_disconnection_alert_time`; add the finer `agentd`-died case |
+| Log ingestion | `localfile` with `log_format json`; built-in JSON decoder yields addressable dynamic fields | write `events.jsonl`; **no custom decoder** |
+| Cross-event correlation | `frequency` + `timeframe` + `if_matched_sid` + `same_field` (dynamic fields only) | express D2, D10-tripwire, D11 as rules |
+| Config tamper detection | FIM/syscheck with `whodata` (user + process attribution via Audit/eBPF) | watch `.claude/` and `.mcp.json` as **directories with `restrict`** — realtime does not work on individual files |
+| Config assertion | SCA: YAML policies, `f:`/`d:`/`p:`/`c:`/`r:` rules, `->` content matching, `condition: all/any/none` | write the managed-settings policy (D12) |
+| ATT&CK tagging | `<mitre>` block per rule | propose mappings ([03](03-detection.md)) |
+| Containment | active response, triggered by rule id/level/group | **allowlist scripts on the endpoint**; containment only, never a gate |
+| Multi-tenant access | RBAC + agent groups + index restrictions | resolve the model ([07](07-open-questions.md) Q11) |
+
+**What Wazuh cannot do, and why `agentd` still exists:** it has no mechanism to
+return a verdict to the process that emitted an event, and its correlation latency is
+seconds at best. The inline gate, the Rule-of-Two bit accounting, and the provenance
+fingerprint intersection all need live session state and a millisecond answer. That is
+the whole of our differentiated work, and it is unaffected by adopting a SIEM.
+
+**Known constraints we design around**, all verified against 4.x documentation:
+
+- **"An array of objects is not supported"** by the JSON decoder. This, not nesting
+  depth, is what forces the flattened SIEM-bound schema ([04](04-data-model.md)).
+  Nested objects addressed with dot notation are fine and the shipped ruleset uses
+  them.
+- `analysisd.decoder_order_size` defaults to 256 (range 32–1024). The
+  `Too many fields for JSON decoder` failure mode reported by users is *dropped
+  events* — silent detection loss — so event width is a security property, not just
+  tidiness.
+- `same_field` works on **dynamic** fields and explicitly not on static ones, which
+  suits us, but it is scalar equality and cannot express the set intersection D10
+  actually needs ([03](03-detection.md)).
+- `logall` / `logall_json` write every event including non-alerting ones to
+  `archives.log` / `archives.json`. Both default to `no`. They stay `no`.
+
 ### Defensive architecture
 
 **CaMeL** — *Defeating Prompt Injections by Design* (arXiv:2503.18813). Dual-LLM:
@@ -197,3 +238,16 @@ Explicitly out of scope, so nobody builds them by accident:
 8. **Blocking on reasoning content.** The research consensus is that
    chain-of-thought monitoring is the fragile signal. We monitor actions. Reasoning
    content, where available, is at most a weak corroborating input — never a gate.
+9. **SIEM functionality.** No event store, no retention engine, no alert router, no
+   severity model, no review-queue UI, no enrollment service, no heartbeat tracker, no
+   ATT&CK tagging infrastructure, no dashboard. Wazuh does all of it. If we find
+   ourselves building a query layer over our own event store, something has gone
+   wrong — the correct move is a Wazuh rule, or a scheduled job over object storage
+   for the two detectors that genuinely need set operations. The one deliberate
+   exception is the **local spool**, which exists because the full trajectory must not
+   go to the indexer ([04](04-data-model.md)); it is cheap storage and a pull path,
+   not an analytics platform.
+10. **A custom Wazuh decoder.** The built-in JSON decoder gives addressable dynamic
+   fields from `log_format json`. Writing a decoder would add a maintenance burden and
+   a version-coupling risk for no gain; the flattened schema exists precisely so the
+   built-in one suffices.

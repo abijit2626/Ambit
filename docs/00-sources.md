@@ -28,6 +28,114 @@ not be relied on without checking.
   evaluation order, `disableBypassPermissionsMode`, and that hook decisions do not
   bypass deny rules.
 
+## Wazuh
+
+`documentation.wazuh.com` is blocked by this environment's egress proxy, so everything
+below was verified against the **documentation source and shipped ruleset on GitHub**,
+pinned to **v4.14.1** unless noted. That is the same text the site renders, so these
+count as primary — but they are version-pinned, and see Q12 on the 5.0 engine rewrite.
+
+**Primary — rule syntax**
+([`ruleset-xml-syntax/rules.rst`](https://raw.githubusercontent.com/wazuh/wazuh-documentation/v4.14.1/source/user-manual/ruleset/ruleset-xml-syntax/rules.rst)):
+rule `id` 1–999999 with custom rules conventionally above 100000; `level` 0–16;
+`frequency` 2–9999, triggering at that many matches or more within the timeframe;
+`timeframe` 1–99999 seconds; `if_sid`, `if_matched_sid`, `if_group`, `if_matched_group`;
+`field name=`; `<mitre>`; `group`; `description`. And on `same_field`: "The value of the
+dynamic field specified in this option must appear a certain number of times in previous
+events, as defined by the `frequency` attribute, within a time frame specified by the
+`timeframe` attribute," with the note that `same_field` "will not work with the static
+fields ... and the specific ones have to be used instead."
+
+**Primary — `same_field` in practice**
+([`ruleset/rules/`](https://raw.githubusercontent.com/wazuh/wazuh/v4.14.1/ruleset/rules/),
+0350-amazon_rules.xml, 0580-win-security_rules.xml): rule 80443
+(`frequency="8" timeframe="120" ignore="60"`, `if_matched_sid`, `same_field`
+`aws.httpRequest.clientIp`) and rules 60203/60204 confirm the pattern D2, D10's tripwire
+and D11 use, and confirm nested JSON fields are addressed with dot notation.
+
+**Primary — agent disconnection**
+([`0015-ossec_rules.xml`](https://raw.githubusercontent.com/wazuh/wazuh/v4.14.1/ruleset/rules/0015-ossec_rules.xml)):
+rule **504**, level 3, `Wazuh agent disconnected`, `<mitre><id>T1562.001</id></mitre>`.
+This is D7's coarse half, free.
+
+**Primary — JSON decoder**
+([`decoders/json-decoder.rst`](https://raw.githubusercontent.com/wazuh/wazuh-documentation/v4.14.1/source/user-manual/ruleset/decoders/json-decoder.rst)):
+extracts numbers, strings, booleans, nulls, objects, and arrays — "Lists with zero or
+more values ... **An array of objects is not supported.**" Extracted fields are stored
+as dynamic fields referable from rules. **This is the constraint that forces the
+flattened schema**, not nesting depth.
+
+**Primary — field limit**
+([`reference/internal-options.rst`](https://raw.githubusercontent.com/wazuh/wazuh-documentation/v4.14.1/source/user-manual/reference/internal-options.rst)):
+`analysisd.decoder_order_size`, "Maximum number of fields in a decoder (order tag),"
+default **256**, allowed 32–1024, overridable via `local_internal_options.conf`.
+
+**Secondary/unverified — the JSON coupling:** the documented description is in terms of
+the `order` tag, while the `wazuh-analysisd: ERROR: Too many fields for JSON decoder`
+error is attributed to this same setting by users and community write-ups
+([wazuh/wazuh#24734](https://github.com/wazuh/wazuh/issues/24734),
+[#6325](https://github.com/wazuh/wazuh/issues/6325)). The reported remedy is raising it
+to 1024. Treat the exact coupling as unconfirmed; the operational hazard — a wide event
+being rejected, which is silent detection loss — is what the design responds to.
+
+**Primary — archiving**
+([`reference/ossec-conf/global.rst`](https://raw.githubusercontent.com/wazuh/wazuh-documentation/v4.14.1/source/user-manual/reference/ossec-conf/global.rst)):
+`logall` writes all events to `archives.log` and `logall_json` to `archives.json`, both
+"even when they do not trip a rule"; both default `no`. Also
+`agents_disconnection_time` and `agents_disconnection_alert_time` (default `0s`; with
+default values the documented minimum time to produce an alert is 2m20s).
+
+**Primary — log collection**
+([`reference/ossec-conf/localfile.rst`](https://raw.githubusercontent.com/wazuh/wazuh-documentation/v4.14.1/source/user-manual/reference/ossec-conf/localfile.rst)):
+`log_format json` is "used for single-line JSON files and allows for customized labels
+to be added to JSON events"; `label` supports dot notation; `only-future-events`, `age`,
+`ignore`, `out_format`, `target`. Multi-line JSON is not supported.
+
+**Primary — FIM**
+([`reference/ossec-conf/syscheck.rst`](https://raw.githubusercontent.com/wazuh/wazuh-documentation/v4.14.1/source/user-manual/reference/ossec-conf/syscheck.rst)):
+`directories` with `realtime`, `whodata`, `check_all`, `report_changes`,
+`recursion_level`, `restrict`, `tags`. Two facts the design depends on: **"Real time
+only works with directories, not individual files"** — hence watching `.claude/` with
+`restrict` rather than naming `settings.json` — and `whodata` reports the user and
+process responsible via Linux Audit or eBPF, which `realtime` does not.
+`report_changes` is text-only, bounded by `diff_size_limit` (default 50 MB).
+
+**Primary — SCA**
+([`capabilities/sec-config-assessment/`](https://raw.githubusercontent.com/wazuh/wazuh-documentation/v4.14.1/source/user-manual/capabilities/sec-config-assessment/creating-custom-policies.rst)):
+YAML policies with `policy`, optional `requirements`, and `checks` blocks. Rule prefixes
+`f:` file, `d:` directory, `p:` process, `c:` command output, `r:` Windows registry.
+Content matching with `->`, regex via `r:`, numeric comparison via `n:...compare`,
+chaining with `&&`, negation with `not`. Per-check `condition` of `all` / `any` / `none`.
+`regex_type` selects `osregex` (default) or `pcre2`. Custom policies are supported
+("you can also write your own policies or extend existing ones").
+
+**Thin — active response**
+([`capabilities/active-response/index.rst`](https://raw.githubusercontent.com/wazuh/wazuh-documentation/v4.14.1/source/user-manual/capabilities/active-response/index.rst)):
+triggered by rule ID, level, or group; stateless and stateful responses; the index page
+warns that "poor implementation of rules and responses might increase the vulnerability
+of an endpoint." The `location` values and `timeout_allowed` were **not** read from the
+how-to-configure page — **unverified** at that level of detail.
+
+**Unverified — SCA alert rule IDs.** The parent SID and `sca.*` field names used in
+[03](03-detection.md)'s D12 rule were not checked against the shipped SCA ruleset. That
+snippet is the intended shape, not working configuration.
+
+**Secondary — multi-tenancy.** Wazuh is not natively multi-tenant the way commercial
+SIEMs are; the practical patterns are manager-per-tenant or agent groups plus RBAC plus
+index-level restrictions, and when multiple managers feed one indexer some internal
+metadata is shared rather than tenant-scoped. All community sources
+([Wazuh RBAC](https://documentation.wazuh.com/current/user-manual/user-administration/rbac.html)
+is the product doc for the RBAC half; the tenancy patterns are blog and mailing-list
+material). Basis for [07](07-open-questions.md) Q11.
+
+**Secondary — Wazuh 5.0 engine.** 5.0 migrates decoders and rules from XML to YAML with
+an ECS-normalized common schema, per Wazuh's own migration issues
+([wazuh/wazuh#8004](https://github.com/wazuh/wazuh/issues/8004),
+[#7914](https://github.com/wazuh/wazuh/issues/7914),
+[#8011](https://github.com/wazuh/wazuh/issues/8011)). Corroborating signal: the
+main-branch `internal-options.rst` no longer lists `analysisd.decoder_order_size`. Not
+verified against a 5.0 release note. Basis for [07](07-open-questions.md) Q12.
+
 ## Incidents
 
 - **s1ngularity / nx** (26 August 2025) — **secondary**, corroborated across

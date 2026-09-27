@@ -73,8 +73,16 @@ proposal); full content behind access control and audit.
 **Recommendation:** start with the current proposal and revisit after the first real
 investigation, which will show concretely what was missing. Needs sign-off from
 whoever owns data handling, alongside the retention numbers in
-[04](04-data-model.md), which are engineering guesses and not a compliance
-position.
+[04](04-data-model.md), which are engineering guesses and not a compliance position.
+
+**Partly resolved by the MSSP decision.** The *external* half of this question is now
+settled: zone labels in cleartext, paths as keyed digests, HMAC key held by us, digest
+resolution on request from our side ([01](01-threat-model.md)). What remains open is
+the *internal* half — how much content we ourselves retain in the spool and blobs, and
+for how long — plus the contractual question of what the MSSP agreement actually
+commits us to. The retention split in [04](04-data-model.md) is the current proposal;
+the contract has to match it, and the digest-resolution turnaround needs a real SLA
+rather than a good intention.
 
 ## Q4 — Who reviews the queue? *(blocking M2 exit)*
 
@@ -84,9 +92,18 @@ cost, and the system's usefulness is capped by it: a queue nobody reads is a
 detector nobody has.
 
 Unresolved: who owns it, what the expected daily volume is, what the escalation path
-is, and what happens to the promotion ladder if review capacity does not exist. If
-the answer is "nobody," M3 should be reconsidered — enforcement without review is a
-gate whose false positives nobody learns about.
+is, and what happens to the promotion ladder if review capacity does not exist. If the
+answer is "nobody," M3 should be reconsidered — enforcement without review is a gate
+whose false positives nobody learns about.
+
+**Partly answered by the MSSP decision, but not eliminated.** Wazuh supplies the queue
+itself — dashboard, RBAC, severity — and an external firm supplies analysts, which is
+most of the capacity problem. What it does not supply is the two things only we can do:
+**writing runbooks an outsider can execute** ([03](03-detection.md)) and **serving
+digest-resolution and spool-pull requests** ([01](01-threat-model.md)). Both are
+standing internal commitments, and an MSSP engagement makes them load-bearing rather
+than optional — an unresolvable alert is worse than no alert, because someone paid
+attention to it and got nothing. Still needs an owner on our side.
 
 ## Q5 — Does `agentd` handle non-Claude-Code agents?
 
@@ -141,6 +158,13 @@ existing MDM trust root if there is one, or run a separate signing chain.
 Not blocking until M3, but it needs an owner before M3 starts, because retrofitting
 signing onto a deployed unsigned-bundle system is worse than doing it once.
 
+**One constraint is now fixed rather than open:** bundles do **not** travel over
+Wazuh's centralized-configuration channel, even though it exists and would be
+convenient ([02](02-architecture.md)). Doing so would give anyone with manager access —
+including an MSSP under option (b) of Q11 — the ability to rewrite the inline gate.
+Separate path, separate trust root. What remains open is the key management itself:
+reuse the MDM trust root, or run an independent signing chain.
+
 ## Q9 — Naming.
 
 `agentd`, `mcp-interpose`, `fleet` are placeholders from this design pass. Worth ten
@@ -165,3 +189,94 @@ threat model built on unverified numbers is a liability:
   confirm it. Affects Q2.
 - CVE counts and the reported NSA/DoD MCP advisory (June 2026). Unverified; nothing
   in the design depends on them.
+
+## Q11 — Wazuh multi-tenancy for third-party monitoring *(blocking MSSP onboarding)*
+
+Left open deliberately. Wazuh's multi-tenancy is thin — it is not natively
+multi-tenant the way commercial SIEMs are *(secondary sources; the architecture
+patterns below are community practice rather than a documented product feature)*. Every
+MSSP restriction in [01](01-threat-model.md) and [02](02-architecture.md) rests on
+whichever model is chosen, so until this is settled those restrictions are intentions
+rather than enforced controls.
+
+Three options.
+
+**(a) Manager per tenant.** A separate `wazuh-manager` per monitoring firm, optionally
+sharing a dashboard and indexer.
+
+- *For:* strongest isolation of rules, agent config, and active-response scope. Each
+  firm's rule changes cannot affect another's. Naturally bounds AR dispatch to that
+  manager's agents.
+- *Against:* every endpoint runs one agent per manager, or agents are partitioned by
+  which firm watches them — and partitioning defeats the point if two firms are meant
+  to watch the same fleet. Reported limitation: when multiple managers feed one
+  indexer, some internal Wazuh metadata is shared rather than tenant-scoped, so
+  isolation is not clean at the indexer anyway. Operationally the heaviest.
+
+**(b) Agent groups + API RBAC + index-level restrictions.** One manager. Tenants are
+expressed as agent groups; each firm gets a role scoped to its groups, and indexer
+restrictions limit which documents its users can read.
+
+- *For:* one deployment to run. The supported path — agent group labels appear on every
+  indexed alert, which is what index-level restriction keys on. Lets several firms watch
+  the *same* agents with different scopes, which (a) cannot.
+- *Against:* isolation is a configuration property, so a misconfigured role is a data
+  leak, and the failure is silent. Rule definitions are global: a rule one firm wants
+  is visible to all, and a noisy rule affects everyone's queue. Withholding AR dispatch
+  is an RBAC permission rather than an architectural boundary — exactly the control
+  [01](01-threat-model.md) leans on hardest, resting on the weakest mechanism here.
+
+**(c) Forward alerts into each firm's own Wazuh.** We keep ours; alerts are relayed to
+theirs.
+
+- *For:* their analysts work in their own tooling with their own history and
+  correlations across their whole client base. No access to our manager at all, so the
+  AR concern disappears entirely.
+- *Against:* **this changes the egress posture again, and it is the reason this option
+  cannot be waved through.** [01](01-threat-model.md) assumes the MSSP reads a copy we
+  host and control, under our RBAC and our retention. Forwarding means we are exporting
+  alert data to infrastructure we do not operate, with their retention, their access
+  control, and their breach exposure. Every digests-only guarantee becomes a term in
+  their contract rather than a property of our deployment, and revocation stops being
+  something we can do unilaterally. It also breaks the digest-resolution workflow, which
+  assumes a request path back to us for alerts *we* still hold.
+
+**Recommendation: (b), with (a) held in reserve, and (c) only if a firm's own platform
+is a hard requirement of the engagement.** (b) is the supported path, is the only option
+that lets multiple firms watch the same fleet, and keeps the data on our
+infrastructure. Its weakness — isolation by configuration — is real and mitigable by
+treating the RBAC and index-restriction config as security-critical: reviewed,
+version-controlled, and tested by an access-attempt test rather than by inspection. If a
+firm requires (c), the egress analysis in [01](01-threat-model.md) needs redoing before
+agreeing, not after.
+
+**This needs an owner.** It is the one decision here that is as much legal and
+commercial as technical — the answer depends on what the MSSP contract says about data
+location and retention, and no amount of architecture settles that. It blocks MSSP
+onboarding but not M0: deploy single-tenant, add the tenancy model before any external
+party gets access.
+
+## Q12 — Wazuh 5.0 migrates the ruleset from XML to YAML
+
+Wazuh 5.0 replaces the analysisd XML decoder/rule engine with a new engine using
+YAML-based decoders and rules and an ECS-normalized common schema *(secondary — from
+Wazuh's own GitHub issues on the migration; not verified against a 5.0 release note,
+and the main-branch documentation no longer lists `analysisd.decoder_order_size`,
+which is consistent with the rewrite)*.
+
+Every rule snippet in [03](03-detection.md) is 4.x XML. If the fleet lands on 5.x, the
+rules carry a rewrite cost, and the specific primitives this design leans on —
+`frequency` + `timeframe`, `if_matched_sid`, `same_field` on dynamic fields — need
+equivalents confirmed in the new engine. `same_field` is the one to check first, since
+D2, D10's tripwire, and D11 all depend on it and the ECS normalization may change field
+names underneath the flattened schema.
+
+Unresolved: which major version to target. Targeting 4.x means a known-good design and
+a migration later; targeting 5.x means designing against something less documented and
+less field-proven.
+
+**Recommendation:** build M0–M2 against 4.x, because the primitives are verified and
+`wazuh-logtest` gives a tested path today — but keep the rule set small and generated
+from a single source of truth rather than hand-written, so a migration is a
+re-render rather than a rewrite. Price the migration before the rule count gets large.
+Needs an owner to track the 5.0 release and confirm the primitives.

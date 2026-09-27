@@ -109,23 +109,77 @@ Stated plainly, because the design depends on them and two of them are weak:
 4. **MCP servers are untrusted by default,** including ones previously approved,
    because of rug pulls.
 
-## The monitor is a target
+## The monitor is a target — and now partly outside our control
 
 This system observes every file the agents read and every argument they pass. That
-makes it the most sensitive data store in the deployment and an attractive target
-in its own right — and a hijacked agent's most valuable move is to blind or
-plunder it.
+makes it the most sensitive data store in the deployment and an attractive target in
+its own right — and a hijacked agent's most valuable move is to blind or plunder it.
 
-Design consequences, non-negotiable:
+Two things changed when the fleet plane became Wazuh with third-party monitoring:
+**a copy of the data leaves our control**, and **the monitoring channel now runs in
+both directions** ([02](02-architecture.md)).
 
-- **Redact at the endpoint.** Digests by default, content only under explicit
-  policy. Secrets must never be shipped to the fleet plane in cleartext.
-- **The fleet plane must not be reachable from the agents it monitors.** Ingest is
-  one-way: a write-only ingest endpoint, on a network path the sandbox's egress
-  allowlist does not grant to agent subprocesses. An agent that can `POST` to its
-  own monitor can poison its own audit trail.
+### Digests-only becomes a contractual requirement
+
+Where digests-at-the-edge was previously a good internal hygiene decision, it is now
+the mechanism by which an external security firm can monitor the deployment without
+receiving a map of our source tree, our credential layout, and every domain our
+agents touch. It is a term of the engagement, not a preference.
+
+The tension this creates is real and has to be resolved rather than waved at: **an
+external analyst who cannot resolve a path digest cannot triage.** An alert reading
+"read of `hmac:9f3a...` followed by outbound network" is unactionable. Resolution:
+
+- **Zone labels in cleartext.** Every path carries `credential`, `workdir`,
+  `untrusted`, `system`, or `home`. This is the field that carries the security
+  meaning — "a credential-zone read preceded egress" is triageable without knowing
+  the filename, and it is the field the detectors key on anyway.
+- **Paths as keyed digests.** HMAC with a per-org key **we hold and the firm does
+  not**, so equality-matching across events still works (D10's tripwire depends on
+  it) while offline dictionary attacks on short low-entropy values do not.
+- **Digest resolution runs on our side, on request.** A documented request path with
+  a real turnaround, not a note in a runbook saying "ask the customer." This is a
+  standing operational commitment and the thing most likely to be under-resourced.
+- **Every runbook is written for an analyst who cannot see our source tree**
+  ([03](03-detection.md)). A runbook whose first step requires cleartext is a broken
+  runbook, and the way to find out is to have someone outside the team execute it
+  against a sample alert before the detector ships.
+
+The residual is that zone labels leak structure — knowing an endpoint had forty
+credential-zone reads today is itself information. That is an acceptable disclosure
+to a firm engaged to watch for exactly that, and it is the floor: below it, external
+monitoring does not function.
+
+### What the MSSP must not receive or be able to do
+
+- **No trajectory spool, no content blobs, no path-digest reverse maps.** They see
+  the Wazuh copy: the digest-bearing event and alert stream
+  ([04](04-data-model.md)).
+- **No HMAC key.** Equality without resolution.
+- **No active-response dispatch.** The manager can execute scripts on every enrolled
+  endpoint, which makes manager access a fleet-wide code-execution primitive.
+  Containment is ours to execute on their recommendation ([02](02-architecture.md)).
+- **No ability to change the inline gate.** Policy bundles travel a path separate
+  from Wazuh's centralized configuration, deliberately.
+
+Every one of these is a policy control enforced through Wazuh RBAC, agent groups, and
+index-level restrictions — and Wazuh's multi-tenancy is thin. The controls are only as
+good as the tenancy model, which is unresolved and needs an owner
+([07](07-open-questions.md) Q11). Until it is settled, treating these as *enforced*
+rather than *intended* would be overclaiming.
+
+### Still true
+
+- **Redact at the endpoint.** Secrets must never leave the machine in cleartext, and
+  now must never reach the MSSP in any form.
 - **Separate credentials and separate blast radius** from the agent fleet. The
-  monitor's credentials must not be reachable from any endpoint it monitors.
+  manager's credentials must not be reachable from any endpoint it monitors.
+- **An agent that can write to its own monitor can poison its own audit trail.** The
+  pre-Wazuh design got this with a write-only ingest endpoint. That property is
+  weakened now — the Wazuh agent's enrollment key sits on the endpoint, so adversary
+  A1 can speak to the manager as that agent. [02](02-architecture.md) covers the
+  partial mitigations and states plainly that this is a regression with no clean fix
+  on a compromised endpoint.
 
 ## Attack paths this design is meant to break
 
@@ -137,6 +191,8 @@ Design consequences, non-negotiable:
 | Rug pull on an approved server | Tool metadata hash comparison on every session start |
 | Decomposed malicious campaign | Fleet-level session-shape analysis; goal-drift scoring; aggregate review, not per-action blocking |
 | Cross-agent propagation | Content fingerprint matching between one session's ingest and another's output |
+| Malware edits agent config to disable hooks or widen permissions | Wazuh FIM with `whodata` on `.claude/` and `.mcp.json` reports which process wrote it; SCA asserts the managed bundle is still correct (D12); `ConfigChange` covers in-session changes that never touch disk |
+| Attacker kills the monitoring to work unobserved | Wazuh agent-disconnect alerting (rule 504, T1562.001); SCA `p:agentd` liveness from a separate process; fail-open run detection (D11); inconsistency between four independent streams |
 
 ## What this design does *not* break
 
@@ -156,3 +212,20 @@ Being honest about residual risk:
   not terminate TLS, so domain fronting can reach hosts outside the allowlist, and
   a broad entry like `github.com` is itself an exfiltration path. TLS-terminating
   inspection requires a custom proxy with its CA installed in the sandbox.
+- **A compromised Wazuh manager, or a malicious operator with manager access.**
+  Active response makes the manager a fleet-wide code-execution primitive. The
+  endpoint-side script allowlist bounds what can be run, and withholding dispatch
+  permission from MSSP roles bounds who can run it, but neither removes the
+  primitive. This is a capability the pre-Wazuh design did not have and it is the
+  clearest cost of the change.
+- **Forged events from a compromised endpoint.** The Wazuh agent's enrollment key is
+  on the endpoint, so adversary A1 can inject fabricated events or flood to bury real
+  ones. Per-agent keys scope forgery to one endpoint and volume baselining makes a
+  flood visible, but a patient attacker forging a plausible low-volume stream is not
+  detected. A regression against the write-only ingest design, stated rather than
+  solved.
+- **Anything the tenancy model is supposed to enforce but does not.** The MSSP
+  restrictions in this document are policy controls resting on Wazuh RBAC, agent
+  groups, and index restrictions. Wazuh's multi-tenancy is thin
+  ([07](07-open-questions.md) Q11); until that is settled these are intentions, not
+  guarantees.
