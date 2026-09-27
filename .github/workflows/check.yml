@@ -1,0 +1,66 @@
+# The checks a contributor runs locally, run on every pull request.
+#
+# The point of having CI here at all is that several of this repository's tests protect
+# things that fail silently rather than loudly, and a test that nobody runs protects
+# nothing:
+#
+#   - deploy/wazuh/rules_test.go asserts every Wazuh rule still matches a real event and
+#     that every field it names exists in the flattened schema. Renaming a schema field
+#     would otherwise retire detector rules without a single error message.
+#   - internal/event's field-budget test bounds the flattened event against Wazuh's JSON
+#     decoder limit, whose failure mode is the manager DROPPING the event.
+#   - The two smoke tests assert ambitd answers every hook with {} and that interposing an
+#     MCP server is byte-identical to running it directly.
+#
+# Deliberately not here: `make fixtures`. It regenerates the Wazuh fixtures by running the
+# real pipeline, and every run produces fresh event ids and timestamps, so a
+# regenerate-and-diff check would fail on every run while proving nothing. What keeps the
+# fixtures honest is that rules_test.go reads the schema by reflection, so a rename breaks
+# the build whether or not anyone regenerated them.
+
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only: nothing here publishes, comments, or pushes.
+permissions:
+  contents: read
+
+# A new push supersedes the run in flight for the same ref.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # From go.mod, so the toolchain here and the one a contributor uses cannot drift.
+          go-version-file: go.mod
+          cache: true
+
+      # go vet, race tests, gofmt — the same target a contributor runs before pushing.
+      # The race detector matters: the hook path and the sink drain goroutine share state
+      # by design, and a data race in the collector would corrupt the audit trail.
+      - name: make check
+        run: make check
+
+      # End-to-end: inert hook responses, correct filtering, no cleartext leaks into the
+      # SIEM-bound sink, and the interposer's byte-exact passthrough including a rug pull
+      # detected after approval.
+      - name: make smoke
+        run: make smoke
+
+      # ambitd and mcp-interpose ship as static binaries to macOS, Linux and WSL2
+      # endpoints. Nobody developing on Linux would notice a darwin build break, and the
+      # first person to find out would be whoever is deploying to a cohort.
+      - name: make cross
+        run: make cross

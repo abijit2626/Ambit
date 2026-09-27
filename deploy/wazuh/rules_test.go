@@ -857,3 +857,71 @@ func TestRulesStayQuietWhereTheyShould(t *testing.T) {
 		})
 	}
 }
+
+// TestDeployArtifactsAreWellFormed parses every XML and JSON file under deploy/.
+//
+// This exists because the failure it catches has already happened twice in this
+// repository, both times in a comment rather than in the configuration itself: a `--`
+// inside an XML comment is invalid XML, and Wazuh refuses a file it cannot parse — which
+// can take down the whole ossec.conf include, not just the rule that carried the typo.
+// Go's XML parser rejects the same sequence, so a test is enough and no Wazuh install is
+// needed.
+//
+// The SCA policy is YAML and is not checked here: validating it would mean adding a
+// dependency to a repository that deliberately has none, and `wazuh-logtest` and the SCA
+// engine both read it on deployment.
+func TestDeployArtifactsAreWellFormed(t *testing.T) {
+	// ".." is the deploy directory: this package sits in deploy/wazuh.
+	root := ".."
+	var xmlFiles, jsonFiles int
+
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".xml":
+			xmlFiles++
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Errorf("%s: %v", path, readErr)
+				return nil
+			}
+			// Token-scan rather than Unmarshal: it reaches comments and every other
+			// construct, where Unmarshal into a narrow struct can skip past them.
+			dec := xml.NewDecoder(strings.NewReader(string(raw)))
+			for {
+				_, tokErr := dec.Token()
+				if tokErr != nil {
+					if tokErr.Error() == "EOF" {
+						break
+					}
+					t.Errorf("%s is not well-formed XML: %v\n  (a double hyphen inside an XML comment is the usual cause, and Wazuh refuses the file)", path, tokErr)
+					break
+				}
+			}
+		case ".json":
+			jsonFiles++
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Errorf("%s: %v", path, readErr)
+				return nil
+			}
+			var v any
+			if jsonErr := json.Unmarshal(raw, &v); jsonErr != nil {
+				t.Errorf("%s is not valid JSON: %v", path, jsonErr)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	if xmlFiles == 0 || jsonFiles == 0 {
+		t.Errorf("found %d XML and %d JSON files under %s; expected both", xmlFiles, jsonFiles, root)
+	}
+	t.Logf("parsed %d XML and %d JSON deploy artifacts", xmlFiles, jsonFiles)
+}
