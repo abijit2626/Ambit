@@ -10,8 +10,8 @@ package filter
 import (
 	"math/rand/v2"
 
-	"github.com/abijit2626/indirect-prompt/internal/classify"
-	"github.com/abijit2626/indirect-prompt/internal/event"
+	"github.com/abijit2626/ambit/internal/classify"
+	"github.com/abijit2626/ambit/internal/event"
 )
 
 // Verdict says whether an event crosses and why. The reason is kept for the M0
@@ -54,7 +54,7 @@ var alwaysCross = map[event.Kind]bool{
 	event.KindSubagentStart:      true,
 	event.KindSubagentStop:       true,
 	event.KindCompact:            true, // needed to interpret R2 state
-	event.KindAgentdHealth:       true, // D7, D11
+	event.KindAmbitdHealth:       true, // D7, D11
 	event.KindPromptSubmit:       true, // metadata only; see Sanitize
 }
 

@@ -9,7 +9,7 @@
 // docs/02-architecture.md.
 //
 // Why this exists at all: the OTel stream is the second, independent path. The
-// hook stream dies with agentd's hook endpoint; OTel's destination is pinned in
+// hook stream dies with ambitd's hook endpoint; OTel's destination is pinned in
 // managed settings with developer-set variables removed. Losing one while the
 // other continues is the discrepancy that makes suppression visible — that
 // discrepancy, not either stream alone, is what detector D7 keys on.

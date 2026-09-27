@@ -11,7 +11,7 @@
   │    │ OTLP (metrics/logs/traces)    │        │   · FIM/syscheck alerts          │
   │    ▼                               │        │   · SCA policy results           │
   │  ┌──────────────────────────────┐  │        │   · agent connect/disconnect     │
-  │  │ agentd                       │  │        │   · active response dispatch     │
+  │  │ ambitd                       │  │        │   · active response dispatch     │
   │  │  · hook endpoint (SYNC)      │  │        │   · MITRE ATT&CK tagging         │
   │  │  · OTLP receiver (async)     │  │        │        │                         │
   │  │  · R2 bit accounting         │  │        │        ▼                         │
@@ -21,7 +21,7 @@
   │  └────────┬─────────────────────┘  │        │        ▼                         │
   │           │                        │        │  RBAC / agent groups → MSSP      │
   │           ▼ JSON lines             │        └──────────────────────────────────┘
-  │  /var/log/ipctl/events.jsonl ──────┼──► wazuh-agent (log_format json)
+  │  /var/log/ambit/events.jsonl ──────┼──► wazuh-agent (log_format json)
   │           │                        │        authenticated, bidirectional
   │           ▼                        │
   │  local spool (full trajectory,     │        managed settings (MDM or
@@ -34,7 +34,7 @@
                 ▼  MCP servers (untrusted)
 ```
 
-Three components. `agentd` and `mcp-interpose` on the endpoint, and **Wazuh as the
+Three components. `ambitd` and `mcp-interpose` on the endpoint, and **Wazuh as the
 fleet plane** — manager, indexer, dashboard.
 
 ## Division of labour: what is in the synchronous path
@@ -52,10 +52,10 @@ So:
 
 | Concern | Where | Why |
 | --- | --- | --- |
-| Rule-of-Two bit accounting | **agentd** | Needs live per-session state |
-| Provenance fingerprint intersection | **agentd** | Needs the session's ingest fingerprint set in memory |
-| The gate (`allow` / `deny` / `ask`) | **agentd** | Must return a verdict inline, in ms |
-| Goal-drift scoring | **agentd**, async | Needs the session's declared objective and action history |
+| Rule-of-Two bit accounting | **ambitd** | Needs live per-session state |
+| Provenance fingerprint intersection | **ambitd** | Needs the session's ingest fingerprint set in memory |
+| The gate (`allow` / `deny` / `ask`) | **ambitd** | Must return a verdict inline, in ms |
+| Goal-drift scoring | **ambitd**, async | Needs the session's declared objective and action history |
 | Cross-event correlation within an endpoint | **Wazuh rules** | `frequency` + `timeframe` does this natively |
 | Cross-endpoint and cross-session correlation | **Wazuh rules** | Manager sees the whole fleet |
 | Event store, retention, archiving | **Wazuh** | It is a SIEM; this is its job |
@@ -66,19 +66,19 @@ So:
 | Containment | **Wazuh active response** | Async and coarse — never a gate |
 
 **Events reach Wazuh already carrying the verdict and the provenance edge.**
-`agentd` has already decided; Wazuh correlates, alerts, stores, and presents. It
+`ambitd` has already decided; Wazuh correlates, alerts, stores, and presents. It
 never re-derives a decision, and it never blocks one.
 
 ## Transport: JSON lines, no custom decoders
 
-`agentd` appends normalized events as single-line JSON to a local file. The Wazuh
+`ambitd` appends normalized events as single-line JSON to a local file. The Wazuh
 agent tails it:
 
 ```xml
 <localfile>
   <log_format>json</log_format>
-  <location>/var/log/ipctl/events.jsonl</location>
-  <label key="ipctl.stream">agentd</label>
+  <location>/var/log/ambit/events.jsonl</location>
+  <label key="ambit.stream">ambitd</label>
 </localfile>
 ```
 
@@ -91,7 +91,7 @@ is not the obstacle; see [04](04-data-model.md) for the constraint that actually
 drives the flattened schema.
 
 `only-future-events` and `age` are available if spool replay after an outage would
-otherwise flood the manager — relevant given `agentd` spools locally when the
+otherwise flood the manager — relevant given `ambitd` spools locally when the
 manager is unreachable.
 
 ## Interception points
@@ -102,7 +102,7 @@ Unchanged from the pre-Wazuh design. All verified against `code.claude.com`.
 
 Claude Code fires hooks at 33 events. A hook can be `type: "http"`, which POSTs the
 event JSON to a URL and reads the decision from the response body. Pointed at
-`127.0.0.1`, this gives `agentd` a synchronous decision point with no process spawn
+`127.0.0.1`, this gives `ambitd` a synchronous decision point with no process spawn
 per event.
 
 | Event | Use | Can block? |
@@ -129,7 +129,7 @@ Two ordering facts the design depends on:
 - **Hook decisions do not bypass permission rules.** A matching `deny` rule blocks
   regardless of a hook returning `allow`; a matching `ask` rule still prompts.
   Deny-first precedence is preserved, including managed-settings deny rules. So
-  `agentd` cannot *widen* access, only narrow it — it is fail-safe in the widening
+  `ambitd` cannot *widen* access, only narrow it — it is fail-safe in the widening
   direction by construction.
 
 ### Endpoint: OpenTelemetry
@@ -143,7 +143,7 @@ Content is gated and off by default: `OTEL_LOG_TOOL_DETAILS=1` for arguments,
 `OTEL_LOG_TOOL_CONTENT=1` for output, `OTEL_LOG_RAW_API_BODIES=1` for full bodies.
 Default content cap 60 KB, tunable with `CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH`.
 
-OTel goes to `agentd`, **not** to Wazuh. It is the content-rich stream and the
+OTel goes to `ambitd`, **not** to Wazuh. It is the content-rich stream and the
 full-trajectory source; almost none of it should reach the SIEM
 ([04](04-data-model.md)). Its value here is that its destination is lockable in
 managed settings with developer-set variables removed, making it a
@@ -157,7 +157,7 @@ dependencies — a large supply-chain surface to add to a security tool, and one
 whose whole job is not being the thing that compromises the endpoint. Port 4318 is
 the OTLP/HTTP default; **4317 is gRPC** and is the wrong port for this receiver.
 
-`agentd` answers **415** on a protobuf body rather than failing to parse it, and
+`ambitd` answers **415** on a protobuf body rather than failing to parse it, and
 reports `degraded` health when any export is rejected. A silent decode failure
 here would look like "OTel is configured" while nothing was ever received, which
 is precisely the blind spot the second stream exists to close. SCA checks 10006
@@ -166,10 +166,10 @@ before it reaches an endpoint.
 
 **What the second stream is actually for.** Not content — the hook stream carries
 the security-relevant slice with better structure. It is for the **discrepancy**:
-the hook endpoint dies with `agentd`, while OTel's destination is pinned in
+the hook endpoint dies with `ambitd`, while OTel's destination is pinned in
 managed settings. One stream reporting tool calls while the other is silent means
 a collection path has stopped, which is what suppression looks like from the
-inside. `agentd` counts tool calls on both paths and reports `degraded` when
+inside. `ambitd` counts tool calls on both paths and reports `degraded` when
 exactly one is silent; both quiet is an idle endpoint, not a signal.
 
 The comparison is deliberately coarse — "one silent", not a ratio. The two streams
@@ -209,10 +209,10 @@ directory and narrow with `restrict`, rather than naming the file:
 <syscheck>
   <directories realtime="yes" check_all="yes" report_changes="yes"
                whodata="yes" restrict="settings\.json$|settings\.local\.json$"
-               tags="ipctl,claude-settings">/home/*/.claude</directories>
+               tags="ambit,claude-settings">/home/*/.claude</directories>
   <directories realtime="yes" check_all="yes" report_changes="yes"
                whodata="yes" restrict="\.mcp\.json$"
-               tags="ipctl,mcp-config">/home/*/src</directories>
+               tags="ambit,mcp-config">/home/*/src</directories>
 </syscheck>
 ```
 
@@ -229,7 +229,7 @@ cheap and directly reviewable.
 settings precedence. A developer passing `--settings` on the command line, or a
 project-level file that does not exist yet, will not appear as a modification to a
 watched path. Claude Code's `ConfigChange` hook covers the in-session case and
-reaches Wazuh through `agentd`. So D6 is FIM *plus* `ConfigChange`, and neither
+reaches Wazuh through `ambitd`. So D6 is FIM *plus* `ConfigChange`, and neither
 alone is sufficient.
 
 ### Wazuh: SCA — asserting the managed-settings bundle
@@ -247,9 +247,9 @@ negate, and a per-check `condition` of `all`, `any`, or `none`. `regex_type` sel
 
 ```yaml
 policy:
-  id: "ipctl_managed_settings"
-  file: "ipctl_managed_settings.yml"
-  name: "indirect-prompt managed settings assertions"
+  id: "ambit_managed_settings"
+  file: "ambit_managed_settings.yml"
+  name: "ambit managed settings assertions"
   description: "Asserts the Claude Code managed-settings bundle is present and correct"
   regex_type: "pcre2"
 
@@ -283,10 +283,10 @@ checks:
       - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"allowManagedDomainsOnly"\s*:\s*true'
 
   - id: 10005
-    title: "agentd is running"
+    title: "ambitd is running"
     condition: all
     rules:
-      - 'p:agentd'
+      - 'p:ambitd'
 
   - id: 10006
     title: "OTel destination is pinned to localhost"
@@ -305,7 +305,7 @@ add `c:` checks that shell out to a small verifier for anything where text match
 is genuinely ambiguous. Treat the SCA policy as a tripwire on a known-good file,
 not as a parser.
 
-`p:agentd` (check 10005) is a weak liveness check — it confirms a process by that
+`p:ambitd` (check 10005) is a weak liveness check — it confirms a process by that
 name exists, nothing about whether it is functioning. It is a complement to, not a
 replacement for, the event-stream evidence behind D7 and D11.
 
@@ -322,7 +322,7 @@ alert-time default is `0s` (alert as soon as disconnected); with default values 
 documented minimum time to produce an alert is 2m20s.
 
 This gives D7's *coarse* half — the endpoint went dark — with no code. It does not
-give the finer half: `agentd` dead while the Wazuh agent is alive, so the endpoint
+give the finer half: `ambitd` dead while the Wazuh agent is alive, so the endpoint
 still heartbeats while the event stream stops. That is a rule on event absence,
 covered in [03](03-detection.md).
 
@@ -334,13 +334,13 @@ which is seconds to minutes after the tool call it is reacting to. The tool call
 already run.
 
 So the rule is absolute: **active response contains, it does not gate.** The inline
-gate is `agentd`'s and only `agentd`'s.
+gate is `ambitd`'s and only `ambitd`'s.
 
 Reasonable containment actions on D1 or D3 firing:
 
 - Revoke the endpoint's git and cloud credentials (the useful one — it invalidates
   what was probably already stolen, and limits what can be done with it next)
-- Disable the agent installation / write a kill-switch file `agentd` reads to drop
+- Disable the agent installation / write a kill-switch file `ambitd` reads to drop
   to deny-by-default
 - Isolate the host at the network layer, where endpoint management supports it
 
@@ -419,7 +419,7 @@ and speak to the manager as that agent: injecting fabricated events, or flooding
 bury real ones. This is a genuine regression against the write-only design and
 there is no clean fix on a compromised endpoint. Partial mitigations: per-agent keys
 so forgery is scoped to one endpoint rather than the fleet; rate and volume
-baselining per agent so a flood is itself an alert; and treating the `agentd` event
+baselining per agent so a flood is itself an alert; and treating the `ambitd` event
 stream and the FIM/SCA/OTel streams as mutually corroborating, since forging all of
 them consistently is meaningfully harder than forging one.
 
@@ -428,14 +428,14 @@ Full table:
 | Boundary | Direction | Control |
 | --- | --- | --- |
 | MCP server → interposer | inbound, untrusted | Metadata hashing, description scanning, results labelled untrusted |
-| Claude Code → agentd | inbound, semi-trusted | Structurally cannot widen permissions (deny-first precedence) |
-| agentd → events.jsonl → wazuh-agent | local, same host | Filtered and redacted at source; file is append-only to `agentd`, read-only to the Wazuh agent |
+| Claude Code → ambitd | inbound, semi-trusted | Structurally cannot widen permissions (deny-first precedence) |
+| ambitd → events.jsonl → wazuh-agent | local, same host | Filtered and redacted at source; file is append-only to `ambitd`, read-only to the Wazuh agent |
 | wazuh-agent ↔ wazuh-manager | **bidirectional, authenticated** | Per-agent enrollment keys; endpoint-side active-response allowlist; per-agent volume baselining |
 | wazuh-manager → MSSP | outbound, contractual | RBAC + agent groups + index restrictions; digests-only; no AR dispatch. See [07](07-open-questions.md) Q11 |
-| fleet → agentd policy | inbound policy | Signed policy bundles, version-pinned; `agentd` refuses unsigned or downgraded bundles. **Not delivered over the Wazuh channel** — separate path, separate trust root |
+| fleet → ambitd policy | inbound policy | Signed policy bundles, version-pinned; `ambitd` refuses unsigned or downgraded bundles. **Not delivered over the Wazuh channel** — separate path, separate trust root |
 | Developer/malware → settings | adversarial | Managed settings outrank all; FIM + SCA + `ConfigChange` report attempts |
 
-Note the last-but-one row. Policy bundles that decide what `agentd` denies are
+Note the last-but-one row. Policy bundles that decide what `ambitd` denies are
 **deliberately not** distributed through Wazuh's centralized-configuration channel,
 even though it exists and would be convenient. Doing so would make the manager — and
 whoever has manager access, including an MSSP — able to rewrite the inline gate.
@@ -452,7 +452,7 @@ must choose between failing open (the gate silently stops existing) and failing
 closed (every developer stops working at once). Neither is acceptable as a steady
 state.
 
-`agentd` decides locally from a cached signed bundle, targets single-digit
+`ambitd` decides locally from a cached signed bundle, targets single-digit
 milliseconds, and streams to Wazuh asynchronously. Wazuh's availability then affects
 detection latency, not developer throughput.
 
@@ -464,9 +464,9 @@ detection latency, not developer throughput.
 | `PostToolUse` ingest | fire-and-forget, never blocks | Drop to local spool |
 | Append to `events.jsonl` | fire-and-forget | Spool; never block the hook path on disk |
 | Async detectors (goal drift) | seconds | Advisory only; never gates inline |
-| Wazuh agent → manager | minutes | Wazuh agent buffers; `agentd` rotates `events.jsonl` with a bounded cap |
+| Wazuh agent → manager | minutes | Wazuh agent buffers; `ambitd` rotates `events.jsonl` with a bounded cap |
 
-**Fail policy on `agentd` unavailability.** Split by action class, not global:
+**Fail policy on `ambitd` unavailability.** Split by action class, not global:
 
 - **Fail closed** for a small, enumerated set of high-impact classes: writes to
   credential paths, outbound network from Bash, `git push`, MCP tools annotated
@@ -477,29 +477,29 @@ detection latency, not developer throughput.
   run of fail-opens is itself an alert (D11) — it is what suppressing the daemon
   looks like.
 
-A bug in `agentd` must not halt every developer at once, or the system gets
+A bug in `ambitd` must not halt every developer at once, or the system gets
 disabled. A narrow fail-closed set keeps catastrophic actions gated while keeping
 the blast radius of our own outage survivable.
 
 ## Tamper resistance, honestly
 
-`agentd` runs as the user on a machine adversary A1 fully controls. It can be
+`ambitd` runs as the user on a machine adversary A1 fully controls. It can be
 killed. The mitigations are not "make it unkillable":
 
 1. **Policy above the attacker's reach.** Managed settings cannot be overridden by
    CLI args, project settings, or user settings. The sandbox, the egress allowlist,
-   and `disableBypassPermissionsMode` hold even with `agentd` dead — and SCA
+   and `disableBypassPermissionsMode` hold even with `ambitd` dead — and SCA
    verifies they are still there.
 2. **Silence is a signal.** Wazuh knows the enrolled roster and alerts on
    disconnection natively (rule 504, T1562.001). An endpoint that goes quiet while
    still checked into work is an alert.
-3. **Four independent streams.** `agentd` events (killable with the daemon), FIM,
+3. **Four independent streams.** `ambitd` events (killable with the daemon), FIM,
    SCA, and agent connectivity — the last three are the Wazuh agent's, a separate
    process. Losing one while the others continue is a high-signal discrepancy, and
    it is the discrepancy rather than any single stream that makes suppression
    visible.
 
 Residual risk, restated: this makes endpoint compromise visible and expensive, not
-impossible. An attacker who kills both `agentd` and the Wazuh agent, or who forges
+impossible. An attacker who kills both `ambitd` and the Wazuh agent, or who forges
 a plausible stream with the stolen enrollment key, degrades our visibility. We
 detect the *absence* and the *inconsistency*; we do not prevent either.

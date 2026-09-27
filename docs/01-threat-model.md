@@ -192,7 +192,7 @@ rather than *intended* would be overclaiming.
 | Decomposed malicious campaign | Fleet-level session-shape analysis; goal-drift scoring; aggregate review, not per-action blocking |
 | Cross-agent propagation | Content fingerprint matching between one session's ingest and another's output |
 | Malware edits agent config to disable hooks or widen permissions | Wazuh FIM with `whodata` on `.claude/` and `.mcp.json` reports which process wrote it; SCA asserts the managed bundle is still correct (D12); `ConfigChange` covers in-session changes that never touch disk |
-| Attacker kills the monitoring to work unobserved | Wazuh agent-disconnect alerting (rule 504, T1562.001); SCA `p:agentd` liveness from a separate process; fail-open run detection (D11); inconsistency between four independent streams |
+| Attacker kills the monitoring to work unobserved | Wazuh agent-disconnect alerting (rule 504, T1562.001); SCA `p:ambitd` liveness from a separate process; fail-open run detection (D11); inconsistency between four independent streams |
 
 ## What this design does *not* break
 

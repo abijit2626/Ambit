@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up agentd against your own Claude Code sessions, on your own machine.
+# Set up ambitd against your own Claude Code sessions, on your own machine.
 #
 # Why: the M0 exit criterion that blocks everything downstream is the MEASURED
 # INTERESTING FRACTION — what share of real tool calls are security-relevant
@@ -12,7 +12,7 @@
 # no cohort.
 #
 # This uses USER-SCOPE settings (~/.claude/settings.json), not managed settings.
-# Nothing here is fleet-wide and nothing needs admin. It is safe because agentd is
+# Nothing here is fleet-wide and nothing needs admin. It is safe because ambitd is
 # inert: every hook response is {}, which means "no opinion", so Claude Code's
 # permission pipeline behaves exactly as it would with no hook installed.
 #
@@ -23,20 +23,20 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-IPCTL_DIR="${IPCTL_DIR:-$HOME/.ipctl}"
-CONFIG="$IPCTL_DIR/config.json"
-EVENTS="$IPCTL_DIR/events.jsonl"
-TRAJECTORY="$IPCTL_DIR/trajectory.jsonl"
+AMBIT_DIR="${AMBIT_DIR:-$HOME/.ambit}"
+CONFIG="$AMBIT_DIR/config.json"
+EVENTS="$AMBIT_DIR/events.jsonl"
+TRAJECTORY="$AMBIT_DIR/trajectory.jsonl"
 HOOK_PORT="${HOOK_PORT:-7777}"
 OTLP_PORT="${OTLP_PORT:-4318}"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
-BIN="$IPCTL_DIR/agentd"
+BIN="$AMBIT_DIR/ambitd"
 
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 warn() { printf '\033[33m%s\033[0m\n' "$1"; }
 
 status() {
-  bold "agentd local status"
+  bold "ambitd local status"
   echo
   if pgrep -f "$BIN" >/dev/null 2>&1; then
     echo "  process:    running (pid $(pgrep -f "$BIN" | head -1))"
@@ -164,18 +164,18 @@ PY
 }
 
 uninstall() {
-  bold "Removing the local agentd setup"
+  bold "Removing the local ambitd setup"
   pkill -f "$BIN" 2>/dev/null || true
-  if [ -f "$SETTINGS.ipctl-backup" ]; then
-    mv "$SETTINGS.ipctl-backup" "$SETTINGS"
+  if [ -f "$SETTINGS.ambit-backup" ]; then
+    mv "$SETTINGS.ambit-backup" "$SETTINGS"
     echo "  restored $SETTINGS from backup"
   else
-    warn "  no backup found; remove the ipctl hooks from $SETTINGS by hand"
+    warn "  no backup found; remove the ambit hooks from $SETTINGS by hand"
   fi
   echo
   echo "  Left in place so you do not lose collected data:"
-  echo "    $IPCTL_DIR"
-  echo "  Delete it when you are done:  rm -rf $IPCTL_DIR"
+  echo "    $AMBIT_DIR"
+  echo "  Delete it when you are done:  rm -rf $AMBIT_DIR"
 }
 
 case "${1:-install}" in
@@ -186,14 +186,14 @@ esac
 
 # --- install -----------------------------------------------------------------
 
-bold "Building agentd"
-mkdir -p "$IPCTL_DIR"
-chmod 700 "$IPCTL_DIR"
-( cd "$ROOT" && go build -ldflags "-X main.version=dev-local" -o "$BIN" ./cmd/agentd )
+bold "Building ambitd"
+mkdir -p "$AMBIT_DIR"
+chmod 700 "$AMBIT_DIR"
+( cd "$ROOT" && go build -ldflags "-X main.version=dev-local" -o "$BIN" ./cmd/ambitd )
 echo "  $BIN"
 
 bold "Writing config"
-# home is detected by agentd; trusted_repo_paths marks which CLAUDE.md files are
+# home is detected by ambitd; trusted_repo_paths marks which CLAUDE.md files are
 # expected, so an instruction file from anywhere else shows up as a D8 candidate.
 cat > "$CONFIG" <<EOF
 {
@@ -202,7 +202,7 @@ cat > "$CONFIG" <<EOF
   "otlp_enabled": true,
   "events_path": "$EVENTS",
   "trajectory_path": "$TRAJECTORY",
-  "fingerprint_key_path": "$IPCTL_DIR/fingerprint.key",
+  "fingerprint_key_path": "$AMBIT_DIR/fingerprint.key",
   "endpoint_id": "ep_$(hostname | tr -cd 'a-zA-Z0-9' | tr 'A-Z' 'a-z' | cut -c1-16)",
   "user_id": "$(id -un)",
   "org_id": "local",
@@ -223,11 +223,11 @@ mkdir -p "$(dirname "$SETTINGS")"
 # Never overwrite an existing backup. Re-running this script would otherwise
 # replace the pristine copy with an already-modified one, and uninstall would
 # then "restore" settings that still contain the hooks.
-if [ -f "$SETTINGS.ipctl-backup" ]; then
-  echo "  backup already exists, keeping it: $SETTINGS.ipctl-backup"
+if [ -f "$SETTINGS.ambit-backup" ]; then
+  echo "  backup already exists, keeping it: $SETTINGS.ambit-backup"
 else
-  cp "$SETTINGS" "$SETTINGS.ipctl-backup"
-  echo "  backed up to $SETTINGS.ipctl-backup"
+  cp "$SETTINGS" "$SETTINGS.ambit-backup"
+  echo "  backed up to $SETTINGS.ambit-backup"
 fi
 
 python3 - "$SETTINGS" "$HOOK_PORT" "$OTLP_PORT" <<'PY'
@@ -266,7 +266,7 @@ env.update({
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
-    # http/json, not grpc or http/protobuf: agentd's receiver decodes OTLP/JSON
+    # http/json, not grpc or http/protobuf: ambitd's receiver decodes OTLP/JSON
     # with the standard library. Port 4318 is OTLP/HTTP; 4317 is gRPC.
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
     "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{otlp_port}",
@@ -279,16 +279,16 @@ with open(path, "w") as f:
 print(f"  added {len(events)} hook events + OTel env")
 PY
 
-bold "Starting agentd"
+bold "Starting ambitd"
 pkill -f "$BIN" 2>/dev/null || true
-nohup "$BIN" -config "$CONFIG" > "$IPCTL_DIR/agentd.log" 2>&1 &
+nohup "$BIN" -config "$CONFIG" > "$AMBIT_DIR/ambitd.log" 2>&1 &
 sleep 1
 
 if curl -sf "http://127.0.0.1:$HOOK_PORT/healthz" >/dev/null 2>&1; then
   echo "  running, hook endpoint healthy on 127.0.0.1:$HOOK_PORT"
 else
-  warn "  agentd did not come up; see $IPCTL_DIR/agentd.log"
-  tail -20 "$IPCTL_DIR/agentd.log" || true
+  warn "  ambitd did not come up; see $AMBIT_DIR/ambitd.log"
+  tail -20 "$AMBIT_DIR/ambitd.log" || true
   exit 1
 fi
 
@@ -296,7 +296,7 @@ cat <<EOF
 
 $(bold "Done. Now just work normally.")
 
-Start Claude Code sessions and use them as you always would. agentd returns no
+Start Claude Code sessions and use them as you always would. ambitd returns no
 decision, so nothing about those sessions changes. After a day of real work:
 
     ./scripts/dev-local.sh --status
@@ -307,9 +307,9 @@ volume.
 
 Notes:
 
-  - agentd does not restart itself. After a reboot, re-run this script.
+  - ambitd does not restart itself. After a reboot, re-run this script.
   - The spool ($TRAJECTORY) holds everything, including prompt text. It is
-    chmod 600 under $IPCTL_DIR and never leaves the machine.
+    chmod 600 under $AMBIT_DIR and never leaves the machine.
   - The Wazuh-bound sink ($EVENTS) holds only the filtered slice, with paths as
     keyed digests. --status leak-checks it.
   - To remove:  ./scripts/dev-local.sh --uninstall

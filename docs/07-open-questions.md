@@ -105,7 +105,7 @@ standing internal commitments, and an MSSP engagement makes them load-bearing ra
 than optional — an unresolvable alert is worse than no alert, because someone paid
 attention to it and got nothing. Still needs an owner on our side.
 
-## Q5 — Does `agentd` handle non-Claude-Code agents?
+## Q5 — Does `ambitd` handle non-Claude-Code agents?
 
 The user's targets are Claude Code and MCP. Other CLI agents (Gemini CLI, Amazon Q,
 Codex) were also weaponized in s1ngularity, and MCP servers are shared across
@@ -138,7 +138,7 @@ loss on SHADE-Arena before accepting it.
 
 [02](02-architecture.md) proposes failing closed for credential writes, Bash egress,
 `git push`, destructive MCP tools, and out-of-workdir writes, and open for the rest.
-Every member of that set is a potential fleet-wide work stoppage if `agentd` has a
+Every member of that set is a potential fleet-wide work stoppage if `ambitd` has a
 bug.
 
 Unresolved: whether the set should start empty and grow, and whether "fail closed"
@@ -146,12 +146,12 @@ should mean `deny` or `ask` — `ask` degrades to a human decision rather than a
 stop, which may be the better failure mode for all of them.
 
 **Recommendation:** fail-closed means `ask`, not `deny`, for the whole set. A
-developer answering a prompt during an `agentd` outage is a far better failure mode
+developer answering a prompt during an `ambitd` outage is a far better failure mode
 than a blocked task with an opaque reason.
 
 ## Q8 — Policy bundle signing and key management.
 
-`agentd` must refuse unsigned or downgraded bundles ([02](02-architecture.md)), which
+`ambitd` must refuse unsigned or downgraded bundles ([02](02-architecture.md)), which
 means a signing key, a rotation story, and a trust root on every endpoint. Reuse the
 existing MDM trust root if there is one, or run a separate signing chain.
 
@@ -165,10 +165,31 @@ including an MSSP under option (b) of Q11 — the ability to rewrite the inline 
 Separate path, separate trust root. What remains open is the key management itself:
 reuse the MDM trust root, or run an independent signing chain.
 
-## Q9 — Naming.
+## Q9 — Naming. **RESOLVED.**
 
-`agentd`, `mcp-interpose`, `fleet` are placeholders from this design pass. Worth ten
-minutes before there are import paths and config keys named after them.
+The project is **ambit**: the scope of authority an action falls inside or outside
+of, which is the question the Rule-of-Two gate, the provenance layer and goal-drift
+scoring are each asking in their own way.
+
+Rejected on collisions, all checked: `remit` (Adrian, a runtime AI-agent security
+tool with a Claude Code plugin, uses "out-of-remit" in its own description),
+`mandate` (`agent-mandate` occupies nearly this problem space), `lodestar`
+(ChainSafe's Ethereum client), `purview` (Microsoft Purview, an adjacent governance
+product), `adrift` (a web proxy network). `spoor` was dropped for being one letter
+from "spool", which this codebase already uses.
+
+Components: **`ambitd`** (endpoint daemon), `mcp-interpose`, and Wazuh as the fleet
+plane. Rule groups are `ambit_*`, the SCA policy is `ambit_managed_settings`, sinks
+live under `/var/lib/ambit/`.
+
+**One consequence was a bug fix rather than cosmetics.** The daemon was `agentd`,
+and Wazuh ships its own `wazuh-agentd` on every monitored endpoint. The SCA
+documentation does not say whether `p:` matches a process name exactly or by
+substring; under substring matching, SCA check 10007's `p:agentd` would have matched
+Wazuh's own daemon and passed on every endpoint running the Wazuh agent, including
+ones where ours was dead. That is a silent failure of D7's liveness half — the check
+reports healthy precisely when it should fire. `ambitd` is distinct enough that the
+matching rule no longer matters.
 
 ## Q10 — Claims resting on post-cutoff or secondary sources.
 
@@ -280,3 +301,23 @@ less field-proven.
 from a single source of truth rather than hand-written, so a migration is a
 re-render rather than a rewrite. Price the migration before the rule count gets large.
 Needs an owner to track the 5.0 release and confirm the primitives.
+
+## Q13 — Evaluate Adrian before M1 starts *(blocking M1)*
+
+[`secureagentics/adrian`](https://github.com/secureagentics/adrian) is a runtime
+AI-agent security tool with a native Claude Code plugin, detecting "malicious,
+misaligned, or out-of-remit behaviour" ([06](06-prior-art.md)). It is the closest
+overlap found, and the assessment in that document rests on a one-line description
+rather than on reading it.
+
+Unresolved: does it already cover M1 and M2's ground? The provisional read is that
+it is per-session, reasoning-trace-inclusive and standalone, where this is
+fleet-level, action-only and SIEM-native — but that distinction is exactly the kind
+that evaporates on contact with the actual code.
+
+**Recommendation: half a day, before M1 starts, alongside Q2.** Three outcomes are
+all acceptable and one is not. Acceptable: it does not fit, and we build; it fits
+well, and we adopt it and contribute the Rule-of-Two and provenance layers upstream;
+it partly fits, and `ambitd` narrows to the gap. Not acceptable: building the whole
+thing and discovering the overlap at M3. Needs an owner, and the same person should
+take Q2 since both are build-versus-adopt calls on the same milestone.

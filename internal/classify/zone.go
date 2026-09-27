@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/abijit2626/indirect-prompt/internal/event"
+	"github.com/abijit2626/ambit/internal/event"
 )
 
 // Zoner classifies paths relative to a session's working directory and the

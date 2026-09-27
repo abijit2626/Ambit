@@ -3,7 +3,7 @@ package classify
 import (
 	"testing"
 
-	"github.com/abijit2626/indirect-prompt/internal/event"
+	"github.com/abijit2626/ambit/internal/event"
 )
 
 func testZoner() *Zoner {

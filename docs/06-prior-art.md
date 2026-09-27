@@ -88,7 +88,7 @@ matters for this document is what that deletes from our scope.
 | Event store, retention, archiving | indexer | choose retention; keep `logall_json` off |
 | Alerting, severity, review queue | manager + dashboard | write rules and runbooks |
 | Enrollment, endpoint roster | agent registration | enrol the cohort |
-| Heartbeat / agent liveness | **rule 504, `Wazuh agent disconnected`, level 3, already tagged MITRE T1562.001** in the shipped ruleset | tune `agents_disconnection_time` / `agents_disconnection_alert_time`; add the finer `agentd`-died case |
+| Heartbeat / agent liveness | **rule 504, `Wazuh agent disconnected`, level 3, already tagged MITRE T1562.001** in the shipped ruleset | tune `agents_disconnection_time` / `agents_disconnection_alert_time`; add the finer `ambitd`-died case |
 | Log ingestion | `localfile` with `log_format json`; built-in JSON decoder yields addressable dynamic fields | write `events.jsonl`; **no custom decoder** |
 | Cross-event correlation | `frequency` + `timeframe` + `if_matched_sid` + `same_field` (dynamic fields only) | express D2, D10-tripwire, D11 as rules |
 | Config tamper detection | FIM/syscheck with `whodata` (user + process attribution via Audit/eBPF) | watch `.claude/` and `.mcp.json` as **directories with `restrict`** — realtime does not work on individual files |
@@ -97,7 +97,7 @@ matters for this document is what that deletes from our scope.
 | Containment | active response, triggered by rule id/level/group | **allowlist scripts on the endpoint**; containment only, never a gate |
 | Multi-tenant access | RBAC + agent groups + index restrictions | resolve the model ([07](07-open-questions.md) Q11) |
 
-**What Wazuh cannot do, and why `agentd` still exists:** it has no mechanism to
+**What Wazuh cannot do, and why `ambitd` still exists:** it has no mechanism to
 return a verdict to the process that emitted an event, and its correlation latency is
 seconds at best. The inline gate, the Rule-of-Two bit accounting, and the provenance
 fingerprint intersection all need live session state and a millisecond answer. That is
@@ -118,6 +118,43 @@ the whole of our differentiated work, and it is unaffected by adopting a SIEM.
   actually needs ([03](03-detection.md)).
 - `logall` / `logall_json` write every event including non-alerting ones to
   `archives.log` / `archives.json`. Both default to `no`. They stay `no`.
+
+### Directly overlapping: Adrian
+
+[`secureagentics/adrian`](https://github.com/secureagentics/adrian) describes itself
+as an open-source runtime AI-agent security tool that "monitors and controls AI
+agents, catching malicious tool use, prompt injection, and policy drift in real
+time, before the agent acts," analysing agent activity logs and reasoning traces to
+detect "malicious, misaligned, or out-of-remit behaviour." It ships SDKs for Python
+and TypeScript **and a native Claude Code plugin**.
+
+This is the closest thing to a direct overlap found during research, and leaving it
+out of a prior-art document would make that document misleading.
+
+**Assessment, and its limits.** From the project description alone — *not* from
+reading the code, which is work still owed — the differences that would justify
+building this anyway are:
+
+- **Reasoning traces vs. actions.** Adrian analyses reasoning traces alongside
+  activity. The finding this whole design rests on is that chain-of-thought
+  monitoring is the fragile, degrading signal and action-level monitoring is the
+  durable one ([03](03-detection.md)). If Adrian's detection leans on traces, it
+  inherits that fragility; if it is action-first, the overlap is larger than it
+  looks.
+- **Per-session vs. fleet.** Nothing in the description suggests cross-session or
+  cross-endpoint correlation, which is where D2, D9 and D10 live and the reason
+  Wazuh is in this design at all.
+- **SIEM-native vs. standalone.** This system is built to hand a security team
+  alerts in the tool they already run, with ATT&CK tags and runbooks an external
+  analyst can execute. A standalone dashboard is a different product.
+- **Rule-of-Two accounting and provenance edges.** No evidence either exists in
+  Adrian, and they are the two mechanisms this design contributes.
+
+**This assessment is provisional and should not be trusted as written.** It rests on
+a one-line description. Before M1 starts, someone needs to actually read Adrian and
+either confirm these gaps or fold the work in — see [07](07-open-questions.md) Q13.
+Building a second tool because we did not read the first one would be the most
+expensive mistake available here.
 
 ### Defensive architecture
 

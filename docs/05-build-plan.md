@@ -46,7 +46,7 @@ deployment and configuration rather than software.
 
 - The SIEM-bound flattened schema and the mapping in [04](04-data-model.md), which is
   new work that did not exist when we owned both ends.
-- The `agentd`-side filter deciding what crosses ([04](04-data-model.md)) — new, and
+- The `ambitd`-side filter deciding what crosses ([04](04-data-model.md)) — new, and
   load-bearing: get it wrong and either the indexer drowns or detection goes blind.
 - Wazuh rules, one set per detector, each with a runbook written for an analyst who
   cannot see our source tree.
@@ -59,7 +59,7 @@ deployment and configuration rather than software.
 
 **Net:** M0 shrinks a lot — from building a platform to deploying one and writing the
 endpoint half. M1 grows slightly, because rules and runbooks are now the unit of
-detection work. The unchanged core is `agentd`: the R2 accounting, the provenance
+detection work. The unchanged core is `ambitd`: the R2 accounting, the provenance
 intersection, and the gate, which is where the design's actual contribution lives and
 which Wazuh cannot do.
 
@@ -69,12 +69,12 @@ which Wazuh cannot do.
 
 - **Deploy Wazuh**: manager, indexer, dashboard. Agent enrolled on the cohort
   endpoints. `logall` and `logall_json` left at `no`.
-- `agentd`: HTTP hook endpoint on localhost, OTLP/HTTP receiver on 4318
+- `ambitd`: HTTP hook endpoint on localhost, OTLP/HTTP receiver on 4318
   (`http/json` only — see [02](02-architecture.md) on why not grpc or protobuf),
   local spool, `events.jsonl` writer. **No policy engine** — every hook response
   is empty.
 - Stream-discrepancy counters across the hook and OTel paths, feeding
-  `agentd_health`. This is D7's third signal and the reason the OTel receiver is
+  `ambitd_health`. This is D7's third signal and the reason the OTel receiver is
   in M0 at all rather than deferred: without a second path there is nothing to
   corroborate against.
 - Normalized internal schema v2 and the flattened SIEM-bound schema
@@ -124,7 +124,7 @@ cheap high-confidence detectors alerting.
 
 **Exit criteria:** every MCP server the cohort uses is inventoried with an approved
 baseline. A deliberately mutated test server triggers D4 within one session. Killing
-`agentd` on a test endpoint fires D7 via SCA `p:agentd`; stopping the Wazuh agent
+`ambitd` on a test endpoint fires D7 via SCA `p:ambitd`; stopping the Wazuh agent
 fires rule 504. Reverting a managed-settings key fires D12. Every rule has a runbook
 a person outside the team can execute against a sample alert — tested by having
 someone outside the team do it.
@@ -138,7 +138,7 @@ interesting and much more work.
 
 **Goal:** produce the signals that later gate, and measure how noisy they are.
 
-- Provenance engine in `agentd`: session taint, content fingerprinting, causal
+- Provenance engine in `ambitd`: session taint, content fingerprinting, causal
   ordering. Intersection local; edges and the notable fingerprint emitted.
 - Rule-of-Two accounting: the three bits and the zone/annotation classification
   tables.
@@ -146,7 +146,7 @@ interesting and much more work.
   would have made** — shadow mode. `policy_decision` carries the shadow verdict; no
   decision returned to Claude Code.
 - Wazuh rules for D1, D2, D3, D9, and for shadow-verdict volume by rule.
-- Replay harness: AgentDojo, SHADE-Arena, ControlArena trajectories through `agentd`;
+- Replay harness: AgentDojo, SHADE-Arena, ControlArena trajectories through `ambitd`;
   per-detector detection and false-positive rates. Rule correctness tested separately
   with `wazuh-logtest` over fixture `events.jsonl` lines.
 
@@ -166,7 +166,7 @@ of it.
 off.
 
 - Policy engine returns real decisions. Signed policy bundles, version-pinned,
-  `agentd` refusing unsigned or downgraded bundles — **delivered over a path separate
+  `ambitd` refusing unsigned or downgraded bundles — **delivered over a path separate
   from Wazuh's centralized configuration** ([02](02-architecture.md)), so manager
   access does not confer the ability to rewrite the gate.
 - Split fail policy: narrow fail-closed set, fail-open plus record otherwise. Per
@@ -182,7 +182,7 @@ off.
   has a fast exception path. A gate with no appeal gets circumvented.
 
 **Exit criteria:** fail-closed set enumerated and justified. Documented rollback: one
-bundle version revert, plus a kill switch returning `agentd` to observe-only without
+bundle version revert, plus a kill switch returning `ambitd` to observe-only without
 touching managed settings. Active-response allowlist reviewed, and MSSP roles
 confirmed to hold no dispatch permission.
 

@@ -1,5 +1,5 @@
 # M1. SCA policy asserting the Claude Code managed-settings bundle is present and
-# correct, and that agentd is running. This is detector D12.
+# correct, and that ambitd is running. This is detector D12.
 #
 # Why this exists: every control in docs/02-architecture.md rests on claims about
 # endpoint state — the sandbox is on, bypassPermissions is disabled, the egress
@@ -15,10 +15,10 @@
 # Treat this policy as a tripwire on a known-good file, not as a parser.
 
 policy:
-  id: "ipctl_managed_settings"
-  file: "ipctl_managed_settings.yml"
-  name: "indirect-prompt: Claude Code managed settings assertions"
-  description: "Asserts the managed-settings bundle and agentd are present and correct."
+  id: "ambit_managed_settings"
+  file: "ambit_managed_settings.yml"
+  name: "ambit: Claude Code managed settings assertions"
+  description: "Asserts the managed-settings bundle and ambitd are present and correct."
   references:
     - https://code.claude.com/docs/en/managed-settings
     - https://code.claude.com/docs/en/sandboxing
@@ -40,7 +40,7 @@ checks:
     rationale: "Without the bundle, every control below is unenforced and user or project settings decide policy."
     remediation: "Redeploy the managed-settings bundle via MDM or server-managed settings."
     compliance:
-      - ipctl: ["anchor"]
+      - ambit: ["anchor"]
     condition: any
     rules:
       - 'f:/Library/Application Support/ClaudeCode/managed-settings.json'
@@ -52,7 +52,7 @@ checks:
     rationale: "bypassPermissions is the invocation mode the s1ngularity malware pattern used: --dangerously-skip-permissions on an agent the developer already authenticated. This is the single most direct counter to adversary A1."
     remediation: "Set permissions.disableBypassPermissionsMode to \"disable\" in managed settings."
     compliance:
-      - ipctl: ["A1", "D3"]
+      - ambit: ["A1", "D3"]
       - mitre_technique: ["T1562.001"]
     condition: any
     rules:
@@ -65,7 +65,7 @@ checks:
     rationale: "failIfUnavailable is the load-bearing one: without it Claude Code starts and runs unsandboxed when the sandbox cannot initialize, which is the failure mode nobody notices."
     remediation: "Set all three keys in the managed sandbox block."
     compliance:
-      - ipctl: ["A1", "A2"]
+      - ambit: ["A1", "A2"]
     condition: all
     rules:
       - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"failIfUnavailable"\s*:\s*true'
@@ -77,7 +77,7 @@ checks:
     rationale: "allowManagedDomainsOnly blocks non-allowed domains outright instead of prompting, and honors only managed entries, so a developer cannot widen the allowlist. Without it, exfiltration to an arbitrary host is one approval prompt away."
     remediation: "Set sandbox.network.allowManagedDomainsOnly to true in managed settings."
     compliance:
-      - ipctl: ["D9"]
+      - ambit: ["D9"]
       - mitre_technique: ["T1041", "T1567"]
     condition: any
     rules:
@@ -85,12 +85,12 @@ checks:
       - 'f:/etc/claude-code/managed-settings.json -> r:"allowManagedDomainsOnly"\s*:\s*true'
 
   - id: 10005
-    title: "The PreToolUse hook points at agentd on loopback"
-    description: "A managed PreToolUse hook must target 127.0.0.1, which is where agentd listens."
-    rationale: "If the hook is absent, agentd sees nothing and the event stream silently stops while the endpoint still heartbeats. If it points anywhere but loopback, tool-call decisions have left the machine."
+    title: "The PreToolUse hook points at ambitd on loopback"
+    description: "A managed PreToolUse hook must target 127.0.0.1, which is where ambitd listens."
+    rationale: "If the hook is absent, ambitd sees nothing and the event stream silently stops while the endpoint still heartbeats. If it points anywhere but loopback, tool-call decisions have left the machine."
     remediation: "Restore the managed hooks block."
     compliance:
-      - ipctl: ["D7"]
+      - ambit: ["D7"]
     condition: any
     rules:
       - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"url"\s*:\s*"http://127\.0\.0\.1:\d+/hook"'
@@ -106,7 +106,7 @@ checks:
       on the wrong port exports into nothing while still looking configured.
     remediation: "Set the OTEL_* env block in managed settings with endpoint http://127.0.0.1:4318."
     compliance:
-      - ipctl: ["D7"]
+      - ambit: ["D7"]
     condition: any
     rules:
       - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1:4318'
@@ -116,32 +116,40 @@ checks:
     title: "OTLP protocol is http/json"
     description: "OTEL_EXPORTER_OTLP_PROTOCOL must be http/json."
     rationale: >
-      agentd's receiver decodes OTLP/JSON only. A grpc or http/protobuf setting
-      means Claude Code exports in an encoding agentd cannot read, so the second
-      stream is silently absent. agentd answers 415 and reports degraded health,
+      ambitd's receiver decodes OTLP/JSON only. A grpc or http/protobuf setting
+      means Claude Code exports in an encoding ambitd cannot read, so the second
+      stream is silently absent. ambitd answers 415 and reports degraded health,
       but this check catches the misconfiguration before it reaches an endpoint.
     remediation: "Set OTEL_EXPORTER_OTLP_PROTOCOL to http/json in managed settings."
     compliance:
-      - ipctl: ["D7"]
+      - ambit: ["D7"]
     condition: any
     rules:
       - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"OTEL_EXPORTER_OTLP_PROTOCOL"\s*:\s*"http/json"'
       - 'f:/etc/claude-code/managed-settings.json -> r:"OTEL_EXPORTER_OTLP_PROTOCOL"\s*:\s*"http/json"'
 
   - id: 10007
-    title: "agentd process is running"
+    title: "ambitd process is running"
     description: "The endpoint daemon must be alive."
     rationale: >
       This check runs on the WAZUH AGENT's schedule, in a different process from
       the one it is watching, which is the whole point when the adversary can kill
       processes. It is deliberately weak on its own: p: confirms a process by name
-      and says nothing about whether it is functioning, so a wedged agentd passes.
-      The companion signal is a stale agentd_health heartbeat with this check
+      and says nothing about whether it is functioning, so a wedged ambitd passes.
+      The companion signal is a stale ambitd_health heartbeat with this check
       passing. See docs/03-detection.md on D7's two halves.
-    remediation: "Start the agentd service and investigate why it stopped."
+
+      The daemon is named ambitd rather than agentd for this check's sake. Wazuh
+      ships its own wazuh-agentd process on every monitored endpoint, and the SCA
+      documentation does not state whether p: matches a process name exactly or by
+      substring. Under substring matching, 'p:agentd' would have matched
+      wazuh-agentd and passed on every endpoint running the Wazuh agent, including
+      ones where our daemon is dead - silently defeating this check. A distinct
+      name removes the ambiguity rather than relying on an unstated matching rule.
+    remediation: "Start the ambitd service and investigate why it stopped."
     compliance:
-      - ipctl: ["D7", "D11"]
+      - ambit: ["D7", "D11"]
       - mitre_technique: ["T1562.001"]
     condition: all
     rules:
-      - 'p:agentd'
+      - 'p:ambitd'

@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-// Stats reports writer health. agentd emits these as agentd_health events, which
+// Stats reports writer health. ambitd emits these as ambitd_health events, which
 // is what D11 keys on.
 type Stats struct {
 	Written    int64

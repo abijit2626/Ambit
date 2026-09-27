@@ -15,7 +15,7 @@
 
   What this does NOT cover, per docs/02-architecture.md: in-session config changes
   that never touch disk, and a --settings path passed on the command line. Claude
-  Code's ConfigChange hook covers those and reaches Wazuh through agentd. D6 is
+  Code's ConfigChange hook covers those and reaches Wazuh through ambitd. D6 is
   FIM *plus* ConfigChange; neither half is sufficient alone.
 -->
 <ossec_config>
@@ -24,10 +24,10 @@
     <!-- User-scope Claude Code settings and hooks. -->
     <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
                  restrict="settings\.json$|settings\.local\.json$|hooks\.json$"
-                 tags="ipctl,d6,claude-settings">/home/*/.claude</directories>
+                 tags="ambit,d6,claude-settings">/home/*/.claude</directories>
     <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
                  restrict="settings\.json$|settings\.local\.json$|hooks\.json$"
-                 tags="ipctl,d6,claude-settings">/Users/*/.claude</directories>
+                 tags="ambit,d6,claude-settings">/Users/*/.claude</directories>
 
     <!--
       Managed settings: the anchor everything else rests on. A change here is
@@ -36,10 +36,10 @@
     -->
     <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
                  restrict="managed-settings\.json$"
-                 tags="ipctl,d6,managed-settings">/Library/Application Support/ClaudeCode</directories>
+                 tags="ambit,d6,managed-settings">/Library/Application Support/ClaudeCode</directories>
     <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
                  restrict="managed-settings\.json$"
-                 tags="ipctl,d6,managed-settings">/etc/claude-code</directories>
+                 tags="ambit,d6,managed-settings">/etc/claude-code</directories>
 
     <!--
       MCP server configuration. A new or edited .mcp.json is how an unsanctioned
@@ -51,28 +51,28 @@
     -->
     <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
                  recursion_level="4" restrict="\.mcp\.json$"
-                 tags="ipctl,d6,mcp-config">/home/*/src</directories>
+                 tags="ambit,d6,mcp-config">/home/*/src</directories>
     <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
                  recursion_level="4" restrict="\.mcp\.json$"
-                 tags="ipctl,d6,mcp-config">/Users/*/src</directories>
+                 tags="ambit,d6,mcp-config">/Users/*/src</directories>
 
     <!--
-      agentd's own configuration and its HMAC key directory. Rotating the key
+      ambitd's own configuration and its HMAC key directory. Rotating the key
       breaks equality matching against every stored fingerprint, so an
       unexplained change here is both a tamper signal and an operational one.
       The key file's CONTENT is never reported: report_changes is off for this
       entry deliberately, because a diff would put key material in an alert.
     -->
     <directories realtime="yes" whodata="yes" check_all="yes" report_changes="no"
-                 tags="ipctl,d6,agentd-config">/etc/ipctl</directories>
+                 tags="ambit,d6,ambitd-config">/etc/ambit</directories>
 
     <!-- The sinks change constantly by design; alerting on them is pure noise. -->
-    <ignore>/var/lib/ipctl/events.jsonl</ignore>
-    <ignore>/var/lib/ipctl/trajectory.jsonl</ignore>
-    <ignore>/usr/local/var/ipctl/events.jsonl</ignore>
-    <ignore>/usr/local/var/ipctl/trajectory.jsonl</ignore>
-    <ignore type="sregex">^/var/lib/ipctl/.*\.jsonl\.\d+$</ignore>
-    <ignore type="sregex">^/usr/local/var/ipctl/.*\.jsonl\.\d+$</ignore>
+    <ignore>/var/lib/ambit/events.jsonl</ignore>
+    <ignore>/var/lib/ambit/trajectory.jsonl</ignore>
+    <ignore>/usr/local/var/ambit/events.jsonl</ignore>
+    <ignore>/usr/local/var/ambit/trajectory.jsonl</ignore>
+    <ignore type="sregex">^/var/lib/ambit/.*\.jsonl\.\d+$</ignore>
+    <ignore type="sregex">^/usr/local/var/ambit/.*\.jsonl\.\d+$</ignore>
 
   </syscheck>
 </ossec_config>

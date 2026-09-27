@@ -8,10 +8,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/abijit2626/indirect-prompt/internal/config"
-	"github.com/abijit2626/indirect-prompt/internal/event"
-	"github.com/abijit2626/indirect-prompt/internal/features"
-	"github.com/abijit2626/indirect-prompt/internal/hook"
+	"github.com/abijit2626/ambit/internal/config"
+	"github.com/abijit2626/ambit/internal/event"
+	"github.com/abijit2626/ambit/internal/features"
+	"github.com/abijit2626/ambit/internal/hook"
 )
 
 type memSink struct {
@@ -305,7 +305,7 @@ func TestUntrustedInstructionsLoadedCrosses(t *testing.T) {
 }
 
 // TestM0EmitsNoDecision: the milestone guarantee. An event carrying a decision
-// would mean agentd had formed an opinion, which M0 must not do.
+// would mean ambitd had formed an opinion, which M0 must not do.
 func TestM0EmitsNoDecision(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{

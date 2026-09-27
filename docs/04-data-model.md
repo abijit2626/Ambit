@@ -1,6 +1,6 @@
 # 04 — Data model
 
-Two representations, deliberately. A **rich internal event** that `agentd` computes
+Two representations, deliberately. A **rich internal event** that `ambitd` computes
 and stores locally, and a **flattened SIEM-bound event** that crosses to Wazuh. The
 mapping between them is documented below and is part of the contract.
 
@@ -11,7 +11,7 @@ mapping between them is documented below and is part of the contract.
 2. **Zone labels in cleartext, paths as keyed digests.** An external analyst needs to
    know a read hit a credential path; they do not need our directory names
    ([01](01-threat-model.md)).
-3. **Redact at the endpoint.** Secret detection and stripping happen in `agentd`
+3. **Redact at the endpoint.** Secret detection and stripping happen in `ambitd`
    before anything is written to `events.jsonl`.
 4. **Filter at the endpoint.** Wazuh gets security-relevant events; the full
    trajectory stays local. See [what crosses](#what-crosses-to-wazuh).
@@ -50,16 +50,16 @@ Wazuh. Target **under 40 fields** per SIEM-bound event, comfortably inside even 
 
 ## Internal event (rich, local only)
 
-Unchanged in shape from the pre-Wazuh design; this is what `agentd` computes and
+Unchanged in shape from the pre-Wazuh design; this is what `ambitd` computes and
 spools.
 
 ```jsonc
 {
   "event_id": "01JD...", "ts": "...", "ingested_at": "...",
-  "source": "hook|otel|interpose|agentd", "schema_v": 2,
+  "source": "hook|otel|interpose|ambitd", "schema_v": 2,
 
   "endpoint": { "endpoint_id": "ep_7f3a...", "hostname_digest": "...",
-                "os": "darwin|linux|wsl2", "agentd_version": "0.3.1" },
+                "os": "darwin|linux|wsl2", "ambitd_version": "0.3.1" },
   "actor":    { "user_id": "u_1a2b", "org_id": "o_9x8y" },
   "agent":    { "kind": "claude-code", "version": "2.1.271",
                 "entrypoint": "cli|sdk|ci|web", "model": "...",
@@ -114,7 +114,7 @@ Snake_case, scalar values only, no arrays of objects, no nesting beyond what a
 
   "endpoint_id": "ep_7f3a...",
   "os": "darwin",
-  "agentd_version": "0.3.1",
+  "ambitd_version": "0.3.1",
   "user_id": "u_1a2b",
   "org_id": "o_9x8y",
 
@@ -179,7 +179,7 @@ supports.
 
 **Measured field counts** (from `internal/event` tests, which fail the build if these
 regress): **49 for a Bash tool event, 50 for an MCP tool event** — the two widest —
-and 25–31 for `session_start`, `config_change` and `agentd_health`. An earlier draft
+and 25–31 for `session_start`, `config_change` and `ambitd_health`. An earlier draft
 of this document estimated 37; that was wrong, and it was wrong in the direction of
 under-counting. The real ceiling matters less than it looked, though: 50 is far under
 the 256 default for `decoder_order_size`, so the budget enforced in tests is 55 with a
@@ -198,12 +198,12 @@ SIEM.
 
 | Internal | Flattened | Transformation | Loss |
 | --- | --- | --- | --- |
-| `endpoint.*`, `actor.*` | `endpoint_id`, `os`, `agentd_version`, `user_id`, `org_id` | prefix-collapse | none |
+| `endpoint.*`, `actor.*` | `endpoint_id`, `os`, `ambitd_version`, `user_id`, `org_id` | prefix-collapse | none |
 | `agent.repo.{remote_digest,branch}` | `repo_remote_digest`, `repo_branch` | prefix-collapse | `dirty` dropped |
 | `tool.mcp.annotations.readOnlyHint` | `tool_mcp_readonly_hint` | prefix-collapse | none |
 | `tool.paths[]` | `path_zone`, `path_op`, `path_digest`, `path_count` | **array of objects → scalars** | **Only the highest-severity path survives**, ranked `credential` > `system` > `untrusted` > `home` > `workdir`. `path_count` preserves the cardinality D2 needs. Multi-path calls lose their other paths to the SIEM; the full list stays in the internal event. |
 | `tool.input_features.secret_hits[]` | `secret_hit_kinds` | objects → array of kind strings | per-kind counts dropped |
-| `tool.input_features.{domains,urls,...}` | **not emitted** | — | **Deliberate.** Hundreds of fingerprints per event is the firehose. `agentd` intersects locally; only `prov_edge_*` and `prov_fp_notable` cross. |
+| `tool.input_features.{domains,urls,...}` | **not emitted** | — | **Deliberate.** Hundreds of fingerprints per event is the firehose. `ambitd` intersects locally; only `prov_edge_*` and `prov_fp_notable` cross. |
 | `provenance.edges[]` | `prov_edge_count` + highest-confidence edge as `prov_edge_{class,confidence,from}` | **array of objects → scalars** | Additional edges lost to the SIEM; count preserved |
 | `provenance.ingest_refs[]` | **not emitted** | — | Resolvable from the spool on request |
 | `provenance.taint[]` | `taint_labels` | array of strings, supported as-is | none |
@@ -227,7 +227,7 @@ events/day for 63 agents; pushing all of it in — and especially enabling
 **`logall` and `logall_json` stay `no`.** Both default to `no`; leave them there.
 Archiving is what the local spool and object storage are for.
 
-Filtering happens in `agentd`, by event kind:
+Filtering happens in `ambitd`, by event kind:
 
 | Event kind | Crosses to Wazuh? | Rationale |
 | --- | --- | --- |
@@ -243,7 +243,7 @@ Filtering happens in `agentd`, by event kind:
 | `mcp_list` | **yes** | D4, D5; once per server per session |
 | `subagent_start` / `subagent_stop` | **yes** | Low volume, needed for provenance scoping |
 | `compact` | **yes** | Low volume; needed to interpret R2 state ([07](07-open-questions.md) Q1) |
-| `agentd_health` | **yes** | D7, D11 |
+| `ambitd_health` | **yes** | D7, D11 |
 | `goal_drift_score` | **only above threshold** | One score per tool call is the firehose again |
 
 A `tool_pre` or `tool_post` event is **interesting** — and therefore crosses — when
@@ -352,7 +352,7 @@ sensitive and belongs narrowly and briefly.**
   natively ([03](03-detection.md)).
 - **Spool**: `events.jsonl` rotated locally with a bounded disk cap, shipped
   periodically to object storage. Not indexed; queried by pull during investigation.
-- **Provenance**: fingerprint intersection is per-session, in `agentd`'s memory
+- **Provenance**: fingerprint intersection is per-session, in `ambitd`'s memory
   during the session. Only edges and the notable fingerprint are emitted.
   Cross-session set matching (D10's real form) runs as a scheduled job over object
   storage or the indexer's feature columns.

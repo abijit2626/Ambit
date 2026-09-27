@@ -1,4 +1,4 @@
-// Command agentd is the endpoint half of the indirect-prompt control plane.
+// Command ambitd is the endpoint half of the ambit control plane.
 //
 // In M0 it is observe-only: it receives Claude Code hook events, normalizes them,
 // writes the full trajectory to a local spool and the filtered security-relevant
@@ -21,13 +21,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/abijit2626/indirect-prompt/internal/collector"
-	"github.com/abijit2626/indirect-prompt/internal/config"
-	"github.com/abijit2626/indirect-prompt/internal/event"
-	"github.com/abijit2626/indirect-prompt/internal/features"
-	"github.com/abijit2626/indirect-prompt/internal/hook"
-	"github.com/abijit2626/indirect-prompt/internal/otlp"
-	"github.com/abijit2626/indirect-prompt/internal/sink"
+	"github.com/abijit2626/ambit/internal/collector"
+	"github.com/abijit2626/ambit/internal/config"
+	"github.com/abijit2626/ambit/internal/event"
+	"github.com/abijit2626/ambit/internal/features"
+	"github.com/abijit2626/ambit/internal/hook"
+	"github.com/abijit2626/ambit/internal/otlp"
+	"github.com/abijit2626/ambit/internal/sink"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -35,7 +35,7 @@ var version = "0.0.0-dev"
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "agentd:", err)
+		fmt.Fprintln(os.Stderr, "ambitd:", err)
 		os.Exit(1)
 	}
 }
@@ -134,7 +134,7 @@ func run() error {
 	defer stop()
 
 	// The OTLP receiver is the second, independent stream. The hook endpoint dies
-	// with agentd; OTel's destination is pinned in managed settings with
+	// with ambitd; OTel's destination is pinned in managed settings with
 	// developer-set variables removed. Losing one while the other continues is
 	// the discrepancy detector D7 keys on.
 	var otlpSrv *otlp.Server
@@ -158,7 +158,7 @@ func run() error {
 		}()
 	}
 
-	log.Info("agentd started",
+	log.Info("ambitd started",
 		"version", version,
 		"mode", "observe-only",
 		"hook_addr", cfg.HookAddr,
@@ -173,7 +173,7 @@ func run() error {
 
 	st := coll.Stats()
 	ot := coll.OTel()
-	log.Info("agentd stopped",
+	log.Info("ambitd stopped",
 		"handled", st.Handled,
 		"crossed", st.Crossed,
 		"interesting_fraction", fmt.Sprintf("%.4f", coll.InterestingFraction()),
@@ -191,10 +191,10 @@ func otlpAddrOrOff(cfg config.Config) string {
 	return cfg.OTLPAddr
 }
 
-// emitHealth writes a periodic agentd_health event.
+// emitHealth writes a periodic ambitd_health event.
 //
 // This is the fine half of D7. Wazuh's rule 504 catches the endpoint going dark,
-// and SCA's p:agentd check catches the process being gone, but neither can tell a
+// and SCA's p:ambitd check catches the process being gone, but neither can tell a
 // wedged daemon from a healthy one. A stale heartbeat with the process present is
 // what distinguishes them. See docs/03-detection.md.
 func emitHealth(
@@ -250,12 +250,12 @@ func emitHealth(
 				EventID:    fmt.Sprintf("health-%d", now.UnixNano()),
 				TS:         now.Format(time.RFC3339Nano),
 				IngestedAt: now.Format(time.RFC3339Nano),
-				Source:     event.SourceAgentd,
+				Source:     event.SourceAmbitd,
 				SchemaV:    event.SchemaVersion,
-				Kind:       event.KindAgentdHealth,
+				Kind:       event.KindAmbitdHealth,
 				Endpoint: event.Endpoint{
 					EndpointID:    cfg.EndpointID,
-					AgentdVersion: version,
+					AmbitdVersion: version,
 				},
 				Actor: event.Actor{UserID: cfg.UserID, OrgID: cfg.OrgID},
 				Agent: event.Agent{Kind: "claude-code"},
@@ -272,7 +272,7 @@ func emitHealth(
 			events.Write(event.Flatten(e))
 
 			if status != "ok" {
-				log.Warn("agentd degraded",
+				log.Warn("ambitd degraded",
 					"events_dropped", es.Dropped, "trajectory_dropped", ts.Dropped,
 					"events_write_errs", es.WriteErrs, "trajectory_write_errs", ts.WriteErrs)
 			}

@@ -8,7 +8,7 @@
 // handing over the values. The key is ours and is not shared. See
 // docs/04-data-model.md.
 //
-// Raw fingerprints never cross to the SIEM. agentd intersects locally and emits
+// Raw fingerprints never cross to the SIEM. ambitd intersects locally and emits
 // only derived edges plus one notable fingerprint.
 package features
 
@@ -21,7 +21,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/abijit2626/indirect-prompt/internal/event"
+	"github.com/abijit2626/ambit/internal/event"
 )
 
 // DigestPrefix marks a keyed digest so a reader never mistakes one for a value.

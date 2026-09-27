@@ -9,7 +9,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/abijit2626/indirect-prompt/internal/loopback"
+	"github.com/abijit2626/ambit/internal/loopback"
 	"time"
 )
 
@@ -19,7 +19,7 @@ import (
 // truncated, not rejected: losing some content is better than losing the event.
 const maxBodyBytes = 4 << 20 // 4 MiB
 
-// Handler turns a payload into whatever agentd does with it. Implementations
+// Handler turns a payload into whatever ambitd does with it. Implementations
 // must not block: they are called on the hook's synchronous path.
 type Handler interface {
 	Handle(*Payload)
@@ -63,7 +63,7 @@ type Server struct {
 
 // Options configure the server.
 type Options struct {
-	// Addr must be a loopback address. agentd decides locally precisely so that
+	// Addr must be a loopback address. ambitd decides locally precisely so that
 	// no fleet-wide network dependency sits in the critical path.
 	Addr    string
 	Handler Handler
@@ -138,7 +138,7 @@ func (s *Server) serveHook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
 		// Respond with an empty decision rather than an error: a failure in
-		// agentd must not fail the tool call in M0.
+		// ambitd must not fail the tool call in M0.
 		s.log.Warn("hook body read failed", "err", err)
 		s.respond(w, &Response{}, start)
 		return

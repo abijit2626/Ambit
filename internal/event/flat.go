@@ -25,7 +25,7 @@ type SIEMEvent struct {
 
 	EndpointID    string `json:"endpoint_id"`
 	OS            string `json:"os"`
-	AgentdVersion string `json:"agentd_version"`
+	AmbitdVersion string `json:"ambitd_version"`
 	UserID        string `json:"user_id"`
 	OrgID         string `json:"org_id"`
 
@@ -145,7 +145,7 @@ func Flatten(e *Event) *SIEMEvent {
 		Kind:                   e.Kind,
 		EndpointID:             e.Endpoint.EndpointID,
 		OS:                     e.Endpoint.OS,
-		AgentdVersion:          e.Endpoint.AgentdVersion,
+		AmbitdVersion:          e.Endpoint.AmbitdVersion,
 		UserID:                 e.Actor.UserID,
 		OrgID:                  e.Actor.OrgID,
 		AgentKind:              e.Agent.Kind,

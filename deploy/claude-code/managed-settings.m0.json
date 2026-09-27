@@ -15,13 +15,13 @@
     "Managed settings sit at the highest precedence: no other level, including",
     "command-line arguments, overrides a managed permission rule, and managed",
     "hooks cannot be disabled by user or project settings. That is what makes",
-    "this file the anchor, and why SCA policy ipctl_managed_settings asserts it",
+    "this file the anchor, and why SCA policy ambit_managed_settings asserts it",
     "is still here and still correct (detector D12)."
   ],
 
   "env": {
     "_comment_protocol": [
-      "http/json, NOT grpc or http/protobuf. agentd's receiver decodes OTLP/JSON",
+      "http/json, NOT grpc or http/protobuf. ambitd's receiver decodes OTLP/JSON",
       "with the standard library; the alternatives would pull grpc and protobuf",
       "runtimes into a daemon that ships to developer endpoints and currently has",
       "zero dependencies, which is a large supply-chain surface to add to a",
@@ -30,7 +30,7 @@
       "Port 4318, NOT 4317. 4318 is the OTLP/HTTP default; 4317 is gRPC. An",
       "earlier version of this file had 4317 with HTTP intent, which would have",
       "exported into a dead port: Claude Code would look configured while nothing",
-      "was ever received. agentd answers 415 on a protobuf body and reports",
+      "was ever received. ambitd answers 415 on a protobuf body and reports",
       "degraded health rather than failing silently, precisely because that blind",
       "spot is what the second stream exists to close."
     ],
@@ -43,7 +43,7 @@
       "OTEL_LOG_TOOL_DETAILS, OTEL_LOG_TOOL_CONTENT and OTEL_LOG_RAW_API_BODIES",
       "are deliberately NOT set in M0. They are off by default, and turning them",
       "on ships tool arguments, file contents and full conversation history into",
-      "the OTLP stream. agentd already gets what it needs from the hook payloads;",
+      "the OTLP stream. ambitd already gets what it needs from the hook payloads;",
       "enabling these would widen the sensitive-data surface for no M0 benefit."
     ]
   },
@@ -51,7 +51,7 @@
   "hooks": {
     "_comment": [
       "Every event below is observation only. PreToolUse is included because it",
-      "is the only event carrying tool_input before execution, and agentd returns",
+      "is the only event carrying tool_input before execution, and ambitd returns",
       "an empty response to it: no decision, so Claude Code's permission",
       "pipeline behaves exactly as it would with no hook installed.",
       "",

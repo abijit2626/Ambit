@@ -3,11 +3,11 @@
 //
 // Claude Code's `type: "http"` hook POSTs the event JSON to a URL and reads the
 // decision from the response body in the same format as a command hook. Pointed
-// at 127.0.0.1 this gives agentd a synchronous decision point with no process
+// at 127.0.0.1 this gives ambitd a synchronous decision point with no process
 // spawn per event. See docs/02-architecture.md.
 package hook
 
-// EventName values are Claude Code's hook event names. Only the ones agentd
+// EventName values are Claude Code's hook event names. Only the ones ambitd
 // subscribes to in M0 are listed; the full set is 33 events.
 const (
 	EvSessionStart       = "SessionStart"
@@ -28,11 +28,11 @@ const (
 )
 
 // Payload is the inbound hook event. Fields are the union of the common fields
-// and the per-event ones agentd uses; unknown fields are ignored so a Claude
+// and the per-event ones ambitd uses; unknown fields are ignored so a Claude
 // Code version that adds fields does not break parsing.
 //
 // tool_input and tool_result are held as raw JSON rather than typed: their shape
-// is per-tool, and agentd only needs to digest them, extract features, and pull
+// is per-tool, and ambitd only needs to digest them, extract features, and pull
 // specific keys such as command or file_path.
 type Payload struct {
 	// Common fields.
@@ -79,9 +79,9 @@ type Payload struct {
 	EndReason string `json:"end_reason"`
 }
 
-// Response is what agentd returns to Claude Code.
+// Response is what ambitd returns to Claude Code.
 //
-// In M0 this is always the zero value, serialized as `{}`: agentd is
+// In M0 this is always the zero value, serialized as `{}`: ambitd is
 // observe-only and must not change how any session behaves. The fields exist so
 // M2's shadow mode and M3's enforcement have somewhere to land, and so the
 // shape is reviewable now rather than invented under time pressure later.

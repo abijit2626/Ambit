@@ -124,7 +124,7 @@ func TestHandlerReceivesPayload(t *testing.T) {
 	}
 }
 
-// TestMalformedBodyStillRespondsInert: a failure inside agentd must not fail the
+// TestMalformedBodyStillRespondsInert: a failure inside ambitd must not fail the
 // tool call. In M0 that means an empty decision even on garbage input.
 func TestMalformedBodyStillRespondsInert(t *testing.T) {
 	c := &capture{}

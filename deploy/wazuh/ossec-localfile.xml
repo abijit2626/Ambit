@@ -1,5 +1,5 @@
 <!--
-  M0. Wazuh agent config: tail agentd's Wazuh-bound sink.
+  M0. Wazuh agent config: tail ambitd's Wazuh-bound sink.
 
   log_format json is documented as being for single-line JSON files, which is why
   the sink writes one object per line and replaces any embedded newline. The
@@ -18,9 +18,9 @@
 
   <localfile>
     <log_format>json</log_format>
-    <location>/var/lib/ipctl/events.jsonl</location>
-    <label key="ipctl.stream">agentd</label>
-    <label key="ipctl.schema_v">2</label>
+    <location>/var/lib/ambit/events.jsonl</location>
+    <label key="ambit.stream">ambitd</label>
+    <label key="ambit.schema_v">2</label>
   </localfile>
 
   <!--
@@ -29,9 +29,9 @@
   -->
   <localfile>
     <log_format>json</log_format>
-    <location>/usr/local/var/ipctl/events.jsonl</location>
-    <label key="ipctl.stream">agentd</label>
-    <label key="ipctl.schema_v">2</label>
+    <location>/usr/local/var/ambit/events.jsonl</location>
+    <label key="ambit.stream">ambitd</label>
+    <label key="ambit.schema_v">2</label>
   </localfile>
 
 </ossec_config>

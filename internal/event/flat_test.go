@@ -15,7 +15,7 @@ func fullEvent() *Event {
 	return &Event{
 		EventID: "01JD", TS: "2026-09-27T11:50:03.412Z", IngestedAt: "2026-09-27T11:50:04Z",
 		Source: SourceHook, SchemaV: SchemaVersion, Kind: KindToolPre,
-		Endpoint: Endpoint{EndpointID: "ep_1", HostnameDigest: "hmac:h", OS: "darwin", AgentdVersion: "0.1.0"},
+		Endpoint: Endpoint{EndpointID: "ep_1", HostnameDigest: "hmac:h", OS: "darwin", AmbitdVersion: "0.1.0"},
 		Actor:    Actor{UserID: "u_1", OrgID: "o_1"},
 		Agent: Agent{
 			Kind: "claude-code", Version: "2.1.271", Entrypoint: "cli", Model: "claude-opus-5",
@@ -99,7 +99,7 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 		{"tool_pre_mcp", mcpToolEvent()},
 		{"session_start", sessionStartEvent()},
 		{"config_change", configEvent()},
-		{"agentd_health", healthEvent()},
+		{"ambitd_health", healthEvent()},
 	}
 
 	for _, c := range cases {
@@ -182,7 +182,7 @@ func TestFlattenPicksHighestConfidenceEdge(t *testing.T) {
 }
 
 // TestFlattenDropsRawFingerprints is the firehose guard. Feature fingerprints
-// are hundreds per event and must never cross to the SIEM; agentd intersects
+// are hundreds per event and must never cross to the SIEM; ambitd intersects
 // locally and emits only derived edges plus the one notable fingerprint.
 func TestFlattenDropsRawFingerprints(t *testing.T) {
 	e := fullEvent()
@@ -308,10 +308,10 @@ func configEvent() *Event {
 	return e
 }
 
-// healthEvent is agentd reporting on itself.
+// healthEvent is ambitd reporting on itself.
 func healthEvent() *Event {
 	e := fullEvent()
-	e.Kind = KindAgentdHealth
+	e.Kind = KindAmbitdHealth
 	e.Tool = nil
 	e.Config = nil
 	e.Session = Session{}

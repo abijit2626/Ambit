@@ -102,7 +102,7 @@ func TestRedactNoFalsePositivesOnOrdinaryCode(t *testing.T) {
 		`// TODO: refactor this into a separate module`,
 		`password: ${DB_PASSWORD}`,
 		`token = os.Getenv("API_TOKEN")`,
-		`https://github.com/abijit2626/indirect-prompt`,
+		`https://github.com/abijit2626/ambit`,
 		`sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`,
 	}
 	r := New()

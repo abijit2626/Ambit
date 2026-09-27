@@ -1,6 +1,6 @@
 // Package event defines the two representations of an agent event.
 //
-// The rich Event is what agentd computes and spools locally. The flat
+// The rich Event is what ambitd computes and spools locally. The flat
 // SIEMEvent in flat.go is what crosses to Wazuh. Keeping them separate is
 // deliberate: Wazuh's JSON decoder cannot represent an array of objects, and a
 // wide event risks the "Too many fields for JSON decoder" rejection, which is
@@ -31,7 +31,7 @@ const (
 	KindSubagentStart      Kind = "subagent_start"
 	KindSubagentStop       Kind = "subagent_stop"
 	KindCompact            Kind = "compact"
-	KindAgentdHealth       Kind = "agentd_health"
+	KindAmbitdHealth       Kind = "ambitd_health"
 	KindGoalDriftScore     Kind = "goal_drift_score"
 )
 
@@ -42,11 +42,11 @@ const (
 	SourceHook      Source = "hook"
 	SourceOTel      Source = "otel"
 	SourceInterpose Source = "interpose"
-	SourceAgentd    Source = "agentd"
+	SourceAmbitd    Source = "ambitd"
 )
 
 // Decision is a policy verdict. In M0 the policy engine does not exist and
-// every event carries DecisionNone: agentd is observe-only and must not change
+// every event carries DecisionNone: ambitd is observe-only and must not change
 // how any session behaves. See docs/05-build-plan.md M0.
 type Decision string
 
@@ -88,7 +88,7 @@ type Endpoint struct {
 	EndpointID     string `json:"endpoint_id"`
 	HostnameDigest string `json:"hostname_digest"`
 	OS             string `json:"os"`
-	AgentdVersion  string `json:"agentd_version"`
+	AmbitdVersion  string `json:"ambitd_version"`
 }
 
 type Actor struct {

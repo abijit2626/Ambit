@@ -15,26 +15,26 @@ tool call inline.
 ## Where each detector lives
 
 The split follows from [02](02-architecture.md): anything needing live session
-state or an inline verdict is `agentd`; anything that is cross-event or
+state or an inline verdict is `ambitd`; anything that is cross-event or
 cross-endpoint correlation is a Wazuh rule.
 
 | Detector | Verdict computed in | Alert raised by | Why there |
 | --- | --- | --- | --- |
-| R2 gate | **agentd** | agentd emits verdict; Wazuh alerts on it | Needs live per-session bits; must return inline |
-| Provenance edge | **agentd** | agentd emits edge; Wazuh alerts on it | Needs the session's fingerprint set in memory |
-| D1 session with no human | **agentd** (shape) | Wazuh rule | Single-event fields, but worth a manager-side rule for fleet view |
+| R2 gate | **ambitd** | ambitd emits verdict; Wazuh alerts on it | Needs live per-session bits; must return inline |
+| Provenance edge | **ambitd** | ambitd emits edge; Wazuh alerts on it | Needs the session's fingerprint set in memory |
+| D1 session with no human | **ambitd** (shape) | Wazuh rule | Single-event fields, but worth a manager-side rule for fleet view |
 | D2 credential sweep | **Wazuh rule** | Wazuh | `frequency` + `timeframe` does this natively |
-| D3 bypass attempt | agentd emits | Wazuh rule | Single event, level-16 alert |
+| D3 bypass attempt | ambitd emits | Wazuh rule | Single event, level-16 alert |
 | D4 MCP metadata drift | **mcp-interpose** | Wazuh rule | Hash comparison needs the local baseline |
 | D5 instruction-shaped description | **mcp-interpose** | Wazuh rule | Text scan at `tools/list` time |
-| D6 config tamper | **Wazuh FIM** + agentd `ConfigChange` | Wazuh | Native syscheck; neither half sufficient alone |
+| D6 config tamper | **Wazuh FIM** + ambitd `ConfigChange` | Wazuh | Native syscheck; neither half sufficient alone |
 | D7 telemetry gap | **Wazuh** | Wazuh rule 504 + absence rule | Native agent-disconnect; absence rule for the finer half |
-| D8 poisoned instruction file | agentd emits | Wazuh rule | From `InstructionsLoaded` |
-| D9 egress anomaly | agentd + sandbox denials | Wazuh rule | Baselining is cross-event |
+| D8 poisoned instruction file | ambitd emits | Wazuh rule | From `InstructionsLoaded` |
+| D9 egress anomaly | ambitd + sandbox denials | Wazuh rule | Baselining is cross-event |
 | D10 cross-session propagation | **Wazuh rule** (partial) | Wazuh | See [the D10 investigation](#d10-can-wazuh-rules-do-cross-session-propagation) |
-| D11 fail-open run | agentd emits | **Wazuh rule** | `frequency` + `timeframe` |
+| D11 fail-open run | ambitd emits | **Wazuh rule** | `frequency` + `timeframe` |
 | D12 managed-settings drift | **Wazuh SCA** | Wazuh | Policy-as-YAML, native |
-| Goal drift | **agentd**, async | Wazuh rule on score | Needs the declared objective and action history |
+| Goal drift | **ambitd**, async | Wazuh rule on score | Needs the declared objective and action history |
 
 ## Layer 1 — Rule-of-Two accounting
 
@@ -45,7 +45,7 @@ sensitive data, and changing state or communicating externally. An agent needing
 all three without a fresh context window should not operate autonomously and
 requires at minimum human-in-the-loop supervision.
 
-Everything needed is in the hook stream. Nobody tracks it. Lives in `agentd`
+Everything needed is in the hook stream. Nobody tracks it. Lives in `ambitd`
 because the bits are live session state and the gate must return inline.
 
 Three bits per session, monotonically set (never cleared within a session — see
@@ -79,7 +79,7 @@ Three bits per session, monotonically set (never cleared within a session — se
   C-setting unless an operator has explicitly classified it
 - Git push, PR creation, package publish, any outbound API write
 
-**The gate**, in `agentd`, on `PreToolUse`:
+**The gate**, in `ambitd`, on `PreToolUse`:
 
 | Action class | Third-bit policy |
 | --- | --- |
@@ -130,7 +130,7 @@ On every `PreToolUse`, extract the same classes from `tool_input` and intersect 
 the session's ingest fingerprints. A hit yields a **provenance edge**:
 `action ← ingest`, with the matched token class as evidence.
 
-**The intersection runs in `agentd`, in memory, and only the resulting edge is
+**The intersection runs in `ambitd`, in memory, and only the resulting edge is
 emitted.** This is not negotiable for two reasons: the fingerprint set is live
 session state, and shipping every fingerprint of every ingest to the SIEM would be
 the firehose [04](04-data-model.md) exists to prevent.
@@ -181,7 +181,7 @@ Reasoning-level monitoring is fragile. Action-level monitoring is durable. So:
   the model has touched it.
 - Each subsequent tool call is scored for relevance by a small cheap model, given
   the objective, the action, and a compact session summary.
-- Scoring runs **asynchronously in `agentd`**. It never gates a `PreToolUse`: too
+- Scoring runs **asynchronously in `ambitd`**. It never gates a `PreToolUse`: too
   slow for a 5 ms budget and too unreliable to block a developer's file read.
 - The score is emitted as an event; Wazuh rules alert on sustained drift, and on the
   composite condition below.
@@ -226,30 +226,30 @@ All verified against the 4.x ruleset documentation and the shipped ruleset:
 ### D2 — credential sweep, as frequency + timeframe
 
 ```xml
-<group name="ipctl,ipctl_credential,">
-  <!-- Base: agentd reported a credential-zone read. -->
+<group name="ambit,ambit_credential,">
+  <!-- Base: ambitd reported a credential-zone read. -->
   <rule id="100210" level="5">
     <decoded_as>json</decoded_as>
     <field name="kind">^tool_pre$</field>
     <field name="path_zone">^credential$</field>
     <field name="path_op">^read$</field>
-    <description>ipctl: credential-zone read by $(agent_kind) session $(session_id)</description>
+    <description>ambit: credential-zone read by $(agent_kind) session $(session_id)</description>
     <mitre>
       <id>T1552.001</id>
     </mitre>
-    <group>ipctl_d2,runbook_D2,</group>
+    <group>ambit_d2,runbook_D2,</group>
   </rule>
 
   <!-- D2: many of them, same session, short window. -->
   <rule id="100211" level="12" frequency="8" timeframe="120" ignore="300">
     <if_matched_sid>100210</if_matched_sid>
     <same_field>session_id</same_field>
-    <description>ipctl D2: credential sweep - 8+ credential-zone reads in one session within 120s</description>
+    <description>ambit D2: credential sweep - 8+ credential-zone reads in one session within 120s</description>
     <mitre>
       <id>T1552.001</id>
       <id>T1555</id>
     </mitre>
-    <group>ipctl_d2,runbook_D2,</group>
+    <group>ambit_d2,runbook_D2,</group>
   </rule>
 </group>
 ```
@@ -262,57 +262,57 @@ will trip 8-in-120s during an ordinary build.
 ### D11 — fail-open run, same shape
 
 ```xml
-<group name="ipctl,ipctl_integrity,">
+<group name="ambit,ambit_integrity,">
   <rule id="100260" level="5">
     <decoded_as>json</decoded_as>
     <field name="policy_decision">^fail_open$</field>
-    <description>ipctl: agentd unavailable, tool call failed open on $(endpoint_id)</description>
+    <description>ambit: ambitd unavailable, tool call failed open on $(endpoint_id)</description>
     <mitre>
       <id>T1562.001</id>
     </mitre>
-    <group>ipctl_d11,runbook_D11,</group>
+    <group>ambit_d11,runbook_D11,</group>
   </rule>
 
   <rule id="100261" level="12" frequency="5" timeframe="300" ignore="600">
     <if_matched_sid>100260</if_matched_sid>
     <same_field>endpoint_id</same_field>
-    <description>ipctl D11: sustained fail-open - agentd repeatedly unavailable on one endpoint</description>
+    <description>ambit D11: sustained fail-open - ambitd repeatedly unavailable on one endpoint</description>
     <mitre>
       <id>T1562.001</id>
     </mitre>
-    <group>ipctl_d11,runbook_D11,</group>
+    <group>ambit_d11,runbook_D11,</group>
   </rule>
 </group>
 ```
 
-### D7's finer half — absence of the agentd stream
+### D7's finer half — absence of the ambitd stream
 
 Rule 504 covers the endpoint going dark. The harder case is the Wazuh agent alive
-while `agentd` is dead: the endpoint heartbeats, FIM and SCA keep reporting, and only
-the `agentd` event stream stops.
+while `ambitd` is dead: the endpoint heartbeats, FIM and SCA keep reporting, and only
+the `ambitd` event stream stops.
 
 Wazuh rules fire on events, not on their absence, so this is not expressible as a
 correlation rule. Two options, and the second is better:
 
-1. `agentd` emits a periodic `agentd_health` heartbeat event; a scheduled query on
+1. `ambitd` emits a periodic `ambitd_health` heartbeat event; a scheduled query on
    the indexer flags endpoints with no heartbeat in N minutes. Requires something
    outside the rule engine to run the query.
-2. **The Wazuh agent reports on `agentd`'s liveness rather than `agentd` reporting on
-   its own.** SCA check 10005 (`p:agentd`) already runs on the Wazuh agent's
+2. **The Wazuh agent reports on `ambitd`'s liveness rather than `ambitd` reporting on
+   its own.** SCA check 10005 (`p:ambitd`) already runs on the Wazuh agent's
    schedule and fails when the process is gone. A failed SCA check is an event, so
    this needs no external scheduler and — critically — the signal comes from a
    *different process than the one being watched*, which is the whole point when the
    adversary can kill processes.
 
 Recommendation: option 2 as primary, with option 1's heartbeat retained because
-`p:agentd` cannot tell a wedged daemon from a healthy one. Combined, a wedged
-`agentd` shows as "process present, heartbeat stale."
+`p:ambitd` cannot tell a wedged daemon from a healthy one. Combined, a wedged
+`ambitd` shows as "process present, heartbeat stale."
 
-**A third signal, now implemented: stream discrepancy.** `agentd` receives Claude
+**A third signal, now implemented: stream discrepancy.** `ambitd` receives Claude
 Code's OTel export on a loopback OTLP/HTTP receiver and counts tool calls on both
 the hook path and the OTel path. Exactly one path silent while the other reports
-means a collection path has stopped, and `agentd` sets its health status to
-`degraded`, which crosses to Wazuh as an `agentd_health` event. This catches cases
+means a collection path has stopped, and `ambitd` sets its health status to
+`degraded`, which crosses to Wazuh as an `ambitd_health` event. This catches cases
 neither of the above does: the hook removed from settings while the daemon runs
 (OTel active, hook silent), and the OTel destination redirected or the encoding
 switched to protobuf (hook active, OTel silent).
@@ -327,15 +327,15 @@ SCA policy from [02](02-architecture.md). A failed check raises an SCA alert
 natively; the custom rule raises severity and attaches the runbook:
 
 ```xml
-<group name="ipctl,ipctl_integrity,">
+<group name="ambit,ambit_integrity,">
   <rule id="100270" level="12">
     <if_sid>19007</if_sid>
-    <field name="sca.policy_id">^ipctl_managed_settings$</field>
-    <description>ipctl D12: managed-settings assertion failed - $(sca.check.title) on $(agent.name)</description>
+    <field name="sca.policy_id">^ambit_managed_settings$</field>
+    <description>ambit D12: managed-settings assertion failed - $(sca.check.title) on $(agent.name)</description>
     <mitre>
       <id>T1562.001</id>
     </mitre>
-    <group>ipctl_d12,runbook_D12,</group>
+    <group>ambit_d12,runbook_D12,</group>
   </rule>
 </group>
 ```
@@ -359,11 +359,11 @@ timeframe — the shipped ruleset uses exactly this pattern (rule 80443:
 <rule id="100280" level="12" frequency="2" timeframe="3600" ignore="600">
   <if_matched_sid>100279</if_matched_sid>
   <same_field>prov_fp_notable</same_field>
-  <description>ipctl D10: fingerprint $(prov_fp_notable) seen in two sessions - possible cross-agent propagation</description>
+  <description>ambit D10: fingerprint $(prov_fp_notable) seen in two sessions - possible cross-agent propagation</description>
   <mitre>
     <id>T1105</id>
   </mitre>
-  <group>ipctl_d10,runbook_D10,</group>
+  <group>ambit_d10,runbook_D10,</group>
 </rule>
 ```
 
@@ -387,7 +387,7 @@ Three limitations, and they are structural rather than tuning problems:
 
 **Resolution.** Split it:
 
-- `agentd` pre-selects, per event, at most one **notable fingerprint** — from the
+- `ambitd` pre-selects, per event, at most one **notable fingerprint** — from the
   high-specificity classes only (domain, email, high-entropy token) — and emits it
   as the scalar field `prov_fp_notable`, with `prov_fp_role` of `ingest` or `output`.
   The Wazuh rule above then works as a cheap first-pass tripwire on high-value
@@ -437,11 +437,11 @@ makes the alert harder to triage, not easier. Better to ship it untagged and say
 | D4 | **MCP metadata drift.** Tool name / description / schema hash differs from approved baseline. | Rug pull |
 | D5 | **Instruction-shaped tool description.** Imperative language, role assertions, or references to other servers' tools. | Tool poisoning / shadowing |
 | D6 | **Config tamper.** FIM on `.claude/` and `.mcp.json` (with `whodata`), plus `ConfigChange`. | Suppression attempt |
-| D7 | **Telemetry gap.** Rule 504 for endpoint silence; SCA `p:agentd` plus stale heartbeat for daemon death. | Daemon suppression |
+| D7 | **Telemetry gap.** Rule 504 for endpoint silence; SCA `p:ambitd` plus stale heartbeat for daemon death. | Daemon suppression |
 | D8 | **Poisoned instruction file.** `InstructionsLoaded` under a newly cloned or untrusted path. | Repo-carried injection |
 | D9 | **Egress anomaly.** Outbound volume or destination outside the endpoint's profile; any sandbox allowlist denial. | Exfiltration |
 | D10 | **Cross-agent fingerprint match.** Scalar tripwire as a rule; full set intersection as a scheduled job. | Prompt Infection / propagation |
-| D11 | **Fail-open run.** Repeated `agentd` unavailability. | Suppression |
+| D11 | **Fail-open run.** Repeated `ambitd` unavailability. | Suppression |
 | D12 | **Managed-settings drift.** SCA assertion failure on the bundle. | Suppression / misconfiguration |
 
 ## Runbooks
@@ -486,7 +486,7 @@ of time when three public ones exist:
 - **ControlArena** (UK AISI with Redwood Research) — control protocols, settings,
   model organisms.
 
-Use as the regression suite: replay trajectories through `agentd`, measure detection
+Use as the regression suite: replay trajectories through `ambitd`, measure detection
 and false-positive rate per detector. Wazuh rules get their own test path —
 `wazuh-logtest` takes a log line and reports which decoder and rule matched, so rule
 correctness is testable from a fixture file of `events.jsonl` lines without a live

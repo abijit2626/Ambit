@@ -3,8 +3,8 @@ package filter
 import (
 	"testing"
 
-	"github.com/abijit2626/indirect-prompt/internal/classify"
-	"github.com/abijit2626/indirect-prompt/internal/event"
+	"github.com/abijit2626/ambit/internal/classify"
+	"github.com/abijit2626/ambit/internal/event"
 )
 
 // neverSample makes the sampled-remainder path deterministic so tests measure
@@ -129,7 +129,7 @@ func TestAlwaysCrossKinds(t *testing.T) {
 		event.KindPermissionDenied, event.KindInstructionsLoaded,
 		event.KindConfigChange, event.KindFileChanged, event.KindMCPList,
 		event.KindSubagentStart, event.KindSubagentStop, event.KindCompact,
-		event.KindAgentdHealth, event.KindPromptSubmit,
+		event.KindAmbitdHealth, event.KindPromptSubmit,
 	} {
 		if v := f.Decide(&event.Event{Kind: k}); !v.Cross {
 			t.Errorf("kind %q did not cross but is a detector input", k)

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# End-to-end smoke test: start agentd, post representative hook payloads, and
+# End-to-end smoke test: start ambitd, post representative hook payloads, and
 # assert the three properties M0 must hold.
 #
-#   1. Every hook response is {} — agentd is behaviorally inert.
+#   1. Every hook response is {} — ambitd is behaviorally inert.
 #   2. Ordinary work stays in the spool; only interesting events cross.
 #   3. No cleartext path, domain or secret value reaches the SIEM-bound sink.
 set -euo pipefail
 
-BIN=${BIN:-./bin/agentd}
+BIN=${BIN:-./bin/ambitd}
 PORT=${PORT:-17999}
 D=$(mktemp -d)
 trap 'kill "${PID:-}" 2>/dev/null || true; rm -rf "$D"' EXIT

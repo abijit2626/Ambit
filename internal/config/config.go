@@ -1,8 +1,8 @@
-// Package config loads agentd configuration.
+// Package config loads ambitd configuration.
 //
 // Configuration deliberately does NOT arrive over the Wazuh channel. Wazuh's
 // centralized configuration exists and would be convenient, but using it would
-// let anyone with manager access — including an MSSP — rewrite what agentd
+// let anyone with manager access — including an MSSP — rewrite what ambitd
 // observes and, from M3, what it denies. Separate path, separate trust root. See
 // docs/02-architecture.md.
 package config
@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Config is agentd's full configuration.
+// Config is ambitd's full configuration.
 type Config struct {
 	// HookAddr is the loopback address the hook endpoint binds. Must match the
 	// url in the managed-settings hook entry.
@@ -75,8 +75,8 @@ type Config struct {
 	// DriftThreshold is unused in M0; goal-drift scoring arrives in M4.
 	DriftThreshold float64 `json:"drift_threshold"`
 
-	// HealthInterval is how often agentd emits an agentd_health event. This is
-	// the heartbeat half of D7: SCA's p:agentd check cannot tell a wedged daemon
+	// HealthInterval is how often ambitd emits an ambitd_health event. This is
+	// the heartbeat half of D7: SCA's p:ambitd check cannot tell a wedged daemon
 	// from a healthy one, so a stale heartbeat with the process present is what
 	// distinguishes them.
 	HealthInterval time.Duration `json:"-"`
@@ -112,9 +112,9 @@ func Default() Config {
 
 func defaultPath(name string) string {
 	if runtime.GOOS == "darwin" {
-		return "/usr/local/var/ipctl/" + name
+		return "/usr/local/var/ambit/" + name
 	}
-	return "/var/lib/ipctl/" + name
+	return "/var/lib/ambit/" + name
 }
 
 // Load reads a config file, falling back to defaults for absent fields. A

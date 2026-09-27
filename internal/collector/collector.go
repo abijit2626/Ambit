@@ -19,13 +19,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/abijit2626/indirect-prompt/internal/classify"
-	"github.com/abijit2626/indirect-prompt/internal/config"
-	"github.com/abijit2626/indirect-prompt/internal/event"
-	"github.com/abijit2626/indirect-prompt/internal/features"
-	"github.com/abijit2626/indirect-prompt/internal/filter"
-	"github.com/abijit2626/indirect-prompt/internal/hook"
-	"github.com/abijit2626/indirect-prompt/internal/redact"
+	"github.com/abijit2626/ambit/internal/classify"
+	"github.com/abijit2626/ambit/internal/config"
+	"github.com/abijit2626/ambit/internal/event"
+	"github.com/abijit2626/ambit/internal/features"
+	"github.com/abijit2626/ambit/internal/filter"
+	"github.com/abijit2626/ambit/internal/hook"
+	"github.com/abijit2626/ambit/internal/redact"
 )
 
 // runtimeGOOS is a variable so tests can pin the value.
@@ -173,7 +173,7 @@ func (c *Collector) build(p *hook.Payload) *event.Event {
 		Endpoint: event.Endpoint{
 			EndpointID:    c.cfg.EndpointID,
 			OS:            runtimeGOOS,
-			AgentdVersion: c.version,
+			AmbitdVersion: c.version,
 		},
 		Actor: event.Actor{UserID: c.cfg.UserID, OrgID: c.cfg.OrgID},
 		Agent: event.Agent{
@@ -341,7 +341,7 @@ func (c *Collector) session(p *hook.Payload) *sessionState {
 	return st
 }
 
-// Forget drops a session's state. Called on SessionEnd so long-lived agentd
+// Forget drops a session's state. Called on SessionEnd so long-lived ambitd
 // processes do not accumulate state for sessions that ended hours ago.
 func (c *Collector) Forget(sessionID string) {
 	c.mu.Lock()

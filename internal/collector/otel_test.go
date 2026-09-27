@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abijit2626/indirect-prompt/internal/hook"
-	"github.com/abijit2626/indirect-prompt/internal/otlp"
+	"github.com/abijit2626/ambit/internal/hook"
+	"github.com/abijit2626/ambit/internal/otlp"
 )
 
 func rec(name string, attrs map[string]string) otlp.Record {
@@ -121,7 +121,7 @@ func TestStreamDiscrepancy(t *testing.T) {
 		c, _, _ := newTestCollector(t)
 		c.HandleOTel([]otlp.Record{rec("claude_code.tool_decision", map[string]string{"session.id": "s1", "tool_name": "Bash"})})
 		if !c.OTel().Discrepant {
-			t.Error("OTel active with the hook stream silent should be discrepant: the hook is not installed or agentd's endpoint is unreachable")
+			t.Error("OTel active with the hook stream silent should be discrepant: the hook is not installed or ambitd's endpoint is unreachable")
 		}
 	})
 

@@ -4,9 +4,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/abijit2626/indirect-prompt/internal/event"
-	"github.com/abijit2626/indirect-prompt/internal/hook"
-	"github.com/abijit2626/indirect-prompt/internal/otlp"
+	"github.com/abijit2626/ambit/internal/event"
+	"github.com/abijit2626/ambit/internal/hook"
+	"github.com/abijit2626/ambit/internal/otlp"
 )
 
 // otelToolEvents are the OTel log event names that correspond to a tool call.
@@ -21,7 +21,7 @@ var otelToolEvents = map[string]bool{
 // OTel records go to the SPOOL ONLY. They never cross to Wazuh: the stream is
 // content-rich and high-volume, and the hook stream already carries the
 // security-relevant slice with better structure. What OTel is for here is being a
-// SECOND, INDEPENDENT path — the hook endpoint dies with agentd, while OTel's
+// SECOND, INDEPENDENT path — the hook endpoint dies with ambitd, while OTel's
 // destination is pinned in managed settings with developer-set variables removed.
 // Losing one while the other continues is the discrepancy detector D7 keys on,
 // and that discrepancy is the point. See docs/02-architecture.md.
@@ -51,7 +51,7 @@ func (c *Collector) buildOTel(r otlp.Record) *event.Event {
 		// Anything else is recorded for the spool but is not a tool observation.
 		// Deliberately not dropped: an unmodelled OTel event that vanished would
 		// be a blind spot in the stream whose whole job is corroboration.
-		kind = event.KindAgentdHealth
+		kind = event.KindAmbitdHealth
 	}
 
 	ts := r.TS
@@ -69,7 +69,7 @@ func (c *Collector) buildOTel(r otlp.Record) *event.Event {
 		Endpoint: event.Endpoint{
 			EndpointID:    c.cfg.EndpointID,
 			OS:            runtimeGOOS,
-			AgentdVersion: c.version,
+			AmbitdVersion: c.version,
 		},
 		Actor: event.Actor{
 			// Prefer OTel's own attribution when present: it comes from Claude

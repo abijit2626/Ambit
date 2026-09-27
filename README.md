@@ -1,4 +1,4 @@
-# indirect-prompt
+# ambit
 
 A provenance and control plane for Claude Code agents and the MCP servers they
 connect to, with **Wazuh as the fleet plane** and support for third-party security
@@ -37,7 +37,7 @@ durable one.
 
 Two layers, deliberately split by latency.
 
-**`agentd` on each endpoint** holds everything needing live session state or an inline
+**`ambitd` on each endpoint** holds everything needing live session state or an inline
 verdict — because `PreToolUse` needs an answer in single-digit milliseconds and no SIEM
 can provide one:
 
@@ -59,7 +59,7 @@ of D6. SCA policy files assert the managed-settings bundle is present and correc
 not in the synchronous path and never blocks a tool call. Active response is
 containment only — credential revocation on a high-confidence detector — never a gate.
 
-Transport is deliberately boring: `agentd` writes JSON lines to a local file, the Wazuh
+Transport is deliberately boring: `ambitd` writes JSON lines to a local file, the Wazuh
 agent tails it with `log_format json`, and there is no custom decoder. Detectors become
 custom rules at ID ≥ 100000, each with a runbook.
 
@@ -93,8 +93,8 @@ platform, not a replacement for either.**
 | --- | --- |
 | [00-sources.md](docs/00-sources.md) | Every claim with primary / secondary / unverified status |
 | [01-threat-model.md](docs/01-threat-model.md) | Five adversaries, assets, trust assumptions, the MSSP egress posture, residual risk |
-| [02-architecture.md](docs/02-architecture.md) | `agentd`, `mcp-interpose`, Wazuh; interception points; FIM and SCA config; trust boundaries; latency and failure modes |
-| [03-detection.md](docs/03-detection.md) | Three detection layers, the agentd/Wazuh split, rule snippets, D1–D12, ATT&CK mappings, runbook requirements |
+| [02-architecture.md](docs/02-architecture.md) | `ambitd`, `mcp-interpose`, Wazuh; interception points; FIM and SCA config; trust boundaries; latency and failure modes |
+| [03-detection.md](docs/03-detection.md) | Three detection layers, the ambitd/Wazuh split, rule snippets, D1–D12, ATT&CK mappings, runbook requirements |
 | [04-data-model.md](docs/04-data-model.md) | Rich internal schema, flattened SIEM-bound schema, the mapping and what it loses, what crosses to Wazuh, split retention |
 | [05-build-plan.md](docs/05-build-plan.md) | M0–M5, what adopting Wazuh deletes, enforcement sequenced after a measured baseline |
 | [06-prior-art.md](docs/06-prior-art.md) | What already exists, reuse decisions, ten non-goals |
@@ -118,7 +118,7 @@ guarantees, and the docs say so rather than claiming coverage.
 
 ## Code
 
-M0 is implemented: `agentd` is **observe-only**. It receives Claude Code hook
+M0 is implemented: `ambitd` is **observe-only**. It receives Claude Code hook
 events, normalizes them, writes the full trajectory to a local spool and the
 filtered security-relevant slice to a file the Wazuh agent tails. It returns no
 decision, so no session behaves differently for its presence — that is the
@@ -126,7 +126,7 @@ milestone guarantee, because a baseline cannot be measured from a system that is
 already changing behavior.
 
 ```
-cmd/agentd/              the endpoint daemon
+cmd/ambitd/              the endpoint daemon
 internal/event/          rich internal schema + flattened SIEM-bound schema
 internal/classify/       path zone and bash command classification
 internal/features/       keyed fingerprint extraction
@@ -146,14 +146,14 @@ deploy/claude-code/      managed-settings bundle (M0: observation only)
 ./scripts/dev-local.sh          # run it against your own Claude Code sessions
 ./scripts/dev-local.sh --status  # the M0 interesting-fraction readout
 make check   # go vet + race tests + gofmt
-make build   # bin/agentd
+make build   # bin/ambitd
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
 make cross   # static binaries for darwin/linux, arm64/amd64
 ```
 
 Three properties the tests enforce, each because getting it wrong is silent:
 
-- **`agentd` is inert.** Every hook response is `{}`. An empty response means no
+- **`ambitd` is inert.** Every hook response is `{}`. An empty response means no
   opinion, so Claude Code's permission pipeline behaves as if no hook were
   installed. Returning `allow` would *not* be equivalent — it suppresses the
   prompt a developer would otherwise see.
@@ -165,7 +165,7 @@ Three properties the tests enforce, each because getting it wrong is silent:
   field limit, which is detection loss with no error at the detector. A test fails
   the build if a flattened event grows past its budget.
 - **A misconfigured second stream is loud, not silent.** The OTLP receiver speaks
-  `http/json` only and answers 415 on protobuf, and `agentd` reports `degraded`
+  `http/json` only and answers 415 on protobuf, and `ambitd` reports `degraded`
   health when exports are rejected or when exactly one of the two collection paths
   goes silent. "Configured but never received" is the failure mode that would
   otherwise hide.
