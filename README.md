@@ -98,7 +98,8 @@ platform, not a replacement for either.**
 | [04-data-model.md](docs/04-data-model.md) | Rich internal schema, flattened SIEM-bound schema, the mapping and what it loses, what crosses to Wazuh, split retention |
 | [05-build-plan.md](docs/05-build-plan.md) | M0–M5, what adopting Wazuh deletes, enforcement sequenced after a measured baseline |
 | [06-prior-art.md](docs/06-prior-art.md) | What already exists, reuse decisions, ten non-goals |
-| [07-open-questions.md](docs/07-open-questions.md) | Twelve unresolved decisions; Q11 (tenancy) blocks MSSP onboarding |
+| [07-open-questions.md](docs/07-open-questions.md) | Thirteen decisions, two resolved; Q11 (tenancy) blocks MSSP onboarding |
+| [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md) | Q2 resolved: why `mcp-interpose` is purpose-built rather than adopted, with the evaluation evidence |
 
 ## Third-party monitoring
 
@@ -176,7 +177,8 @@ M0 code complete and tested; not yet deployed to a cohort, so the M0 exit criter
 in [05-build-plan.md](docs/05-build-plan.md) — chiefly the **measured interesting
 fraction** — are still open. M1 onward is design only. Nothing here is final —
 [07-open-questions.md](docs/07-open-questions.md) lists what still needs deciding, and
-five of the twelve are blocking.
+five of the thirteen are blocking. Q2 (build vs. adopt for the MCP interposer) is now
+decided — [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md).
 
 ## Sourcing note
 
