@@ -1,4 +1,5 @@
 BIN     := ambitd
+BIN2    := mcp-interpose
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
@@ -8,6 +9,7 @@ all: check build
 
 build:
 	go build $(LDFLAGS) -o bin/$(BIN) ./cmd/ambitd
+	go build $(LDFLAGS) -o bin/$(BIN2) ./cmd/mcp-interpose
 
 test:
 	go test ./...
@@ -33,9 +35,14 @@ cross:
 	GOOS=darwin  GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN)-darwin-amd64 ./cmd/ambitd
 	GOOS=linux   GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN)-linux-arm64  ./cmd/ambitd
 	GOOS=linux   GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN)-linux-amd64  ./cmd/ambitd
+	GOOS=darwin  GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN2)-darwin-arm64 ./cmd/mcp-interpose
+	GOOS=darwin  GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN2)-darwin-amd64 ./cmd/mcp-interpose
+	GOOS=linux   GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN2)-linux-arm64  ./cmd/mcp-interpose
+	GOOS=linux   GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN2)-linux-amd64  ./cmd/mcp-interpose
 
 smoke: build
 	./scripts/smoke.sh
+	./scripts/interpose-smoke.sh
 
 clean:
 	rm -rf bin

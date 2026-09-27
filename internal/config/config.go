@@ -46,6 +46,12 @@ type Config struct {
 	TrajectoryMaxBytes int64 `json:"trajectory_max_bytes"`
 	TrajectoryMaxFiles int   `json:"trajectory_max_files"`
 
+	// BaselineDir holds mcp-interpose's per-server metadata baselines, one file
+	// per server. It sits under the ambit directory so Wazuh FIM can watch it:
+	// the store is written by a process running as the developer, so a rewrite has
+	// to be observable rather than prevented. See internal/baseline.
+	BaselineDir string `json:"baseline_dir"`
+
 	// FingerprintKeyPath holds the per-org HMAC key. The key stays ours and is
 	// never shared with a monitoring firm: they need equality matching, not
 	// resolution.
@@ -101,6 +107,7 @@ func Default() Config {
 		EventsMaxFiles:     8,
 		TrajectoryMaxBytes: 256 << 20,
 		TrajectoryMaxFiles: 16,
+		BaselineDir:        defaultPath("baselines"),
 		FingerprintKeyPath: defaultPath("fingerprint.key"),
 		SampleRate:         0.005,
 		DriftThreshold:     0.7,

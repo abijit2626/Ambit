@@ -111,9 +111,13 @@ cheap high-confidence detectors alerting.
 
 - `mcp-interpose`: wraps configured servers, captures `tools/list`, hashes name +
   description + schema per tool, records annotations, labels results. **Build-vs-adopt
-  is decided — purpose-built, in Go, per server** ([08](08-mcp-interpose-decision.md));
-  the open sub-question is HTTP/SSE servers, which a stdio wrapper does not cover and
-  which M0's stream tells us whether the cohort uses.
+  is decided — purpose-built, in Go, per server** ([08](08-mcp-interpose-decision.md)).
+  **Built and tested**: D4's baseline with an explicit approval step, D5's metadata
+  scan, annotation carriage, and `mcp_list` emission through `ambitd`, with the
+  interposer inert by construction (byte-exact passthrough, no verdict, degrades to
+  passthrough on every failure). Still open: the Wazuh rules and runbooks that read
+  these events, and HTTP/SSE servers, which a stdio wrapper does not cover and which
+  M0's stream tells us whether the cohort uses.
 - Approval baseline: first-seen metadata hash per server/tool, with an explicit
   operator approval step.
 - **SCA policy for the managed-settings bundle (D12)** — and confirm the SCA alert

@@ -303,8 +303,16 @@ Any one of these, and Q2 is worth reopening:
   cannot wrap, making a proxy the only viable shape. This is the most likely
   reversal, and it is an empirical question M0 answers: the M0 stream records
   which MCP servers the cohort actually uses.
-- Our interposer passes ~1.5k LOC without being feature-complete. That is the
-  signal that "narrow" was wrong.
+- The interposer grows materially past the size it landed at while still not
+  covering its scope. **Measured at the point it was built: 1,632 lines of code
+  across `internal/mcp`, `internal/toolscan`, `internal/baseline`,
+  `internal/interpose` and `cmd/mcp-interpose`** — counting neither comments (a
+  further 662 lines) nor blanks — with 1,747 lines of tests. That covers D4, D5 and
+  annotation carriage for stdio servers, which is its M1 scope; job 3 from
+  [02](02-architecture.md) is deferred to M2 with the reason recorded there.
+  This number replaces the estimate that stood here before the code existed, so the
+  tripwire means something specific: if the next feature needs another thousand
+  lines, "narrow" was wrong and a gateway deserves a second look.
 
 ## Reproducing this evaluation
 

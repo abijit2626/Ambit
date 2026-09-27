@@ -128,6 +128,7 @@ already changing behavior.
 
 ```
 cmd/ambitd/              the endpoint daemon
+cmd/mcp-interpose/       the MCP interposer: one per server, in front of it
 internal/event/          rich internal schema + flattened SIEM-bound schema
 internal/classify/       path zone and bash command classification
 internal/features/       keyed fingerprint extraction
@@ -135,6 +136,10 @@ internal/redact/         secret detection and stripping at the edge
 internal/filter/         what crosses to Wazuh
 internal/hook/           Claude Code hook HTTP endpoint
 internal/otlp/           OTLP/HTTP receiver (http/json, zero dependencies)
+internal/mcp/            MCP stdio framing, tool metadata, the canonical hash
+internal/toolscan/       D5: instruction-shaped metadata, cross-server references
+internal/baseline/       D4: the approved baseline and its state machine
+internal/interpose/      the passthrough, the analyzer, the loopback report
 internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
 internal/collector/      wiring: payload -> event -> sinks
@@ -147,9 +152,29 @@ deploy/claude-code/      managed-settings bundle (M0: observation only)
 ./scripts/dev-local.sh          # run it against your own Claude Code sessions
 ./scripts/dev-local.sh --status  # the M0 interesting-fraction readout
 make check   # go vet + race tests + gofmt
-make build   # bin/ambitd
+make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
 make cross   # static binaries for darwin/linux, arm64/amd64
+```
+
+`mcp-interpose` goes in front of one MCP server, per server, so Claude Code still sees
+that server under its own name and tool identity stays `mcp__<server>__<tool>`:
+
+```jsonc
+{
+  "mcpServers": {
+    "github": {
+      "command": "mcp-interpose",
+      "args": ["-server", "github", "--", "npx", "-y", "@modelcontextprotocol/server-github"]
+    }
+  }
+}
+```
+
+```sh
+mcp-interpose -server github -show      # what the server has advertised so far
+mcp-interpose -server github -approve   # the explicit operator step D4 compares against
+mcp-interpose -server github -revoke    # withdraw approval after an incident
 ```
 
 Three properties the tests enforce, each because getting it wrong is silent:
@@ -165,6 +190,14 @@ Three properties the tests enforce, each because getting it wrong is silent:
 - **The event stays narrow.** Wazuh drops events that exceed the JSON decoder's
   field limit, which is detection loss with no error at the detector. A test fails
   the build if a flattened event grows past its budget.
+- **Interposing an MCP server is invisible.** Frames are forwarded before they are
+  parsed, byte for byte, and the smoke test asserts the client's stream and exit code
+  are identical to running the wrapped server directly. Every failure mode —
+  unreachable daemon, unwritable baseline, hostile frame — degrades to plain
+  passthrough and is reported rather than absorbed, because an interposer that can
+  break a developer's tools would be removed from the fleet within a week, and because
+  a silent detector that reports "no drift" when it compared nothing is worse than
+  none.
 - **A misconfigured second stream is loud, not silent.** The OTLP receiver speaks
   `http/json` only and answers 415 on protobuf, and `ambitd` reports `degraded`
   health when exports are rejected or when exactly one of the two collection paths
@@ -175,7 +208,18 @@ Three properties the tests enforce, each because getting it wrong is silent:
 
 M0 code complete and tested; not yet deployed to a cohort, so the M0 exit criteria
 in [05-build-plan.md](docs/05-build-plan.md) — chiefly the **measured interesting
-fraction** — are still open. M1 onward is design only. Nothing here is final —
+fraction** — are still open.
+
+From M1, the **endpoint half is built**: `mcp-interpose` implements D4 (metadata
+hashing against an approved baseline, with an explicit operator approval step) and D5
+(instruction-shaped metadata and cross-server references), carries MCP annotations
+stricter-only, and emits `mcp_list` events through `ambitd`. What M1 still needs is the
+other half — the Wazuh rules that read these events and a runbook per rule an external
+analyst can execute — plus the MCP inventory across the cohort. Two limits are stated in
+the code and in [02-architecture.md](docs/02-architecture.md) rather than implied: a
+stdio wrapper does not cover MCP servers reached over HTTP/SSE, and `mcp_list` events
+usually carry no session id because MCP does not carry one. M2 onward is design only.
+Nothing here is final —
 [07-open-questions.md](docs/07-open-questions.md) lists what still needs deciding, and
 five of the thirteen are blocking. Q2 (build vs. adopt for the MCP interposer) is now
 decided — [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md).

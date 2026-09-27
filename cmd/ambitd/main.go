@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,6 +27,7 @@ import (
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/hook"
+	"github.com/abijit2626/ambit/internal/interpose"
 	"github.com/abijit2626/ambit/internal/otlp"
 	"github.com/abijit2626/ambit/internal/sink"
 )
@@ -115,6 +117,12 @@ func run() error {
 	srv, err := hook.NewServer(hook.Options{
 		Addr:    cfg.HookAddr,
 		Handler: coll,
+		// The interposer's reports arrive on the same loopback listener. They are
+		// off the synchronous path: mcp-interpose has already forwarded the frames
+		// it reports on, so no tool call is waiting on this.
+		Extra: map[string]http.Handler{
+			interpose.Path: interpose.NewHandler(coll.HandleInterpose, log),
+		},
 		// ObserveOnly is explicit rather than defaulted: the inert response is
 		// the milestone guarantee and should be visible at the call site.
 		Decider: hook.ObserveOnly{},
@@ -165,6 +173,8 @@ func run() error {
 		"otlp_addr", otlpAddrOrOff(cfg),
 		"events", cfg.EventsPath,
 		"trajectory", cfg.TrajectoryPath,
+		"interpose_endpoint", cfg.HookAddr+interpose.Path,
+		"baselines", cfg.BaselineDir,
 	)
 
 	go emitHealth(ctx, cfg, coll, events, traj, otlpSrv, version, log)
@@ -180,6 +190,8 @@ func run() error {
 		"hook_tool_calls", ot.HookToolCalls,
 		"otel_tool_calls", ot.ToolCalls,
 		"stream_discrepant", ot.Discrepant,
+		"interpose_reports", st.InterposeReports,
+		"interpose_events", st.InterposeEvents,
 	)
 	return err
 }

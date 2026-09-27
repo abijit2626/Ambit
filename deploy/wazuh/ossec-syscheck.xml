@@ -14,7 +14,7 @@
      wrote this" is the entire question, so whodata is worth its setup cost here.
 
   What this does NOT cover, per docs/02-architecture.md: in-session config changes
-  that never touch disk, and a --settings path passed on the command line. Claude
+  that never touch disk, and a settings path passed as a command-line flag. Claude
   Code's ConfigChange hook covers those and reaches Wazuh through ambitd. D6 is
   FIM *plus* ConfigChange; neither half is sufficient alone.
 -->
@@ -66,12 +66,35 @@
     <directories realtime="yes" whodata="yes" check_all="yes" report_changes="no"
                  tags="ambit,d6,ambitd-config">/etc/ambit</directories>
 
+    <!--
+      mcp-interpose's approved baselines, one file per MCP server (D4).
+
+      This watch exists because of a weakness the design states rather than solves:
+      the baseline store is written by a process running as the developer, so
+      malware holding the developer's privileges can rewrite it and make a rug pull
+      read as approved. FIM cannot prevent that, but it makes it observable — a
+      baseline edited outside an approval run is a D6 event with the writing process
+      attributed by whodata.
+
+      report_changes is ON: the diff shows which tool's hash or approval flag moved,
+      and the file holds third-party tool metadata rather than our own content. The
+      files rotate through a temp name on every write (atomic rename), so the temp
+      pattern is ignored to keep that from being a per-listing alert.
+    -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 tags="ambit,d4,d6,mcp-baselines">/var/lib/ambit/baselines</directories>
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 tags="ambit,d4,d6,mcp-baselines">/usr/local/var/ambit/baselines</directories>
+
     <!-- The sinks change constantly by design; alerting on them is pure noise. -->
     <ignore>/var/lib/ambit/events.jsonl</ignore>
     <ignore>/var/lib/ambit/trajectory.jsonl</ignore>
     <ignore>/usr/local/var/ambit/events.jsonl</ignore>
     <ignore>/usr/local/var/ambit/trajectory.jsonl</ignore>
     <ignore type="sregex">^/var/lib/ambit/.*\.jsonl\.\d+$</ignore>
+    <!-- Atomic-rename temp files from a baseline write, not a baseline change. -->
+    <ignore type="sregex">^/var/lib/ambit/baselines/\.baseline-.*$</ignore>
+    <ignore type="sregex">^/usr/local/var/ambit/baselines/\.baseline-.*$</ignore>
     <ignore type="sregex">^/usr/local/var/ambit/.*\.jsonl\.\d+$</ignore>
 
   </syscheck>
