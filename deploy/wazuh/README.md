@@ -1,0 +1,120 @@
+# Wazuh deployment artifacts
+
+Wazuh is the fleet plane. These files are the Wazuh-side half of M0 and M1; the
+endpoint half is `agentd` (see the repository root README).
+
+**Version:** everything here targets **Wazuh 4.x**, whose XML ruleset and the
+`frequency`/`timeframe`/`if_matched_sid`/`same_field` primitives this design leans
+on are verified in `docs/00-sources.md`. Wazuh 5.0 migrates decoders and rules to
+YAML with an ECS-normalized schema, which would require reworking the rules — see
+`docs/07-open-questions.md` Q12.
+
+## Files
+
+| File | Milestone | Purpose |
+| --- | --- | --- |
+| `ossec-localfile.xml` | M0 | Tail `events.jsonl` with `log_format json`. No custom decoder. |
+| `ossec-syscheck.xml` | M0 | FIM with `whodata` on `.claude/`, managed settings and `.mcp.json`. Most of D6. |
+| `sca/ipctl_managed_settings.yml` | M1 | Assert the managed-settings bundle and `agentd` are present and correct. D12. |
+| `fixtures/events.sample.jsonl` | M0 | Rule and decoder test input for `wazuh-logtest`. |
+
+Detector rules (D1–D12) land in M1 and M2 per `docs/05-build-plan.md` and are not
+in this directory yet. `docs/03-detection.md` holds the reviewed rule shapes.
+
+## Install
+
+```sh
+# 1. Merge the localfile and syscheck blocks into the agent's ossec.conf, or
+#    deliver them as a centralized agent-group config.
+sudo cp ossec-localfile.xml  /var/ossec/etc/shared/ipctl-localfile.xml
+sudo cp ossec-syscheck.xml   /var/ossec/etc/shared/ipctl-syscheck.xml
+
+# 2. Install the SCA policy (M1).
+sudo cp sca/ipctl_managed_settings.yml /var/ossec/ruleset/sca/
+# then reference it from the agent's <sca><policies> block
+
+sudo systemctl restart wazuh-agent
+```
+
+`whodata` needs Linux Audit or eBPF available. Where it is not, the entries still
+work with `realtime` alone — but you lose the "which process wrote this" attribution,
+which is the question that matters for adversary A1. Check that before assuming D6 is
+covered.
+
+## Verify the decoder before writing any rule
+
+This is an M0 exit criterion, not a nicety: the failure mode of a malformed or
+over-wide event is the manager **dropping** it, which is silent detection loss.
+
+```sh
+# Confirm the JSON decoder fires and fields are addressable.
+/var/ossec/bin/wazuh-logtest -v
+# paste one line from fixtures/events.sample.jsonl
+
+# Or non-interactively:
+while read -r line; do
+  echo "$line" | /var/ossec/bin/wazuh-logtest -q
+done < fixtures/events.sample.jsonl
+```
+
+What to check in the output:
+
+1. **`json` is the matched decoder.** If no decoder matched, `log_format json` is
+   not in effect for that location.
+2. **Nested fields are addressable with dot notation.** Confirm a rule could test
+   e.g. `path_zone` and `policy_decision` directly. The flattened schema exists so
+   no rule needs deeper addressing than one level.
+3. **No `Too many fields for JSON decoder` in the manager log.** Field counts in
+   the fixtures are 18–36; `analysisd.decoder_order_size` defaults to 256, so
+   there is wide margin. If you see the error, something upstream is emitting the
+   rich schema instead of the flattened one — check that only `events.jsonl` is
+   tailed and never `trajectory.jsonl`.
+
+```sh
+sudo grep -i "too many fields" /var/ossec/logs/ossec.log
+```
+
+## Do not enable archiving
+
+`logall` and `logall_json` write every event, including ones that trip no rule, to
+`archives.log` / `archives.json`. Both default to `no` and must stay there. The
+volume estimate is ~300k events/day for 63 agents, and archiving turns the indexer
+into an expensive, slow copy of a log file. Archiving is what the local spool and
+object storage are for — see `docs/04-data-model.md`.
+
+## Never tail the spool
+
+`trajectory.jsonl` holds every event in the rich representation, including prompt
+text. It is the investigation corpus and it stays on the endpoint. Tailing it would
+push the firehose at the indexer and send prompt text to Wazuh — and, with an
+external firm monitoring, out of our control entirely.
+
+## Agent disconnection gives D7 for free
+
+Rule **504** (`Wazuh agent disconnected`, level 3) ships tagged
+**MITRE T1562.001**, which is the correct technique for "someone killed the
+monitoring." Tune the timing on the manager:
+
+```xml
+<global>
+  <agents_disconnection_time>15m</agents_disconnection_time>
+  <agents_disconnection_alert_time>5m</agents_disconnection_alert_time>
+</global>
+```
+
+That covers the endpoint going dark. It does **not** cover `agentd` dying while the
+Wazuh agent stays alive — the endpoint keeps heartbeating and only the event stream
+stops. SCA check 10007 (`p:agentd`) plus a stale `agentd_health` heartbeat covers
+that half; see `docs/03-detection.md` on D7.
+
+## Active response is containment, never a gate
+
+If you wire active response to D1 or D3, keep to `docs/02-architecture.md`:
+
+- Scripts are **allowlisted on the endpoint**. The manager names a command; it
+  never ships one. Otherwise manager access becomes a fleet-wide code-execution
+  primitive.
+- Credential revocation first. Anything that stops a developer working needs a
+  reviewed alert, not an automatic trigger.
+- MSSP roles get **no dispatch permission**. Containment is ours to execute on
+  their recommendation.

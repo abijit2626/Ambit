@@ -1,0 +1,6 @@
+bin/
+*.jsonl
+*.jsonl.*
+fingerprint.key
+*.key
+!deploy/**/*.key

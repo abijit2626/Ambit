@@ -174,8 +174,25 @@ Snake_case, scalar values only, no arrays of objects, no nesting beyond what a
 }
 ```
 
-37 fields. `taint_labels` and `secret_hit_kinds` are arrays of **strings**, which the
-decoder supports.
+`taint_labels` and `secret_hit_kinds` are arrays of **strings**, which the decoder
+supports.
+
+**Measured field counts** (from `internal/event` tests, which fail the build if these
+regress): **49 for a Bash tool event, 50 for an MCP tool event** — the two widest —
+and 25–31 for `session_start`, `config_change` and `agentd_health`. An earlier draft
+of this document estimated 37; that was wrong, and it was wrong in the direction of
+under-counting. The real ceiling matters less than it looked, though: 50 is far under
+the 256 default for `decoder_order_size`, so the budget enforced in tests is 55 with a
+70-field ceiling on the synthetic union of every optional block.
+
+Two things keep the count honest. A single event never carries the tool, config and
+health blocks together, and a tool event never carries both the MCP and Bash blocks —
+measuring their union describes an event that cannot exist. And session-constant
+fields (`agent_*`, `repo_*`, `sandbox_*`) are **deliberately repeated on every event**
+rather than emitted once on `session_start` and joined: a Wazuh rule can only test
+fields present on the event it is evaluating, so D1 needs `agent_entrypoint` and
+`permission_mode` on the tool event itself. Denormalization is the correct trade for a
+SIEM.
 
 ## Mapping, and where it loses information
 

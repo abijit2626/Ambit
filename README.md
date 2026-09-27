@@ -116,9 +116,56 @@ restrictions — and Wazuh's multi-tenancy is thin. Until
 [Q11](docs/07-open-questions.md) is settled they are intentions, not enforced
 guarantees, and the docs say so rather than claiming coverage.
 
+## Code
+
+M0 is implemented: `agentd` is **observe-only**. It receives Claude Code hook
+events, normalizes them, writes the full trajectory to a local spool and the
+filtered security-relevant slice to a file the Wazuh agent tails. It returns no
+decision, so no session behaves differently for its presence — that is the
+milestone guarantee, because a baseline cannot be measured from a system that is
+already changing behavior.
+
+```
+cmd/agentd/              the endpoint daemon
+internal/event/          rich internal schema + flattened SIEM-bound schema
+internal/classify/       path zone and bash command classification
+internal/features/       keyed fingerprint extraction
+internal/redact/         secret detection and stripping at the edge
+internal/filter/         what crosses to Wazuh
+internal/hook/           Claude Code hook HTTP endpoint
+internal/sink/           JSON-lines writer with rotation and gap markers
+internal/collector/      wiring: payload -> event -> sinks
+internal/config/         configuration, deliberately not delivered over Wazuh
+deploy/wazuh/            localfile, syscheck, SCA policy, logtest fixtures
+deploy/claude-code/      managed-settings bundle (M0: observation only)
+```
+
+```sh
+make check   # go vet + race tests + gofmt
+make build   # bin/agentd
+make smoke   # end-to-end: inert responses, correct filtering, no leaks
+make cross   # static binaries for darwin/linux, arm64/amd64
+```
+
+Three properties the tests enforce, each because getting it wrong is silent:
+
+- **`agentd` is inert.** Every hook response is `{}`. An empty response means no
+  opinion, so Claude Code's permission pipeline behaves as if no hook were
+  installed. Returning `allow` would *not* be equivalent — it suppresses the
+  prompt a developer would otherwise see.
+- **Nothing sensitive reaches the SIEM sink.** Paths are keyed HMAC digests with
+  only the zone label in cleartext; secret values are stripped at the edge and
+  only the kind is recorded; prompt text has no field in the flattened schema and
+  stays in the spool.
+- **The event stays narrow.** Wazuh drops events that exceed the JSON decoder's
+  field limit, which is detection loss with no error at the detector. A test fails
+  the build if a flattened event grows past its budget.
+
 ## Status
 
-Design only. No implementation code. Nothing here is final —
+M0 code complete and tested; not yet deployed to a cohort, so the M0 exit criteria
+in [05-build-plan.md](docs/05-build-plan.md) — chiefly the **measured interesting
+fraction** — are still open. M1 onward is design only. Nothing here is final —
 [07-open-questions.md](docs/07-open-questions.md) lists what still needs deciding, and
 five of the twelve are blocking.
 

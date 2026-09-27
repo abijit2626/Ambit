@@ -1,0 +1,37 @@
+<!--
+  M0. Wazuh agent config: tail agentd's Wazuh-bound sink.
+
+  log_format json is documented as being for single-line JSON files, which is why
+  the sink writes one object per line and replaces any embedded newline. The
+  built-in JSON decoder stores every key as a dynamic field addressable from
+  rules, so there is no custom decoder to write or maintain.
+
+  Only events.jsonl is tailed. trajectory.jsonl is the local spool and must NOT
+  be tailed: it holds every event in the rich representation, including prompt
+  text, and pushing it at the indexer is the firehose docs/04-data-model.md
+  exists to prevent.
+
+  Merge into /var/ossec/etc/ossec.conf inside <ossec_config>, or deliver as a
+  centralized agent-group config.
+-->
+<ossec_config>
+
+  <localfile>
+    <log_format>json</log_format>
+    <location>/var/lib/ipctl/events.jsonl</location>
+    <label key="ipctl.stream">agentd</label>
+    <label key="ipctl.schema_v">2</label>
+  </localfile>
+
+  <!--
+    macOS default path. Keep both: the agent ignores a localfile whose location
+    does not exist, so one config can serve a mixed fleet.
+  -->
+  <localfile>
+    <log_format>json</log_format>
+    <location>/usr/local/var/ipctl/events.jsonl</location>
+    <label key="ipctl.stream">agentd</label>
+    <label key="ipctl.schema_v">2</label>
+  </localfile>
+
+</ossec_config>

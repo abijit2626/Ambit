@@ -1,0 +1,78 @@
+<!--
+  M0. FIM on agent configuration. Covers most of detector D6 (config tamper).
+
+  Two documented constraints shape this file.
+
+  1. "Real time only works with directories, not individual files." So each entry
+     watches a DIRECTORY and narrows with restrict, rather than naming
+     settings.json. Naming the file directly would silently give up realtime and
+     fall back to scheduled scans.
+
+  2. whodata reports WHICH USER AND PROCESS modified the file, via Linux Audit or
+     eBPF. realtime only reports that it changed. For adversary A1 — malware
+     editing agent config to disable hooks or widen permissions — "which process
+     wrote this" is the entire question, so whodata is worth its setup cost here.
+
+  What this does NOT cover, per docs/02-architecture.md: in-session config changes
+  that never touch disk, and a --settings path passed on the command line. Claude
+  Code's ConfigChange hook covers those and reaches Wazuh through agentd. D6 is
+  FIM *plus* ConfigChange; neither half is sufficient alone.
+-->
+<ossec_config>
+  <syscheck>
+
+    <!-- User-scope Claude Code settings and hooks. -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 restrict="settings\.json$|settings\.local\.json$|hooks\.json$"
+                 tags="ipctl,d6,claude-settings">/home/*/.claude</directories>
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 restrict="settings\.json$|settings\.local\.json$|hooks\.json$"
+                 tags="ipctl,d6,claude-settings">/Users/*/.claude</directories>
+
+    <!--
+      Managed settings: the anchor everything else rests on. A change here is
+      higher severity than a change to user settings, because managed settings
+      are what user-scope config cannot override.
+    -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 restrict="managed-settings\.json$"
+                 tags="ipctl,d6,managed-settings">/Library/Application Support/ClaudeCode</directories>
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 restrict="managed-settings\.json$"
+                 tags="ipctl,d6,managed-settings">/etc/claude-code</directories>
+
+    <!--
+      MCP server configuration. A new or edited .mcp.json is how an unsanctioned
+      or shadow server gets introduced, which is adversary A3.
+
+      recursion_level is bounded because these are developer source trees: an
+      unbounded walk of every repo on the endpoint is an IO problem, and a
+      .mcp.json nested twenty levels deep is not the common case.
+    -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 recursion_level="4" restrict="\.mcp\.json$"
+                 tags="ipctl,d6,mcp-config">/home/*/src</directories>
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 recursion_level="4" restrict="\.mcp\.json$"
+                 tags="ipctl,d6,mcp-config">/Users/*/src</directories>
+
+    <!--
+      agentd's own configuration and its HMAC key directory. Rotating the key
+      breaks equality matching against every stored fingerprint, so an
+      unexplained change here is both a tamper signal and an operational one.
+      The key file's CONTENT is never reported: report_changes is off for this
+      entry deliberately, because a diff would put key material in an alert.
+    -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="no"
+                 tags="ipctl,d6,agentd-config">/etc/ipctl</directories>
+
+    <!-- The sinks change constantly by design; alerting on them is pure noise. -->
+    <ignore>/var/lib/ipctl/events.jsonl</ignore>
+    <ignore>/var/lib/ipctl/trajectory.jsonl</ignore>
+    <ignore>/usr/local/var/ipctl/events.jsonl</ignore>
+    <ignore>/usr/local/var/ipctl/trajectory.jsonl</ignore>
+    <ignore type="sregex">^/var/lib/ipctl/.*\.jsonl\.\d+$</ignore>
+    <ignore type="sregex">^/usr/local/var/ipctl/.*\.jsonl\.\d+$</ignore>
+
+  </syscheck>
+</ossec_config>

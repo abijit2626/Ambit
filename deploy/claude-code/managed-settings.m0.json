@@ -1,0 +1,105 @@
+{
+  "_comment": [
+    "M0 managed settings: OBSERVATION ONLY. Deliver via MDM to",
+    "/Library/Application Support/ClaudeCode/managed-settings.json (macOS) or",
+    "/etc/claude-code/managed-settings.json (Linux), or via server-managed",
+    "settings on claude.ai.",
+    "",
+    "This file deliberately contains NO permission changes and NO sandbox",
+    "changes. M0's exit criterion is zero developer-visible behavior change,",
+    "because a baseline cannot be measured from a system that is already",
+    "changing behavior. The enforcement keys are in managed-settings.m3.json,",
+    "which is not deployed until the promotion ladder in docs/05-build-plan.md",
+    "has evidence behind it.",
+    "",
+    "Managed settings sit at the highest precedence: no other level, including",
+    "command-line arguments, overrides a managed permission rule, and managed",
+    "hooks cannot be disabled by user or project settings. That is what makes",
+    "this file the anchor, and why SCA policy ipctl_managed_settings asserts it",
+    "is still here and still correct (detector D12)."
+  ],
+
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4317",
+    "_comment_content_gates": [
+      "OTEL_LOG_TOOL_DETAILS, OTEL_LOG_TOOL_CONTENT and OTEL_LOG_RAW_API_BODIES",
+      "are deliberately NOT set in M0. They are off by default, and turning them",
+      "on ships tool arguments, file contents and full conversation history into",
+      "the OTLP stream. agentd already gets what it needs from the hook payloads;",
+      "enabling these would widen the sensitive-data surface for no M0 benefit."
+    ]
+  },
+
+  "hooks": {
+    "_comment": [
+      "Every event below is observation only. PreToolUse is included because it",
+      "is the only event carrying tool_input before execution, and agentd returns",
+      "an empty response to it: no decision, so Claude Code's permission",
+      "pipeline behaves exactly as it would with no hook installed.",
+      "",
+      "An empty response is NOT the same as returning allow. Returning allow",
+      "would suppress the permission prompt a developer would otherwise see."
+    ],
+
+    "PreToolUse": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "PermissionRequest": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "PermissionDenied": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "SessionStart": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "SessionEnd": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "InstructionsLoaded": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "ConfigChange": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "SubagentStart": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "SubagentStop": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "PreCompact": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ],
+    "PostCompact": [
+      { "matcher": ".*", "hooks": [
+        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+    ]
+  }
+}

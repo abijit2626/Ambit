@@ -1,0 +1,127 @@
+# M1. SCA policy asserting the Claude Code managed-settings bundle is present and
+# correct, and that agentd is running. This is detector D12.
+#
+# Why this exists: every control in docs/02-architecture.md rests on claims about
+# endpoint state — the sandbox is on, bypassPermissions is disabled, the egress
+# allowlist is locked, the hook is installed. Without SCA those are assumptions.
+# With it they are checks that run on a schedule and alert on drift.
+#
+# HONEST LIMITATION, repeated from docs/02: SCA regex-matches file TEXT. It is not
+# a JSON-aware assertion. A semantically equivalent but differently formatted
+# bundle can fail a check that should pass, and a key appearing inside an
+# unrelated nested object can pass one that should fail. Two mitigations: pin the
+# bundle's exact serialization at build time so the text is deterministic, and use
+# c: checks shelling out to a verifier where text matching is genuinely ambiguous.
+# Treat this policy as a tripwire on a known-good file, not as a parser.
+
+policy:
+  id: "ipctl_managed_settings"
+  file: "ipctl_managed_settings.yml"
+  name: "indirect-prompt: Claude Code managed settings assertions"
+  description: "Asserts the managed-settings bundle and agentd are present and correct."
+  references:
+    - https://code.claude.com/docs/en/managed-settings
+    - https://code.claude.com/docs/en/sandboxing
+  regex_type: "pcre2"
+
+requirements:
+  title: "Claude Code is installed on this endpoint"
+  description: "Skip the whole policy where Claude Code is not deployed, so unrelated endpoints do not report a wall of failures."
+  condition: any
+  rules:
+    - 'd:/Library/Application Support/ClaudeCode'
+    - 'd:/etc/claude-code'
+    - 'c:sh -c "command -v claude" -> r:claude'
+
+checks:
+  - id: 10001
+    title: "Managed settings bundle is present"
+    description: "Managed settings sit at the highest precedence: no other level, including command-line arguments, overrides a managed permission rule."
+    rationale: "Without the bundle, every control below is unenforced and user or project settings decide policy."
+    remediation: "Redeploy the managed-settings bundle via MDM or server-managed settings."
+    compliance:
+      - ipctl: ["anchor"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json'
+      - 'f:/etc/claude-code/managed-settings.json'
+
+  - id: 10002
+    title: "bypassPermissions mode is disabled"
+    description: "permissions.disableBypassPermissionsMode must be \"disable\"."
+    rationale: "bypassPermissions is the invocation mode the s1ngularity malware pattern used: --dangerously-skip-permissions on an agent the developer already authenticated. This is the single most direct counter to adversary A1."
+    remediation: "Set permissions.disableBypassPermissionsMode to \"disable\" in managed settings."
+    compliance:
+      - ipctl: ["A1", "D3"]
+      - mitre_technique: ["T1562.001"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"disableBypassPermissionsMode"\s*:\s*"disable"'
+      - 'f:/etc/claude-code/managed-settings.json -> r:"disableBypassPermissionsMode"\s*:\s*"disable"'
+
+  - id: 10003
+    title: "Sandbox is enabled and fails closed when unavailable"
+    description: "sandbox.enabled true, failIfUnavailable true, allowUnsandboxedCommands false."
+    rationale: "failIfUnavailable is the load-bearing one: without it Claude Code starts and runs unsandboxed when the sandbox cannot initialize, which is the failure mode nobody notices."
+    remediation: "Set all three keys in the managed sandbox block."
+    compliance:
+      - ipctl: ["A1", "A2"]
+    condition: all
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"failIfUnavailable"\s*:\s*true'
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"allowUnsandboxedCommands"\s*:\s*false'
+
+  - id: 10004
+    title: "Egress allowlist is locked to managed domains"
+    description: "sandbox.network.allowManagedDomainsOnly must be true."
+    rationale: "allowManagedDomainsOnly blocks non-allowed domains outright instead of prompting, and honors only managed entries, so a developer cannot widen the allowlist. Without it, exfiltration to an arbitrary host is one approval prompt away."
+    remediation: "Set sandbox.network.allowManagedDomainsOnly to true in managed settings."
+    compliance:
+      - ipctl: ["D9"]
+      - mitre_technique: ["T1041", "T1567"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"allowManagedDomainsOnly"\s*:\s*true'
+      - 'f:/etc/claude-code/managed-settings.json -> r:"allowManagedDomainsOnly"\s*:\s*true'
+
+  - id: 10005
+    title: "The PreToolUse hook points at agentd on loopback"
+    description: "A managed PreToolUse hook must target 127.0.0.1, which is where agentd listens."
+    rationale: "If the hook is absent, agentd sees nothing and the event stream silently stops while the endpoint still heartbeats. If it points anywhere but loopback, tool-call decisions have left the machine."
+    remediation: "Restore the managed hooks block."
+    compliance:
+      - ipctl: ["D7"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"url"\s*:\s*"http://127\.0\.0\.1:\d+/hook"'
+      - 'f:/etc/claude-code/managed-settings.json -> r:"url"\s*:\s*"http://127\.0\.0\.1:\d+/hook"'
+
+  - id: 10006
+    title: "OpenTelemetry destination is pinned to loopback"
+    description: "OTEL_EXPORTER_OTLP_ENDPOINT must point at 127.0.0.1."
+    rationale: "Set in managed settings, developer-set telemetry variables are removed, which is what makes OTel a tamper-resistant second stream independent of the hook path."
+    remediation: "Set the OTEL_* env block in managed settings."
+    compliance:
+      - ipctl: ["D7"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1'
+      - 'f:/etc/claude-code/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1'
+
+  - id: 10007
+    title: "agentd process is running"
+    description: "The endpoint daemon must be alive."
+    rationale: >
+      This check runs on the WAZUH AGENT's schedule, in a different process from
+      the one it is watching, which is the whole point when the adversary can kill
+      processes. It is deliberately weak on its own: p: confirms a process by name
+      and says nothing about whether it is functioning, so a wedged agentd passes.
+      The companion signal is a stale agentd_health heartbeat with this check
+      passing. See docs/03-detection.md on D7's two halves.
+    remediation: "Start the agentd service and investigate why it stopped."
+    compliance:
+      - ipctl: ["D7", "D11"]
+      - mitre_technique: ["T1562.001"]
+    condition: all
+    rules:
+      - 'p:agentd'
