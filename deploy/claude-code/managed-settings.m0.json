@@ -20,11 +20,25 @@
   ],
 
   "env": {
+    "_comment_protocol": [
+      "http/json, NOT grpc or http/protobuf. agentd's receiver decodes OTLP/JSON",
+      "with the standard library; the alternatives would pull grpc and protobuf",
+      "runtimes into a daemon that ships to developer endpoints and currently has",
+      "zero dependencies, which is a large supply-chain surface to add to a",
+      "security tool.",
+      "",
+      "Port 4318, NOT 4317. 4318 is the OTLP/HTTP default; 4317 is gRPC. An",
+      "earlier version of this file had 4317 with HTTP intent, which would have",
+      "exported into a dead port: Claude Code would look configured while nothing",
+      "was ever received. agentd answers 415 on a protobuf body and reports",
+      "degraded health rather than failing silently, precisely because that blind",
+      "spot is what the second stream exists to close."
+    ],
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
-    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4317",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
     "_comment_content_gates": [
       "OTEL_LOG_TOOL_DETAILS, OTEL_LOG_TOOL_CONTENT and OTEL_LOG_RAW_API_BODIES",
       "are deliberately NOT set in M0. They are off by default, and turning them",

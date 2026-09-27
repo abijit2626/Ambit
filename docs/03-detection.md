@@ -308,6 +308,19 @@ Recommendation: option 2 as primary, with option 1's heartbeat retained because
 `p:agentd` cannot tell a wedged daemon from a healthy one. Combined, a wedged
 `agentd` shows as "process present, heartbeat stale."
 
+**A third signal, now implemented: stream discrepancy.** `agentd` receives Claude
+Code's OTel export on a loopback OTLP/HTTP receiver and counts tool calls on both
+the hook path and the OTel path. Exactly one path silent while the other reports
+means a collection path has stopped, and `agentd` sets its health status to
+`degraded`, which crosses to Wazuh as an `agentd_health` event. This catches cases
+neither of the above does: the hook removed from settings while the daemon runs
+(OTel active, hook silent), and the OTel destination redirected or the encoding
+switched to protobuf (hook active, OTel silent).
+
+Both paths quiet is an idle endpoint, not a discrepancy. And the comparison is
+"one silent", not a ratio — the streams legitimately differ in what they see, so
+a count mismatch is normal and only total silence on one side is a signal.
+
 ### D12 — managed-settings drift (new)
 
 SCA policy from [02](02-architecture.md). A failed check raises an SCA alert

@@ -22,6 +22,15 @@ type Config struct {
 	// url in the managed-settings hook entry.
 	HookAddr string `json:"hook_addr"`
 
+	// OTLPAddr is the loopback address the OTLP/HTTP receiver binds. 4318 is the
+	// OTLP/HTTP default; 4317 is gRPC and would be the wrong port for a receiver
+	// that only speaks http/json.
+	OTLPAddr string `json:"otlp_addr"`
+	// OTLPEnabled turns the second stream on. Off means Claude Code's telemetry
+	// has nowhere to go, so the managed bundle must not set OTEL_* either —
+	// pointing an exporter at a dead port is a misconfiguration, not a no-op.
+	OTLPEnabled bool `json:"otlp_enabled"`
+
 	// EventsPath is the Wazuh-bound sink: filtered, flattened events, tailed by
 	// the Wazuh agent with log_format json.
 	EventsPath string `json:"events_path"`
@@ -143,6 +152,12 @@ func (c *Config) derive() {
 func (c *Config) Validate() error {
 	if c.HookAddr == "" {
 		return errors.New("config: hook_addr is required")
+	}
+	if c.OTLPEnabled && c.OTLPAddr == "" {
+		return errors.New("config: otlp_addr is required when otlp_enabled is true")
+	}
+	if c.OTLPEnabled && c.OTLPAddr == c.HookAddr {
+		return errors.New("config: otlp_addr and hook_addr must differ")
 	}
 	if c.EventsPath == "" || c.TrajectoryPath == "" {
 		return errors.New("config: events_path and trajectory_path are required")

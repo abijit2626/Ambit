@@ -28,6 +28,9 @@ import (
 	"github.com/abijit2626/indirect-prompt/internal/redact"
 )
 
+// runtimeGOOS is a variable so tests can pin the value.
+var runtimeGOOS = runtime.GOOS
+
 // Sink is the subset of sink.Writer the collector needs, so tests can substitute.
 type Sink interface {
 	Write(v any) bool
@@ -67,6 +70,12 @@ type Collector struct {
 
 	handled atomic.Int64
 	crossed atomic.Int64
+	// hookToolCalls counts tool events seen on the hook path, for comparison
+	// against the OTel stream. See OTel() on why the comparison is coarse.
+	hookToolCalls atomic.Int64
+	otelRecords   atomic.Int64
+	otelToolCalls atomic.Int64
+	otelLastSeen  atomic.Int64
 	// crossReasons counts why events crossed. This is the M0 exit criterion that
 	// measures the interesting fraction; without per-reason counts there is no
 	// way to tell which criterion drives the volume.
@@ -118,6 +127,9 @@ func (c *Collector) Handle(p *hook.Payload) {
 	if e == nil {
 		return
 	}
+	if e.Kind == event.KindToolPre || e.Kind == event.KindToolPost {
+		c.hookToolCalls.Add(1)
+	}
 
 	// The spool gets everything, in the rich representation.
 	c.traj.Write(e)
@@ -160,7 +172,7 @@ func (c *Collector) build(p *hook.Payload) *event.Event {
 		Kind:       kind,
 		Endpoint: event.Endpoint{
 			EndpointID:    c.cfg.EndpointID,
-			OS:            runtime.GOOS,
+			OS:            runtimeGOOS,
 			AgentdVersion: c.version,
 		},
 		Actor: event.Actor{UserID: c.cfg.UserID, OrgID: c.cfg.OrgID},

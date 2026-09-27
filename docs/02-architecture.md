@@ -149,6 +149,34 @@ full-trajectory source; almost none of it should reach the SIEM
 managed settings with developer-set variables removed, making it a
 tamper-resistant second stream independent of the hook path.
 
+**Encoding: `http/json` on port 4318.** Claude Code supports `grpc`,
+`http/protobuf` and `http/json`, and `http/json` is the only one decodable with
+the Go standard library. The alternatives would pull grpc and protobuf runtimes
+into a daemon that ships to developer endpoints and otherwise has zero
+dependencies — a large supply-chain surface to add to a security tool, and one
+whose whole job is not being the thing that compromises the endpoint. Port 4318 is
+the OTLP/HTTP default; **4317 is gRPC** and is the wrong port for this receiver.
+
+`agentd` answers **415** on a protobuf body rather than failing to parse it, and
+reports `degraded` health when any export is rejected. A silent decode failure
+here would look like "OTel is configured" while nothing was ever received, which
+is precisely the blind spot the second stream exists to close. SCA checks 10006
+and 10008 assert the endpoint and the protocol so the misconfiguration is caught
+before it reaches an endpoint.
+
+**What the second stream is actually for.** Not content — the hook stream carries
+the security-relevant slice with better structure. It is for the **discrepancy**:
+the hook endpoint dies with `agentd`, while OTel's destination is pinned in
+managed settings. One stream reporting tool calls while the other is silent means
+a collection path has stopped, which is what suppression looks like from the
+inside. `agentd` counts tool calls on both paths and reports `degraded` when
+exactly one is silent; both quiet is an idle endpoint, not a signal.
+
+The comparison is deliberately coarse — "one silent", not a ratio. The two streams
+legitimately see different things: the hook path sees every subscribed event while
+OTel emits on its own schedule and behind content gates. Tightening this into a
+ratio threshold needs M0 baseline data, not a guess.
+
 ### Endpoint: MCP interposer
 
 Hooks see tool *calls*, not the tool *descriptions and schemas* the server

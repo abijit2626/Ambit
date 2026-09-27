@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+
+	"github.com/abijit2626/indirect-prompt/internal/loopback"
 	"time"
 )
 
@@ -119,34 +121,12 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	return nil
 }
 
-// ValidateLoopback reports whether addr is a loopback bind address.
-//
-// Binding off-loopback would expose a decision endpoint for the agent fleet to
-// anything on the network, and would put remote latency in the tool-call path.
-// Kept separate from Listen so the policy is testable without depending on the
-// host having a working stack for the address family.
-func ValidateLoopback(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return err
-	}
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("hook: listener must bind a loopback address; " + addr + " is not loopback")
-	}
-	return nil
-}
+// ValidateLoopback reports whether addr is a loopback bind address. Delegates to
+// internal/loopback so this control has exactly one definition.
+func ValidateLoopback(addr string) error { return loopback.Validate(addr) }
 
 // Listen opens a loopback listener, refusing any non-loopback bind.
-func Listen(addr string) (net.Listener, error) {
-	if err := ValidateLoopback(addr); err != nil {
-		return nil, err
-	}
-	return net.Listen("tcp", addr)
-}
+func Listen(addr string) (net.Listener, error) { return loopback.Listen(addr) }
 
 func (s *Server) serveHook(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()

@@ -133,6 +133,8 @@ internal/features/       keyed fingerprint extraction
 internal/redact/         secret detection and stripping at the edge
 internal/filter/         what crosses to Wazuh
 internal/hook/           Claude Code hook HTTP endpoint
+internal/otlp/           OTLP/HTTP receiver (http/json, zero dependencies)
+internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
@@ -141,6 +143,8 @@ deploy/claude-code/      managed-settings bundle (M0: observation only)
 ```
 
 ```sh
+./scripts/dev-local.sh          # run it against your own Claude Code sessions
+./scripts/dev-local.sh --status  # the M0 interesting-fraction readout
 make check   # go vet + race tests + gofmt
 make build   # bin/agentd
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
@@ -160,6 +164,11 @@ Three properties the tests enforce, each because getting it wrong is silent:
 - **The event stays narrow.** Wazuh drops events that exceed the JSON decoder's
   field limit, which is detection loss with no error at the detector. A test fails
   the build if a flattened event grows past its budget.
+- **A misconfigured second stream is loud, not silent.** The OTLP receiver speaks
+  `http/json` only and answers 415 on protobuf, and `agentd` reports `degraded`
+  health when exports are rejected or when exactly one of the two collection paths
+  goes silent. "Configured but never received" is the failure mode that would
+  otherwise hide.
 
 ## Status
 

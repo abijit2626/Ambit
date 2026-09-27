@@ -26,6 +26,7 @@ import (
 	"github.com/abijit2626/indirect-prompt/internal/event"
 	"github.com/abijit2626/indirect-prompt/internal/features"
 	"github.com/abijit2626/indirect-prompt/internal/hook"
+	"github.com/abijit2626/indirect-prompt/internal/otlp"
 	"github.com/abijit2626/indirect-prompt/internal/sink"
 )
 
@@ -132,25 +133,62 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The OTLP receiver is the second, independent stream. The hook endpoint dies
+	// with agentd; OTel's destination is pinned in managed settings with
+	// developer-set variables removed. Losing one while the other continues is
+	// the discrepancy detector D7 keys on.
+	var otlpSrv *otlp.Server
+	if cfg.OTLPEnabled {
+		otlpSrv, err = otlp.NewServer(otlp.Options{
+			Addr:   cfg.OTLPAddr,
+			Sink:   coll.HandleOTel,
+			Logger: log,
+		})
+		if err != nil {
+			return err
+		}
+		otlpLn, err := otlp.Listen(cfg.OTLPAddr)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if serr := otlpSrv.Serve(ctx, otlpLn); serr != nil {
+				log.Error("OTLP receiver stopped", "err", serr)
+			}
+		}()
+	}
+
 	log.Info("agentd started",
 		"version", version,
 		"mode", "observe-only",
 		"hook_addr", cfg.HookAddr,
+		"otlp_addr", otlpAddrOrOff(cfg),
 		"events", cfg.EventsPath,
 		"trajectory", cfg.TrajectoryPath,
 	)
 
-	go emitHealth(ctx, cfg, coll, events, traj, version, log)
+	go emitHealth(ctx, cfg, coll, events, traj, otlpSrv, version, log)
 
 	err = srv.Serve(ctx, ln)
 
 	st := coll.Stats()
+	ot := coll.OTel()
 	log.Info("agentd stopped",
 		"handled", st.Handled,
 		"crossed", st.Crossed,
 		"interesting_fraction", fmt.Sprintf("%.4f", coll.InterestingFraction()),
+		"hook_tool_calls", ot.HookToolCalls,
+		"otel_tool_calls", ot.ToolCalls,
+		"stream_discrepant", ot.Discrepant,
 	)
 	return err
+}
+
+func otlpAddrOrOff(cfg config.Config) string {
+	if !cfg.OTLPEnabled {
+		return "off"
+	}
+	return cfg.OTLPAddr
 }
 
 // emitHealth writes a periodic agentd_health event.
@@ -165,6 +203,7 @@ func emitHealth(
 	coll *collector.Collector,
 	events *sink.Writer,
 	traj *sink.Writer,
+	otlpSrv *otlp.Server,
 	version string,
 	log *slog.Logger,
 ) {
@@ -185,6 +224,25 @@ func emitHealth(
 			// "ok" while losing events is worse than no monitor.
 			if es.Dropped > 0 || ts.Dropped > 0 || es.WriteErrs > 0 || ts.WriteErrs > 0 {
 				status = "degraded"
+			}
+
+			// A stream discrepancy is reported as degraded so it reaches Wazuh:
+			// one stream silent while the other is active means a collection path
+			// has stopped, which is what suppression looks like from here.
+			ot := coll.OTel()
+			if cfg.OTLPEnabled && ot.Discrepant {
+				status = "degraded"
+			}
+			if otlpSrv != nil {
+				if rejected := otlpSrv.Stats().Rejected; rejected > 0 {
+					// An exporter sending protobuf means OTel is configured but
+					// nothing is being received — the blind spot the second
+					// stream exists to close.
+					status = "degraded"
+					log.Error("OTLP exports are being rejected for wrong encoding",
+						"rejected", rejected,
+						"fix", "set OTEL_EXPORTER_OTLP_PROTOCOL=http/json")
+				}
 			}
 
 			now := time.Now().UTC()
@@ -220,7 +278,9 @@ func emitHealth(
 			}
 			log.Debug("health",
 				"handled", st.Handled, "crossed", st.Crossed,
-				"interesting_fraction", fmt.Sprintf("%.4f", coll.InterestingFraction()))
+				"interesting_fraction", fmt.Sprintf("%.4f", coll.InterestingFraction()),
+				"hook_tool_calls", ot.HookToolCalls, "otel_tool_calls", ot.ToolCalls,
+				"stream_discrepant", ot.Discrepant)
 		}
 	}
 }

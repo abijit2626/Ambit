@@ -97,16 +97,36 @@ checks:
       - 'f:/etc/claude-code/managed-settings.json -> r:"url"\s*:\s*"http://127\.0\.0\.1:\d+/hook"'
 
   - id: 10006
-    title: "OpenTelemetry destination is pinned to loopback"
-    description: "OTEL_EXPORTER_OTLP_ENDPOINT must point at 127.0.0.1."
-    rationale: "Set in managed settings, developer-set telemetry variables are removed, which is what makes OTel a tamper-resistant second stream independent of the hook path."
-    remediation: "Set the OTEL_* env block in managed settings."
+    title: "OpenTelemetry destination is pinned to loopback on the OTLP/HTTP port"
+    description: "OTEL_EXPORTER_OTLP_ENDPOINT must point at 127.0.0.1:4318."
+    rationale: >
+      Set in managed settings, developer-set telemetry variables are removed, which
+      is what makes OTel a tamper-resistant second stream independent of the hook
+      path. The port matters: 4318 is OTLP/HTTP and 4317 is gRPC, and an endpoint
+      on the wrong port exports into nothing while still looking configured.
+    remediation: "Set the OTEL_* env block in managed settings with endpoint http://127.0.0.1:4318."
     compliance:
       - ipctl: ["D7"]
     condition: any
     rules:
-      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1'
-      - 'f:/etc/claude-code/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1'
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1:4318'
+      - 'f:/etc/claude-code/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1:4318'
+
+  - id: 10008
+    title: "OTLP protocol is http/json"
+    description: "OTEL_EXPORTER_OTLP_PROTOCOL must be http/json."
+    rationale: >
+      agentd's receiver decodes OTLP/JSON only. A grpc or http/protobuf setting
+      means Claude Code exports in an encoding agentd cannot read, so the second
+      stream is silently absent. agentd answers 415 and reports degraded health,
+      but this check catches the misconfiguration before it reaches an endpoint.
+    remediation: "Set OTEL_EXPORTER_OTLP_PROTOCOL to http/json in managed settings."
+    compliance:
+      - ipctl: ["D7"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"OTEL_EXPORTER_OTLP_PROTOCOL"\s*:\s*"http/json"'
+      - 'f:/etc/claude-code/managed-settings.json -> r:"OTEL_EXPORTER_OTLP_PROTOCOL"\s*:\s*"http/json"'
 
   - id: 10007
     title: "agentd process is running"

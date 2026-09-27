@@ -69,8 +69,14 @@ which Wazuh cannot do.
 
 - **Deploy Wazuh**: manager, indexer, dashboard. Agent enrolled on the cohort
   endpoints. `logall` and `logall_json` left at `no`.
-- `agentd`: HTTP hook endpoint on localhost, OTLP receiver, local spool,
-  `events.jsonl` writer. **No policy engine** — every hook response is empty.
+- `agentd`: HTTP hook endpoint on localhost, OTLP/HTTP receiver on 4318
+  (`http/json` only — see [02](02-architecture.md) on why not grpc or protobuf),
+  local spool, `events.jsonl` writer. **No policy engine** — every hook response
+  is empty.
+- Stream-discrepancy counters across the hook and OTel paths, feeding
+  `agentd_health`. This is D7's third signal and the reason the OTel receiver is
+  in M0 at all rather than deferred: without a second path there is nothing to
+  corroborate against.
 - Normalized internal schema v2 and the flattened SIEM-bound schema
   ([04](04-data-model.md)), edge redaction, keyed feature extraction, the
   crosses-to-Wazuh filter.
