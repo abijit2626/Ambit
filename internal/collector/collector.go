@@ -76,6 +76,11 @@ type Collector struct {
 	otelRecords   atomic.Int64
 	otelToolCalls atomic.Int64
 	otelLastSeen  atomic.Int64
+	// interposeReports and interposeEvents count the third collection path. They
+	// are separate from handled/crossed so the M0 interesting-fraction figure
+	// stays comparable against a cohort that ran without an interposer.
+	interposeReports atomic.Int64
+	interposeEvents  atomic.Int64
 	// crossReasons counts why events crossed. This is the M0 exit criterion that
 	// measures the interesting fraction; without per-reason counts there is no
 	// way to tell which criterion drives the volume.
@@ -131,10 +136,16 @@ func (c *Collector) Handle(p *hook.Payload) {
 		c.hookToolCalls.Add(1)
 	}
 
-	// The spool gets everything, in the rich representation.
+	c.emit(e)
+}
+
+// emit writes one event to both sinks: the spool gets everything in the rich
+// representation, Wazuh gets the filtered, flattened slice. Every producer — the
+// hook path, the OTel path, the interposer — goes through here, so the filter and
+// the two-sink invariant have exactly one enforcement point.
+func (c *Collector) emit(e *event.Event) {
 	c.traj.Write(e)
 
-	// Wazuh gets the filtered, flattened slice.
 	v := c.filt.Decide(e)
 	c.recordReason(v)
 	if v.Cross {
@@ -351,10 +362,12 @@ func (c *Collector) Forget(sessionID string) {
 
 // Stats reports collector counters for the health event.
 type Stats struct {
-	Handled      int64
-	Crossed      int64
-	Sessions     int
-	CrossReasons map[string]int64
+	Handled          int64
+	Crossed          int64
+	Sessions         int
+	CrossReasons     map[string]int64
+	InterposeReports int64
+	InterposeEvents  int64
 }
 
 func (c *Collector) Stats() Stats {
@@ -370,10 +383,12 @@ func (c *Collector) Stats() Stats {
 	c.reasonMu.Unlock()
 
 	return Stats{
-		Handled:      c.handled.Load(),
-		Crossed:      c.crossed.Load(),
-		Sessions:     sessions,
-		CrossReasons: reasons,
+		Handled:          c.handled.Load(),
+		Crossed:          c.crossed.Load(),
+		Sessions:         sessions,
+		CrossReasons:     reasons,
+		InterposeReports: c.interposeReports.Load(),
+		InterposeEvents:  c.interposeEvents.Load(),
 	}
 }
 

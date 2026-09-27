@@ -32,6 +32,8 @@ const (
 	ReasonSecretHit      = "secret_hit"
 	ReasonNetworkCmd     = "network_command"
 	ReasonMCPRisk        = "mcp_risk"
+	ReasonMCPListing     = "mcp_listing"
+	ReasonMCPFinding     = "mcp_finding"
 	ReasonNotableFP      = "notable_fingerprint"
 	ReasonSampled        = "sampled_remainder"
 	ReasonDriftAbove     = "drift_above_threshold"
@@ -50,7 +52,6 @@ var alwaysCross = map[event.Kind]bool{
 	event.KindInstructionsLoaded: true, // D8
 	event.KindConfigChange:       true, // D6
 	event.KindFileChanged:        true, // D6
-	event.KindMCPList:            true, // D4, D5
 	event.KindSubagentStart:      true,
 	event.KindSubagentStop:       true,
 	event.KindCompact:            true, // needed to interpret R2 state
@@ -109,6 +110,8 @@ func (f *Filter) Decide(e *event.Event) Verdict {
 		return Verdict{false, ReasonNotInteresting}
 	case event.KindToolPre, event.KindToolPost:
 		return f.decideTool(e)
+	case event.KindMCPList:
+		return f.decideMCPList(e)
 	}
 
 	if alwaysCross[e.Kind] {
@@ -118,6 +121,46 @@ func (f *Filter) Decide(e *event.Event) Verdict {
 	// SIEM would be a detection gap nobody notices; excess volume is at least
 	// visible.
 	return Verdict{true, ReasonAlwaysKind}
+}
+
+// decideMCPList decides which interposer listing events cross.
+//
+// docs/04-data-model.md budgets mcp_list at one event per server per session, and
+// the per-server summary is that event: it always crosses, because the inventory of
+// what the fleet trusts is the point of M1. The per-tool events carry the detail,
+// and only the ones that say something cross — a 60-tool server matching its
+// approved baseline would otherwise spend 60 events per session reporting that
+// nothing happened, which is the firehose docs/04 exists to prevent. Every tool is
+// in the local spool either way, so an investigation loses nothing.
+//
+// Note the direction of the default: anything that is not a quiet, known state
+// crosses. A state this function has never heard of is a new verdict somebody added
+// without updating the filter, and the safe reading of that is "interesting".
+func (f *Filter) decideMCPList(e *event.Event) Verdict {
+	m := mcpBlock(e)
+	if m == nil {
+		// A listing event with no MCP block is malformed. It crosses: a silent
+		// drop here would hide a bug in our own emission path.
+		return Verdict{true, ReasonMCPListing}
+	}
+	if m.Tool == "" {
+		return Verdict{true, ReasonMCPListing}
+	}
+	if len(m.ScanClasses) > 0 {
+		return Verdict{true, ReasonMCPFinding}
+	}
+	switch m.BaselineState {
+	case event.MCPStateApproved, event.MCPStatePending:
+		return Verdict{false, ReasonNotInteresting}
+	}
+	return Verdict{true, ReasonMCPFinding}
+}
+
+func mcpBlock(e *event.Event) *event.MCP {
+	if e.Tool == nil {
+		return nil
+	}
+	return e.Tool.MCP
 }
 
 func (f *Filter) decideTool(e *event.Event) Verdict {
