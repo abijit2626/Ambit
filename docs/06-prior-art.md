@@ -150,11 +150,14 @@ building this anyway are:
 - **Rule-of-Two accounting and provenance edges.** No evidence either exists in
   Adrian, and they are the two mechanisms this design contributes.
 
-**This assessment is provisional and should not be trusted as written.** It rests on
-a one-line description. Before M1 starts, someone needs to actually read Adrian and
-either confirm these gaps or fold the work in — see [07](07-open-questions.md) Q13.
-Building a second tool because we did not read the first one would be the most
-expensive mistake available here.
+**Resolved.** These four gaps were confirmed against the actual code, and a fifth,
+more consequential one was found: Adrian already ships a working inline
+`PreToolUse` deny path, on a ~15-second synchronous budget, driven by the same
+LLM-judge classifier. The full evaluation, with file-and-line evidence and a
+reproduction script, is [09](09-adrian-evaluation.md) ([07](07-open-questions.md)
+Q13). Decision: build continues — the overlap is not partial, because the gap
+Adrian leaves **is** the deterministic layer this project contributes, not a piece
+of it.
 
 ### Defensive architecture
 
