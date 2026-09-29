@@ -233,8 +233,14 @@ confirmed against a working example. Full evidence and reproduction script:
 
 ## Benchmarks
 
-- **SHADE-Arena** — Kutasov et al., arXiv:2506.15740. **Secondary.** Main task plus
-  hidden side task, monitor blind to the side task.
+- **SHADE-Arena** — Kutasov et al., arXiv:2506.15740. **Secondary** for the paper's
+  own claims. **Primary** for [07](07-open-questions.md) Q6's pre-filter question: the
+  public-split repository (`jkutaso/SHADE-Arena`, commit `6614e77` — the maintained
+  successor to the paper's now-deprecated `safety-research/SHADE-Arena`) was cloned
+  and its five public task pairs read directly, then checked by hand against
+  `internal/r2`'s actual classifier code. Full evidence:
+  [11](11-goal-drift-prefilter-evaluation.md). The other twelve task pairs are
+  withheld by the authors to prevent contamination and were not obtained.
 - **AgentDojo** and the NIST CAISI result (11% baseline → 81% adapted attack success
   on Claude 3.5 Sonnet) — **secondary**, from the originating brief and search
   corroboration. Worth verifying directly at nist.gov; it is load-bearing for the
