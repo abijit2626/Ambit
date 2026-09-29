@@ -43,6 +43,26 @@ argument — this is exactly what shadow mode is for. Treat subagent inheritance
 separate call and default to inheriting (conservative) with the laundering path
 documented.
 
+**Status: option 1 is built** (`internal/r2`, `internal/collector`'s `sessionState`),
+ahead of M2 proper since the instrument needed no provenance engine to be useful —
+see [03](03-detection.md) Layer 1. Still blocking M2, and correctly so: what exists
+is the measurement instrument, not the answer. Two things came out of building it
+worth folding into this question directly rather than leaving as a footnote:
+
+- Subagent inheritance turned out to need no separate decision. Claude Code gives a
+  subagent the same session_id as its parent (primary source:
+  code.claude.com/docs/en/hooks), so session-id-keyed accumulation inherits by
+  construction. The recommendation above is satisfied, not deferred.
+- A new session_id resets **all three bits**, not just the one (A) Q1's own text
+  singles out as arguably resettable by `/clear`. If `/clear` regenerates the
+  session_id — reported behavior, not confirmed against primary documentation, see
+  [00](00-sources.md) — then B and C reset too under option 1 exactly as this
+  question warned they should not. That is now a measurable question rather than a
+  hypothetical one: shadow-mode data should show how often a `/clear` precedes a
+  sensitive action that an unreset B or C would have flagged, which bears directly
+  on whether option 1 is even a defensible baseline or should be skipped in favor of
+  3 or 4 sooner than planned.
+
 ## Q2 — Build `mcp-interpose` or adopt an existing gateway? **RESOLVED.**
 
 Several open-source MCP gateways already do interception, per-tool allowlists,

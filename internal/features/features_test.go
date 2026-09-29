@@ -206,13 +206,13 @@ func TestRegistrable(t *testing.T) {
 		"trailing.test.":      "trailing.test",
 	}
 	for in, want := range cases {
-		if got := registrable(in); got != want {
+		if got := Registrable(in); got != want {
 			t.Errorf("registrable(%q) = %q, want %q", in, got, want)
 		}
 	}
 	// Documented approximation: no public-suffix list, so a multi-label suffix
 	// over-merges. Coarser matching, not missed matching.
-	if got := registrable("a.b.co.uk"); got != "co.uk" {
+	if got := Registrable("a.b.co.uk"); got != "co.uk" {
 		t.Errorf("registrable(a.b.co.uk) = %q; expected the documented co.uk approximation", got)
 	}
 }

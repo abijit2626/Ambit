@@ -68,6 +68,7 @@ func newTestCollector(t *testing.T) (*Collector, *memSink, *memSink) {
 	cfg.SampleRate = 0 // deterministic: no sampled remainder
 	cfg.TrustedRepoPaths = []string{"/home/dev/src/myrepo"}
 	cfg.TrustedMCPServers = []string{"internal-wiki"}
+	cfg.TrustedContentDomains = []string{"example.com"}
 
 	events, traj := &memSink{}, &memSink{}
 	c := New(Options{
@@ -305,7 +306,9 @@ func TestUntrustedInstructionsLoadedCrosses(t *testing.T) {
 }
 
 // TestM0EmitsNoDecision: the milestone guarantee. An event carrying a decision
-// would mean ambitd had formed an opinion, which M0 must not do.
+// would mean ambitd had formed an opinion, which M0/M1 must not do — this holds
+// regardless of Rule-of-Two accounting, which is observational and changes
+// nothing Claude Code sees (every hook response is still {}).
 func TestM0EmitsNoDecision(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -316,13 +319,17 @@ func TestM0EmitsNoDecision(t *testing.T) {
 	m := traj.decode(t, 0)
 	pol := m["policy"].(map[string]any)
 	if d, present := pol["decision"]; present && d != "" {
-		t.Errorf("policy.decision = %v, want empty in M0", d)
+		t.Errorf("policy.decision = %v, want empty: no policy engine exists before M3", d)
 	}
+	// Rule-of-Two accounting DOES run (docs/07 Q1's shadow-mode instrument): a
+	// credential-path read sets bit B. What must stay false is C — nothing about
+	// reading a file is a state change or external communication.
 	r2 := m["r2"].(map[string]any)
-	for _, bit := range []string{"a", "b", "c"} {
-		if v, _ := r2[bit].(bool); v {
-			t.Errorf("r2.%s = true; M0 does no Rule-of-Two accounting and must not emit half-computed bits", bit)
-		}
+	if b, _ := r2["b"].(bool); !b {
+		t.Error("r2.b = false; a credential-path read should set Rule-of-Two bit B")
+	}
+	if c, _ := r2["c"].(bool); c {
+		t.Error("r2.c = true; a read sets no state-change bit")
 	}
 }
 
@@ -351,8 +358,13 @@ func TestInterestingFractionAndReasons(t *testing.T) {
 		t.Errorf("InterestingFraction = %v, want roughly 0.01", got)
 	}
 	st := c.Stats()
-	if st.CrossReasons["severe_zone"] != 1 {
-		t.Errorf("CrossReasons[severe_zone] = %d, want 1", st.CrossReasons["severe_zone"])
+	// The credential read is also the session's first Rule-of-Two transition
+	// (bit B, false to true), and filter.Decide checks R2.Transition before
+	// path_zone, so it crosses as r2_transition rather than severe_zone. Both
+	// are real properties of the same event; the filter's own ordering, not
+	// this test, decides which one is recorded.
+	if st.CrossReasons["r2_transition"] != 1 {
+		t.Errorf("CrossReasons[r2_transition] = %d, want 1", st.CrossReasons["r2_transition"])
 	}
 	if st.CrossReasons["not_interesting"] != 99 {
 		t.Errorf("CrossReasons[not_interesting] = %d, want 99", st.CrossReasons["not_interesting"])
@@ -436,5 +448,260 @@ func TestUntrustedZoneOverridesTrustedRepoPrefix(t *testing.T) {
 					cfg["trusted"], tc.trusted)
 			}
 		})
+	}
+}
+
+// --- Rule-of-Two accounting (docs/07 Q1's shadow-mode instrument) ---
+
+func r2Of(t *testing.T, traj *memSink, i int) map[string]any {
+	t.Helper()
+	m, ok := traj.decode(t, i)["r2"].(map[string]any)
+	if !ok {
+		t.Fatalf("event %d has no r2 block", i)
+	}
+	return m
+}
+
+func TestR2IsMonotonicAcrossEvents(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+
+	// First: a network bash command sets A and C.
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Bash", ToolInput: map[string]any{"command": "curl https://example.com"},
+	})
+	r2 := r2Of(t, traj, 0)
+	if a, _ := r2["a"].(bool); !a {
+		t.Fatal("first event should set A")
+	}
+	if c2, _ := r2["c"].(bool); !c2 {
+		t.Fatal("first event should set C")
+	}
+	if b, _ := r2["b"].(bool); b {
+		t.Fatal("first event should not set B")
+	}
+
+	// Second: an ordinary workdir read, sets nothing new -- but A and C must
+	// still read true, because bits never clear within a session.
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/src/myrepo/f.go"},
+	})
+	r2 = r2Of(t, traj, 1)
+	if a, _ := r2["a"].(bool); !a {
+		t.Error("bit A cleared on the second event; Rule-of-Two bits must be monotonic within a session")
+	}
+	if c2, _ := r2["c"].(bool); !c2 {
+		t.Error("bit C cleared on the second event; Rule-of-Two bits must be monotonic within a session")
+	}
+
+	// Third: a credential read sets B. A and C must still hold.
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
+	})
+	r2 = r2Of(t, traj, 2)
+	for _, bit := range []string{"a", "b", "c"} {
+		if v, _ := r2[bit].(bool); !v {
+			t.Errorf("r2.%s = false on the third event, want true (all three bits now set)", bit)
+		}
+	}
+}
+
+func TestR2TransitionFiresOnlyOnce(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	credRead := func() {
+		c.Handle(&hook.Payload{
+			HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+			ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
+		})
+	}
+	credRead()
+	credRead()
+	credRead()
+
+	first := r2Of(t, traj, 0)
+	if tr, _ := first["transition"].(bool); !tr {
+		t.Error("the first credential read should report a transition (B: false -> true)")
+	}
+	for i := 1; i < 3; i++ {
+		r2 := r2Of(t, traj, i)
+		if tr, _ := r2["transition"].(bool); tr {
+			t.Errorf("event %d repeats an already-set bit and must not report a transition", i)
+		}
+	}
+}
+
+// TestR2PreAndPostToolUseBothContribute covers why ClassifyTool is called
+// twice for one call rather than being redundant: PostToolUse carries the
+// result, so a secret surfacing only in the output sets B where PreToolUse
+// (input only) could not have known to.
+func TestR2PreAndPostToolUseBothContribute(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Bash", ToolUseID: "t1", ToolInput: map[string]any{"command": "cat f.go"},
+	})
+	if b, _ := r2Of(t, traj, 0)["b"].(bool); b {
+		t.Fatal("PreToolUse has no result yet and should not set B")
+	}
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPostToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Bash", ToolUseID: "t1", ToolInput: map[string]any{"command": "cat f.go"},
+		ToolResult: "AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE",
+	})
+	post := r2Of(t, traj, 1)
+	if b, _ := post["b"].(bool); !b {
+		t.Error("PostToolUse's result carries a secret and should set B")
+	}
+	if tr, _ := post["transition"].(bool); !tr {
+		t.Error("B just flipped for the first time on this event and should report a transition")
+	}
+}
+
+// TestR2DeniedAndFailedCallsSetNoBits is the guard against manufacturing a
+// signal for an action that never happened.
+func TestR2DeniedAndFailedCallsSetNoBits(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPermissionDenied, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Bash", ToolInput: map[string]any{"command": "curl https://attacker.test"},
+	})
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPostToolUseFailure, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
+	})
+	for i := 0; i < 2; i++ {
+		r2 := r2Of(t, traj, i)
+		for _, bit := range []string{"a", "b", "c"} {
+			if v, _ := r2[bit].(bool); v {
+				t.Errorf("event %d: r2.%s = true; a denied or failed call must not set Rule-of-Two bits", i, bit)
+			}
+		}
+	}
+}
+
+// TestR2InstructionsLoadedSetsA covers the config-path rule end to end,
+// distinguishing a trusted repo from an untrusted one via the same
+// isTrustedRepoPath the D8 detector already uses.
+func TestR2InstructionsLoadedSetsA(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvInstructionsLoaded, SessionID: "s1",
+		FilePath: "/home/dev/src/myrepo/CLAUDE.md", LoadReason: "session_start",
+	})
+	if a, _ := r2Of(t, traj, 0)["a"].(bool); a {
+		t.Error("an instruction file from a trusted repo should not set A")
+	}
+
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvInstructionsLoaded, SessionID: "s1",
+		FilePath: "/home/dev/src/cloned/CLAUDE.md", LoadReason: "session_start",
+	})
+	if a, _ := r2Of(t, traj, 1)["a"].(bool); !a {
+		t.Error("an instruction file from an untrusted path should set A")
+	}
+}
+
+// TestR2ConfigChangeSetsNoBits: D6/D8 events about the endpoint's own
+// configuration are not ingest events and must not touch R2.
+func TestR2ConfigChangeSetsNoBits(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvConfigChange, SessionID: "s1",
+		FilePath: "/home/dev/.claude/settings.json", ConfigSource: "user_settings", ChangeType: "modified",
+	})
+	r2 := r2Of(t, traj, 0)
+	for _, bit := range []string{"a", "b", "c"} {
+		if v, _ := r2[bit].(bool); v {
+			t.Errorf("r2.%s = true; a ConfigChange event is not an ingest event", bit)
+		}
+	}
+}
+
+// TestR2WebFetchDomainTrust exercises the digest-based comparison end to end,
+// including that a subdomain of a trusted registrable domain is trusted --
+// the same scope semantics TrustedMCPServers and TrustedRepoPaths use.
+func TestR2WebFetchDomainTrust(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "WebFetch", ToolInput: map[string]any{"url": "https://docs.example.com/guide"},
+	})
+	if a, _ := r2Of(t, traj, 0)["a"].(bool); a {
+		t.Error("a WebFetch to a subdomain of a trusted registrable domain should not set A")
+	}
+
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "WebFetch", ToolInput: map[string]any{"url": "https://attacker.test/payload"},
+	})
+	if a, _ := r2Of(t, traj, 1)["a"].(bool); !a {
+		t.Error("a WebFetch to an untrusted domain should set A")
+	}
+}
+
+// TestR2WebSearchAlwaysUntrusted: WebSearch carries no URL to extract a domain
+// from, so it gets no benefit of the doubt.
+func TestR2WebSearchAlwaysUntrusted(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "WebSearch", ToolInput: map[string]any{"query": "anything"},
+	})
+	if a, _ := r2Of(t, traj, 0)["a"].(bool); !a {
+		t.Error("WebSearch has no verifiable domain and should always set A")
+	}
+}
+
+// TestR2SubagentSharesParentSessionBits is the concrete resolution this
+// codebase gives to half of Q1's subagent question: Claude Code gives a
+// subagent the same session_id as its parent, so keying sessionState on
+// session_id alone means the subagent's tool calls see the parent's
+// already-set bits with no separate propagation step.
+func TestR2SubagentSharesParentSessionBits(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	// The parent reads a credential.
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
+	})
+	// A subagent starts: same session_id, distinct agent_id/agent_type.
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvSubagentStart, SessionID: "s1", AgentID: "a_1", AgentType: "Explore",
+	})
+	// The subagent's own tool call, under that same session_id, should already
+	// see bit B set -- inherited by construction, not by a copy this test
+	// would otherwise need a separate code path to prove.
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		AgentID: "a_1", AgentType: "Explore",
+		ToolName: "Write", ToolInput: map[string]any{"file_path": "/home/dev/src/myrepo/out.txt"},
+	})
+	r2 := r2Of(t, traj, 2)
+	if b, _ := r2["b"].(bool); !b {
+		t.Error("a subagent sharing the parent's session_id should see the parent's already-set bit B")
+	}
+}
+
+// TestR2NewSessionIDStartsClean documents the other half of Q1: a session_id
+// ambitd has not seen before gets a fresh sessionState with all three bits
+// unset, whether that is a genuinely new Claude Code session or -- per the
+// evidence cited on (c *Collector) session -- the first event after /clear.
+// This is the behavior Q1 flags as unsound for B and C specifically; this
+// test pins what the code actually does today, not that the behavior is right.
+func TestR2NewSessionIDStartsClean(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
+	})
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s2", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/src/myrepo/f.go"},
+	})
+	r2 := r2Of(t, traj, 1)
+	if b, _ := r2["b"].(bool); b {
+		t.Error("a different session_id must not inherit another session's bits")
 	}
 }
