@@ -98,8 +98,9 @@ platform, not a replacement for either.**
 | [04-data-model.md](docs/04-data-model.md) | Rich internal schema, flattened SIEM-bound schema, the mapping and what it loses, what crosses to Wazuh, split retention |
 | [05-build-plan.md](docs/05-build-plan.md) | M0–M5, what adopting Wazuh deletes, enforcement sequenced after a measured baseline |
 | [06-prior-art.md](docs/06-prior-art.md) | What already exists, reuse decisions, ten non-goals |
-| [07-open-questions.md](docs/07-open-questions.md) | Thirteen decisions, two resolved; Q11 (tenancy) blocks MSSP onboarding |
+| [07-open-questions.md](docs/07-open-questions.md) | Thirteen decisions, three resolved; Q11 (tenancy) blocks MSSP onboarding |
 | [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md) | Q2 resolved: why `mcp-interpose` is purpose-built rather than adopted, with the evaluation evidence |
+| [09-adrian-evaluation.md](docs/09-adrian-evaluation.md) | Q13 resolved: why Adrian doesn't cover M1/M2, and the one finding that changes how the comparison reads |
 
 ## Third-party monitoring
 
@@ -235,7 +236,10 @@ usually carry no session id because MCP does not carry one. M2 onward is design 
 Nothing here is final —
 [07-open-questions.md](docs/07-open-questions.md) lists what still needs deciding, and
 five of the thirteen are blocking. Q2 (build vs. adopt for the MCP interposer) is now
-decided — [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md).
+decided — [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md). Q13
+(evaluate Adrian before M1) is decided —
+[09-adrian-evaluation.md](docs/09-adrian-evaluation.md): build continues, the overlap
+does not fit.
 
 ## Sourcing note
 
