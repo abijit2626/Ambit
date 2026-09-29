@@ -74,6 +74,14 @@ type Config struct {
 	// here is treated as untrusted; a server's own annotations never move it
 	// onto this list.
 	TrustedMCPServers []string `json:"trusted_mcp_servers"`
+	// TrustedContentDomains are registrable domains (e.g. "example.com", not a
+	// full URL and not a subdomain unless the subdomain IS the registrable
+	// domain) whose WebFetch/WebSearch results do not set Rule-of-Two bit A. A
+	// domain not listed here is untrusted, matching the safe-default posture
+	// of TrustedMCPServers and TrustedRepoPaths: absence of classification
+	// makes an event interesting, never the reverse. See docs/03-detection.md
+	// Layer 1 and docs/07-open-questions.md Q1.
+	TrustedContentDomains []string `json:"trusted_content_domains"`
 
 	// SampleRate is the fraction of uninteresting tool events that cross anyway,
 	// so the SIEM holds enough ordinary traffic to baseline against.

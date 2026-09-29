@@ -23,6 +23,21 @@ not be relied on without checking.
 - [Security](https://code.claude.com/docs/en/security) — built-in prompt-injection
   safeguards, isolated WebFetch context, trust verification (and that it is
   disabled under `-p`), MCP security posture.
+- [Hooks reference](https://code.claude.com/docs/en/hooks) again, specifically for
+  Rule-of-Two subagent scoping ([07](07-open-questions.md) Q1): "the input carries
+  the `agent_id` and `agent_type`... that identify the subagent" — confirming a
+  subagent runs under its parent's top-level `session_id` rather than a distinct
+  one, with no separate parent-session field documented.
+
+**Secondary — `/clear` and session_id.** [`anthropics/claude-code` issue
+#70606](https://github.com/anthropics/claude-code/issues/70606) reports that
+`/clear` calls `regenerateSessionId()`, and that subsequent hook invocations carry
+the new session_id while `SessionStart` does not re-fire. This is a community bug
+report, not primary vendor documentation, and it was not independently reproduced.
+[03](03-detection.md)'s Rule-of-Two accounting and [07](07-open-questions.md) Q1
+treat it as the working assumption for what happens to session state across
+`/clear` — worth confirming against the vendor before relying on it for anything
+that gates.
 - [Permissions](https://code.claude.com/docs/en/permissions) and
   [managed settings](https://code.claude.com/docs/en/managed-settings) —
   evaluation order, `disableBypassPermissionsMode`, and that hook decisions do not

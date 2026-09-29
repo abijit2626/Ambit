@@ -137,13 +137,13 @@ func (e *Extractor) Extract(text string) *event.Features {
 	for _, m := range reURL.FindAllString(text, -1) {
 		urls[m] = true
 		if h := hostFromURL(m); h != "" {
-			domains[registrable(h)] = true
+			domains[Registrable(h)] = true
 		}
 	}
 	for _, m := range reEmail.FindAllString(text, -1) {
 		emails[strings.ToLower(m)] = true
 		if i := strings.LastIndex(m, "@"); i >= 0 {
-			domains[registrable(m[i+1:])] = true
+			domains[Registrable(m[i+1:])] = true
 		}
 	}
 	// Bare hostnames, excluding anything that is really a filename.
@@ -152,7 +152,7 @@ func (e *Extractor) Extract(text string) *event.Features {
 		if looksLikeFilename(m) {
 			continue
 		}
-		domains[registrable(m)] = true
+		domains[Registrable(m)] = true
 	}
 	for _, m := range reIPv4.FindAllString(text, -1) {
 		ips[m] = true
@@ -231,7 +231,14 @@ func hostFromURL(u string) string {
 // "a.b.co.uk" to "co.uk", which over-merges under multi-label suffixes. The
 // consequence is a coarser match, not a missed one, and adopting a PSL is a
 // later refinement.
-func registrable(host string) string {
+// Registrable reduces a hostname to its registrable domain (the last two
+// labels; "api.example.com" and "example.com" both become "example.com").
+// Exported so a caller normalizing an operator-configured domain — before
+// digesting it for comparison against an extracted one — applies exactly the
+// reduction Extract applies internally, rather than a second implementation
+// that could drift from this one. See internal/config's
+// TrustedContentDomains and internal/collector's use of it.
+func Registrable(host string) string {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	parts := strings.Split(host, ".")
 	if len(parts) <= 2 {

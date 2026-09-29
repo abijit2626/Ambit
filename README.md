@@ -132,6 +132,7 @@ cmd/ambitd/              the endpoint daemon
 cmd/mcp-interpose/       the MCP interposer: one per server, in front of it
 internal/event/          rich internal schema + flattened SIEM-bound schema
 internal/classify/       path zone and bash command classification
+internal/r2/             Rule-of-Two bit classification (shadow mode; see docs/07 Q1)
 internal/features/       keyed fingerprint extraction
 internal/redact/         secret detection and stripping at the edge
 internal/filter/         what crosses to Wazuh
@@ -210,8 +211,6 @@ Three properties the tests enforce, each because getting it wrong is silent:
 
 ## Status
 
-M0 code complete and tested; not yet deployed to a cohort, so the M0 exit criteria
-in [05-build-plan.md](docs/05-build-plan.md) — chiefly the **measured interesting
 fraction** — are still open.
 
 From M1, the **endpoint half is built**: `mcp-interpose` implements D4 (metadata
@@ -232,7 +231,13 @@ rule matches an array-valued field), and the exit criterion that actually tests 
 someone outside the team executing one against a sample alert. Two limits are stated in
 the code and in [02-architecture.md](docs/02-architecture.md) rather than implied: a
 stdio wrapper does not cover MCP servers reached over HTTP/SSE, and `mcp_list` events
-usually carry no session id because MCP does not carry one. M2 onward is design only.
+usually carry no session id because MCP does not carry one. M2 onward is design only,
+with one exception: Q1's Rule-of-Two bit accounting (`internal/r2`) is built and
+running in shadow mode ahead of M2 proper, specifically to start gathering the
+saturation data that question needs — see
+[07-open-questions.md](docs/07-open-questions.md) Q1. It computes and records bits
+only; no gate, no alert, no change to session behavior.
+
 Nothing here is final —
 [07-open-questions.md](docs/07-open-questions.md) lists what still needs deciding, and
 five of the thirteen are blocking. Q2 (build vs. adopt for the MCP interposer) is now
