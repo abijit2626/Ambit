@@ -323,30 +323,33 @@ location and retention, and no amount of architecture settles that. It blocks MS
 onboarding but not M0: deploy single-tenant, add the tenancy model before any external
 party gets access.
 
-## Q12 — Wazuh 5.0 migrates the ruleset from XML to YAML
+## Q12 — Wazuh 5.0 migrates the ruleset from XML to YAML. **RESOLVED.**
 
-Wazuh 5.0 replaces the analysisd XML decoder/rule engine with a new engine using
-YAML-based decoders and rules and an ECS-normalized common schema *(secondary — from
-Wazuh's own GitHub issues on the migration; not verified against a 5.0 release note,
-and the main-branch documentation no longer lists `analysisd.decoder_order_size`,
-which is consistent with the rewrite)*.
+Full evaluation, with evidence and a reproduction script, is
+[10](10-wazuh5-migration.md). Read against the actual 5.0.0-beta5 source and Wazuh's
+own first-party migration guide, not the secondary GitHub-issue sourcing this question
+originally carried.
 
-Every rule snippet in [03](03-detection.md) is 4.x XML. If the fleet lands on 5.x, the
-rules carry a rewrite cost, and the specific primitives this design leans on —
-`frequency` + `timeframe`, `if_matched_sid`, `same_field` on dynamic fields — need
-equivalents confirmed in the new engine. `same_field` is the one to check first, since
-D2, D10's tripwire, and D11 all depend on it and the ECS normalization may change field
-names underneath the flattened schema.
+**Decision: keep building M0–M2 against 4.x — unchanged from the original
+recommendation, but for a sharper and more urgent reason.** 5.0 is in beta now (5.1 is
+already the tip of `main`), and the specific primitives this design leans on —
+`frequency`/`timeframe`, `same_field`, `if_matched_sid` — are not renamed or reshaped
+in 5.x. They are **not supported in the rule format at all**, confirmed directly from
+Wazuh's own migration guide, whose own worked example instructs a migrator to
+"document as a gap" rather than offering a mapping, because detection moved out of the
+engine entirely into a separate OpenSearch plugin evaluating Sigma YAML via percolator,
+and no "separate correlation engine or pipeline" — the guide's own words for where
+correlation would have to live — exists yet in either repository. D2, D10's tripwire,
+and D11 specifically have no migration path today, not an unconfirmed one. The field
+model changes too: rule fields are validated against a closed schema (WCS), so ambit's
+current zero-custom-decoder approach (raw JSON fields matched directly) does not
+survive a 5.x move regardless of the correlation gap — a real Engine integration with a
+purpose-built decoder would be needed first. [10](10-wazuh5-migration.md) records a
+plausible but unconfirmed escape hatch (`labels.*`) for that part.
 
-Unresolved: which major version to target. Targeting 4.x means a known-good design and
-a migration later; targeting 5.x means designing against something less documented and
-less field-proven.
-
-**Recommendation:** build M0–M2 against 4.x, because the primitives are verified and
-`wazuh-logtest` gives a tested path today — but keep the rule set small and generated
-from a single source of truth rather than hand-written, so a migration is a
-re-render rather than a rewrite. Price the migration before the rule count gets large.
-Needs an owner to track the 5.0 release and confirm the primitives.
+Still needs an owner — narrower now: track whether Wazuh ships the correlation
+mechanism its own guide gestures at, since that is what decides whether a future 5.x
+migration is a large rewrite or currently impossible for three specific detectors.
 
 ## Q13 — Evaluate Adrian before M1 starts. **RESOLVED.**
 
