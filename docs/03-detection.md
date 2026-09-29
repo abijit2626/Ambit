@@ -225,6 +225,15 @@ security boundary. And "unrelated to the stated objective" describes a great dea
 legitimate engineering — reading unrelated files to understand a codebase, fixing an
 unrelated broken test. Expect noise; budget for tuning.
 
+**Implementation note for the cost pre-filter ([07](07-open-questions.md) Q6,
+evidence in [11](11-goal-drift-prefilter-evaluation.md)):** if scoring is gated to
+actions that already carry an R2 signal, gate it on that event's own
+`r2.ClassifyTool(...).Any()`, never on `sessionState`'s `Transition` field.
+`Transition` is correct for `internal/filter`'s alerting use (new-to-this-session, so
+Wazuh isn't re-alerted on every repeat) and wrong here — it would silently skip every
+repeat action once a bit is already set for the session, which is exactly the
+sixteenth flight booking or tenth bank transfer a session-shape attack hides among.
+
 ## Wazuh rules
 
 Custom rules live at ID ≥ 100000 (rule IDs range 1–999999; custom rules

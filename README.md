@@ -102,6 +102,7 @@ platform, not a replacement for either.**
 | [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md) | Q2 resolved: why `mcp-interpose` is purpose-built rather than adopted, with the evaluation evidence |
 | [09-adrian-evaluation.md](docs/09-adrian-evaluation.md) | Q13 resolved: why Adrian doesn't cover M1/M2, and the one finding that changes how the comparison reads |
 | [10-wazuh5-migration.md](docs/10-wazuh5-migration.md) | Q12 resolved: 5.0's rule engine has no home for `frequency`/`same_field`/`if_matched_sid`, evaluated against the actual 5.0.0-beta5 source |
+| [11-goal-drift-prefilter-evaluation.md](docs/11-goal-drift-prefilter-evaluation.md) | Q6 refined: the Layer 3 pre-filter holds against SHADE-Arena's public task pairs, keyed to an action's own R2 bits rather than a session transition |
 
 ## Third-party monitoring
 
@@ -248,7 +249,10 @@ decided — [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md). Q
 does not fit. Q12 (target Wazuh 4.x or 5.x) is decided —
 [10-wazuh5-migration.md](docs/10-wazuh5-migration.md): stay on 4.x, since 5.0's rule
 engine has no shipped mechanism for the correlation primitives D2, D10 and D11 depend
-on.
+on. Q6 (is the goal-drift pre-filter safe) is refined with evidence, still open ahead
+of M4 — [11-goal-drift-prefilter-evaluation.md](docs/11-goal-drift-prefilter-evaluation.md):
+the pre-filter holds against SHADE-Arena's public task pairs as long as it keys on an
+action's own R2 bits, never on a session-level transition.
 
 ## Sourcing note
 
