@@ -116,6 +116,24 @@ warns that "poor implementation of rules and responses might increase the vulner
 of an endpoint." The `location` values and `timeout_allowed` were **not** read from the
 how-to-configure page — **unverified** at that level of detail.
 
+**Unverified — how a `<field>` regex matches a multi-valued field.** The JSON decoder
+documentation states arrays of scalars are supported ("lists with zero or more values"),
+but not whether a rule's `<field>` pattern is tested against each value or against one
+joined string. Two of the shipped D4/D5 fields are arrays (`mcp_changed_fields`,
+`mcp_scan_classes`). The rules in `deploy/wazuh/rules/ambit_mcp_rules.xml` therefore
+match array contents with **unanchored literals**, which work under either behavior, and
+`deploy/wazuh/rules_test.go` fails the build if a pattern on an array field is anchored.
+Confirm with `wazuh-logtest` against the committed fixtures before relying on rules
+100241–100247.
+
+**Unverified — syscheck (FIM) alert rule IDs and field names.** The FIM-sourced rules in
+`deploy/wazuh/rules/ambit_integrity_rules.xml` chain from syscheck parents 550 (integrity
+checksum changed), 553 (deleted) and 554 (added), and read `file` and
+`syscheck.audit.process.name`. These are the widely used values but were not read from the
+shipped ruleset during research. Same failure mode as the SCA case below: a wrong parent SID
+does not error, the rule simply never fires, so the runbooks tell an analyst to suspect the
+wiring if a FIM-sourced rule has never fired anywhere.
+
 **Unverified — SCA alert rule IDs.** The parent SID and `sca.*` field names used in
 [03](03-detection.md)'s D12 rule were not checked against the shipped SCA ruleset. That
 snippet is the intended shape, not working configuration.

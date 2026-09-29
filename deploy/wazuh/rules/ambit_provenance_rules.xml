@@ -1,0 +1,145 @@
+<!--
+  ambit D10 and D8 — cross-agent fingerprint propagation, and poisoned instruction files.
+
+  Manager-side. IDs 100280-100299. Allocation map in ambit_mcp_rules.xml.
+
+  D10 IS DELIBERATELY PARTIAL, and docs/03-detection.md's investigation says why. The
+  detector asks whether the set of fingerprints an agent ingested intersects the set
+  another agent later emitted. A Wazuh rule cannot express a set intersection: same_field
+  is scalar equality, and the JSON decoder cannot carry an array of objects. So ambitd
+  pre-selects at most one high-specificity fingerprint per event as the scalar
+  prov_fp_notable, and the rules below are a tripwire on that scalar. The real detector is
+  a scheduled job over the feature columns, not a rule, and it lands in M5.
+
+  Two limitations of the tripwire, both structural:
+
+  - "Different session" is not expressible alongside "same fingerprint". same_field takes
+    one field name, and whether it composes with a negated session test is unverified. So
+    100281 also fires when one session ingests a fingerprint and later re-emits it, which
+    is ordinary behavior. The runbook's first triage step is therefore to check whether
+    the two events share a session_id.
+  - Direction is lost. D10 means "ingest in X, output in Y", and the rule sees two
+    occurrences of a value without ordering them. prov_fp_role carries the direction per
+    event, so the runbook can recover it; the rule cannot require it.
+-->
+
+<group name="ambit,ambit_provenance,">
+
+  <!-- ===================== D10 — propagation tripwire ===================== -->
+
+  <!--
+    Base: an event carrying a notable fingerprint. Level 0 — this is most tool results
+    with a domain or an email address in them, which is ordinary. It exists to be
+    correlated.
+  -->
+  <rule id="100280" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="prov_fp_notable">\.+</field>
+    <description>ambit: event carries a notable fingerprint ($(prov_fp_role))</description>
+    <group>ambit_d10,</group>
+  </rule>
+
+  <!--
+    The tripwire: the same high-specificity fingerprint seen twice within an hour. Read
+    the caveats in the file header before treating this as propagation — most hits will
+    be one session handling the same content twice.
+  -->
+  <rule id="100281" level="10" frequency="2" timeframe="3600" ignore="600">
+    <if_matched_sid>100280</if_matched_sid>
+    <same_field>prov_fp_notable</same_field>
+    <description>ambit D10: fingerprint $(prov_fp_notable) seen twice within 3600s - possible cross-agent propagation</description>
+    <mitre>
+      <id>T1105</id>
+    </mitre>
+    <group>ambit_d10,runbook_D10,</group>
+  </rule>
+
+  <!--
+    The same fingerprint across many events is a stronger signal than two, and cheap to
+    add: propagation between several agents produces more than one pair. Higher threshold,
+    higher level, same caveats.
+  -->
+  <rule id="100282" level="12" frequency="5" timeframe="7200" ignore="3600">
+    <if_matched_sid>100280</if_matched_sid>
+    <same_field>prov_fp_notable</same_field>
+    <description>ambit D10: fingerprint $(prov_fp_notable) seen 5+ times within 7200s - propagation candidate across sessions</description>
+    <mitre>
+      <id>T1105</id>
+      <id>T1570</id>
+    </mitre>
+    <group>ambit_d10,runbook_D10,</group>
+  </rule>
+
+  <!--
+    PENDING EMITTER. A provenance edge is ambitd's own statement that this action derived
+    from untrusted content it ingested earlier — the signal D10's tripwire only
+    approximates. The provenance engine lands in M2, so nothing sets prov_edge_count yet.
+  -->
+  <rule id="100283" level="12">
+    <decoded_as>json</decoded_as>
+    <field name="prov_edge_count">\.+</field>
+    <description>ambit: action linked to untrusted ingest - $(prov_edge_count) edge(s), strongest $(prov_edge_class) at $(prov_edge_confidence), from $(prov_edge_from)</description>
+    <mitre>
+      <id>T1105</id>
+    </mitre>
+    <group>ambit_provenance,ambit_pending_emitter,runbook_D10,</group>
+  </rule>
+
+  <!-- ===================== D8 — poisoned instruction file ===================== -->
+
+  <!--
+    D8 proper: Claude Code loaded instructions from a path nobody has classified as
+    trusted. This is the repo-carried injection route — a CLAUDE.md in a cloned
+    repository, or a .claude/rules file arriving with a dependency — and
+    InstructionsLoaded is the only event that reports it.
+
+    config_trusted is computed on the endpoint against the operator's trusted-repo list,
+    so false means "not on the list", not "known bad". The zone label says where it came
+    from and is cleartext; the path is a keyed digest.
+  -->
+  <rule id="100290" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^instructions_loaded$</field>
+    <field name="config_trusted">^false$</field>
+    <description>ambit D8: instruction file loaded from an untrusted path - zone $(config_zone), reason $(config_source) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1195.002</id>
+      <id>T1546</id>
+    </mitre>
+    <group>ambit_d8,runbook_D8,</group>
+  </rule>
+
+  <!--
+    The same, from a zone that is untrusted in its own right: a dependency directory, a
+    downloads folder, anything git reports as recently created and untracked. An
+    instruction file there was not written by the developer.
+  -->
+  <rule id="100291" level="13">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^instructions_loaded$</field>
+    <field name="config_trusted">^false$</field>
+    <field name="config_zone">^untrusted$</field>
+    <description>ambit D8: instruction file loaded from an UNTRUSTED ZONE on $(endpoint_id) - dependency-carried or downloaded instructions</description>
+    <mitre>
+      <id>T1195.002</id>
+      <id>T1546</id>
+    </mitre>
+    <group>ambit_d8,runbook_D8,</group>
+  </rule>
+
+  <!--
+    Several untrusted instruction files in one session. A single one is often a developer
+    working in a repo nobody has added to the trusted list; a handful in minutes is a
+    session pulling in instructions from everywhere it can reach.
+  -->
+  <rule id="100292" level="12" frequency="3" timeframe="600" ignore="600">
+    <if_matched_sid>100290</if_matched_sid>
+    <same_field>session_id</same_field>
+    <description>ambit D8: 3+ untrusted instruction files loaded in one session within 600s</description>
+    <mitre>
+      <id>T1195.002</id>
+    </mitre>
+    <group>ambit_d8,runbook_D8,</group>
+  </rule>
+
+</group>

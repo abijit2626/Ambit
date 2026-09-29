@@ -54,8 +54,20 @@ type SIEMEvent struct {
 	ToolMCPDestructiveHint *bool  `json:"tool_mcp_destructive_hint,omitempty"`
 	ToolMCPOpenworldHint   *bool  `json:"tool_mcp_openworld_hint,omitempty"`
 	ToolMCPMetadataHash    string `json:"tool_mcp_metadata_hash,omitempty"`
-	BashArgv0              string `json:"bash_argv0,omitempty"`
-	BashCommandClass       string `json:"bash_command_class,omitempty"`
+
+	// The mcp_* fields below appear on mcp_list events only, from the interposer.
+	// Six fields is the whole D4/D5 surface a rule needs: what the verdict was,
+	// what it was before, what changed, what the scan classed it as, how large the
+	// advertised surface is, and whether the listing was routine. The per-listing
+	// counts stay in the spool; see the comment on event.MCP.
+	MCPBaselineState string   `json:"mcp_baseline_state,omitempty"`
+	MCPPrevHash      string   `json:"mcp_prev_metadata_hash,omitempty"`
+	MCPChangedFields []string `json:"mcp_changed_fields,omitempty"`
+	MCPScanClasses   []string `json:"mcp_scan_classes,omitempty"`
+	MCPToolCount     int      `json:"mcp_tool_count,omitempty"`
+	MCPTrigger       string   `json:"mcp_trigger,omitempty"`
+	BashArgv0        string   `json:"bash_argv0,omitempty"`
+	BashCommandClass string   `json:"bash_command_class,omitempty"`
 
 	// PathZone, PathOp and PathDigest describe only the highest-severity path
 	// of the call. PathCount preserves the cardinality D2 needs.
@@ -194,6 +206,12 @@ func Flatten(e *Event) *SIEMEvent {
 			s.ToolMCPReadonlyHint = m.Annotations.ReadOnlyHint
 			s.ToolMCPDestructiveHint = m.Annotations.DestructiveHint
 			s.ToolMCPOpenworldHint = m.Annotations.OpenWorldHint
+			s.MCPBaselineState = m.BaselineState
+			s.MCPPrevHash = m.PrevMetadataHash
+			s.MCPChangedFields = m.ChangedFields
+			s.MCPScanClasses = m.ScanClasses
+			s.MCPToolCount = m.ToolCount
+			s.MCPTrigger = m.Trigger
 		}
 		if b := t.Bash; b != nil {
 			s.BashArgv0 = b.Argv0

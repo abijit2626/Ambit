@@ -35,6 +35,21 @@ const (
 	KindGoalDriftScore     Kind = "goal_drift_score"
 )
 
+// MCP baseline states, D4's vocabulary. They live here rather than in
+// internal/baseline because they are schema: they cross to Wazuh in cleartext as
+// mcp_baseline_state, a Wazuh rule matches on the literal strings, and
+// internal/baseline builds its State type from these so there is one definition to
+// keep in step with the ruleset.
+const (
+	MCPStateNew             = "new"
+	MCPStatePending         = "pending"
+	MCPStateApproved        = "approved"
+	MCPStateDrift           = "drift"
+	MCPStateDriftUnapproved = "drift_unapproved"
+	MCPStateRemoved         = "removed"
+	MCPStateUnavailable     = "unavailable"
+)
+
 // Source identifies which collector produced the event.
 type Source string
 
@@ -149,6 +164,65 @@ type MCP struct {
 	// Trust is the operator-assigned label for the server. Only "internal"
 	// relaxes anything; see docs/02 on annotations being one-directional.
 	Trust string `json:"trust,omitempty"`
+
+	// The fields below are populated only on mcp_list events, by mcp-interpose.
+	// They live on this block rather than one of their own so that a Wazuh rule
+	// can correlate a listing against later calls with same_field on
+	// tool_mcp_server — the listing and the call describe the same server, and
+	// splitting them across two field namespaces would make that correlation
+	// impossible to express.
+
+	// BaselineState is D4's verdict for this tool: new, pending, approved, drift,
+	// drift_unapproved, removed, or unavailable. See internal/baseline.
+	BaselineState string `json:"baseline_state,omitempty"`
+	// PrevMetadataHash is what the baseline held before this observation. Present
+	// only on drift, where a runbook needs both sides.
+	PrevMetadataHash string `json:"prev_metadata_hash,omitempty"`
+	// ChangedFields names what differed: description, input_schema, annotations
+	// and so on. "The description changed" is actionable for an analyst who cannot
+	// see our source tree; "the hash changed" is not.
+	ChangedFields []string `json:"changed_fields,omitempty"`
+	// ScanClasses are D5's finding classes. ScanRules are the specific pattern
+	// ids, kept local: they are how a false-positive rate gets attributed to one
+	// pattern during M1 tuning. Neither carries the matched text.
+	ScanClasses []string `json:"scan_classes,omitempty"`
+	ScanRules   []string `json:"scan_rules,omitempty"`
+	// ToolCount is the size of the advertised surface, on the per-server summary.
+	ToolCount int `json:"tool_count,omitempty"`
+	// Worst is the listing's worst per-tool verdict, set on the per-server summary
+	// only, and deliberately NOT projected into the flattened schema.
+	//
+	// The reason is the rule engine. A Wazuh rule tests field presence and equality
+	// and cannot easily test absence, so if the summary and the per-tool events both
+	// carried baseline_state, every drift would raise two alerts and no rule could
+	// tell the roll-up from the finding. Keeping the roll-up under a different name,
+	// local to the spool, means mcp_baseline_state appears on exactly the events that
+	// describe one tool. A listing-level view is a correlation over those.
+	Worst string `json:"worst,omitempty"`
+	// NewCount, DriftCount and RemovedCount summarize the listing. They stay local:
+	// the per-tool events that cross carry the same information addressably, and a
+	// rule that wants a count can use frequency over those.
+	NewCount     int `json:"new_count,omitempty"`
+	DriftCount   int `json:"drift_count,omitempty"`
+	RemovedCount int `json:"removed_count,omitempty"`
+	// Trigger says what produced the listing: a routine tools_list, a re-list
+	// after the server announced a change, the announcement itself, or shutdown.
+	Trigger string `json:"trigger,omitempty"`
+	// Approved reports whether an operator has approved this server's baseline.
+	// A pointer because absent means "not an mcp_list event", which is not the
+	// same as "not approved".
+	Approved *bool `json:"approved,omitempty"`
+	// Complete is false when the listing was one page of a paginated response, in
+	// which case an absent tool is on another page rather than removed.
+	Complete *bool `json:"complete,omitempty"`
+	// ServerVersion is the server's own claim about itself, from initialize. Local
+	// only, and never used to classify trust.
+	ServerVersion string `json:"server_version,omitempty"`
+	// CallsObserved is how many tools/call requests the interposer saw for this
+	// server. It corroborates the interposer stream against the hook stream — the
+	// same shape of signal as D7's OTel discrepancy check — and is local-only
+	// until M1 specifies that third signal and gives it a flat field.
+	CallsObserved int64 `json:"calls_observed,omitempty"`
 }
 
 // Annotations mirrors MCP tool annotations. Pointers because "absent" and

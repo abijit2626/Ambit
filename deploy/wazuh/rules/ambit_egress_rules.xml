@@ -1,0 +1,101 @@
+<!--
+  ambit D9 — egress anomaly.
+
+  Manager-side. IDs 100300-100309. Allocation map in ambit_mcp_rules.xml.
+
+  D9 in the detector catalogue is "outbound volume or destination outside the endpoint's
+  profile; any sandbox allowlist denial". Only part of that is expressible here, and the
+  gaps are worth naming rather than implying coverage:
+
+  - **Volume and destination profiling is not a rule.** It needs a baseline per endpoint,
+    which is a scheduled query over the indexer or the spool, not a threshold somebody
+    picks. What a rule can do is the shape: network-capable commands, and the two
+    combinations that are suspicious on their own.
+  - **Sandbox allowlist denials are not in the schema at all.** Claude Code's sandbox
+    denies an outbound connection and ambitd has no field to carry it — not an unpopulated
+    field, an absent one. Adding it is an M2 schema change; until then, this detector sees
+    the command, not the denial. Recorded here rather than in a rule marked pending,
+    because there is nothing to mark.
+  - **A Bash command's paths are not extracted.** path_zone comes from a tool's structured
+    input, so `cat ~/.aws/credentials | curl ...` yields bash_command_class=network with no
+    credential path attached. The correlation that would catch it lives in the R2 bits and
+    the provenance edges, both M2.
+-->
+
+<group name="ambit,ambit_egress,">
+
+  <!--
+    Base: a network-capable command. Level 5, because this is ordinary developer work —
+    git push, curl against an internal API, a package install. The value is in the
+    correlations below and in having the egress timeline available during triage.
+  -->
+  <rule id="100300" level="5">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_pre$</field>
+    <field name="bash_command_class">^network$</field>
+    <description>ambit: network-capable command - $(bash_argv0) in session $(session_id) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_d9,runbook_D9,</group>
+  </rule>
+
+  <!--
+    A burst of outbound commands from one session. Not a volume profile — that needs a
+    baseline — but a rate that is hard to produce by hand and easy to produce in a loop.
+  -->
+  <rule id="100301" level="12" frequency="10" timeframe="300" ignore="600">
+    <if_matched_sid>100300</if_matched_sid>
+    <same_field>session_id</same_field>
+    <description>ambit D9: 10+ network-capable commands in one session within 300s</description>
+    <mitre>
+      <id>T1041</id>
+      <id>T1567</id>
+    </mitre>
+    <group>ambit_d9,runbook_D9,</group>
+  </rule>
+
+  <!--
+    Secret material in the same event as a network-capable command: the command line
+    itself carries something the edge classifier recognized as a credential. The kind is
+    named, the value never leaves the endpoint. This is the closest thing to a single-event
+    exfiltration signal the M1 stream can produce.
+  -->
+  <rule id="100302" level="13">
+    <decoded_as>json</decoded_as>
+    <field name="bash_command_class">^network$</field>
+    <field name="secret_hit_kinds">\.+</field>
+    <description>ambit D9: secret material ($(secret_hit_kinds)) in a network-capable command - $(bash_argv0) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1041</id>
+      <id>T1552</id>
+    </mitre>
+    <group>ambit_d9,runbook_D9,</group>
+  </rule>
+
+  <!--
+    PENDING EMITTER, for a reason worth recording. An open-world MCP tool is one the
+    server itself marks as reaching outside a closed world, which makes its results
+    untrusted ingest. The annotation is known — the interposer reads it from tools/list
+    and it reaches Wazuh on mcp_list events — but it is NOT carried on tool CALL events:
+    those come from the hook path, and a hook payload contains no annotations. Joining
+    the interposer's per-tool annotations onto call events is an ambitd change that lands
+    with M2.
+
+    The same gap makes internal/filter's destructive-hint crossing criterion inert today.
+    It is harmless there, because an unclassified server makes the event cross anyway, but
+    it is the same missing join.
+  -->
+  <rule id="100303" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_post$</field>
+    <field name="tool_mcp_server">\.+</field>
+    <field name="tool_mcp_openworld_hint">^true$</field>
+    <description>ambit D9: result from an open-world MCP tool - $(tool_name) on $(endpoint_id); treat the content as untrusted ingest</description>
+    <mitre>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_d9,ambit_pending_emitter,runbook_D9,</group>
+  </rule>
+
+</group>

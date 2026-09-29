@@ -199,6 +199,26 @@ real server. It sees `tools/list` responses, call arguments, and results. Its jo
    server claiming `readOnlyHint: true` earns no relaxation. **Annotations may only
    make policy stricter.**
 
+**Implementation status.** Jobs 1, 2 and 4 are built: `cmd/mcp-interpose` wraps one
+server per `.mcp.json` entry, hashes each tool's name, description and input schema
+against an approved baseline (`internal/baseline`), scans the advertised text
+(`internal/toolscan`), and emits `mcp_list` events through `ambitd`. Job 3 — recording
+results as provenance ingest — lands with M2's provenance engine rather than here. The
+reason is double counting: the hook path already carries every MCP call and its result
+with `tool_mcp_server` and `tool_mcp_tool` populated, and the ingest set, the taint
+labels and the edges those results would attach to are M2 structures that do not exist
+yet. Emitting a second copy of each call now would inflate the M0 baseline and give a
+reviewer two records of one action. What the interposer does supply in the meantime is
+a per-server count of the calls it observed, which corroborates its own stream against
+the hook stream the way D7's OTel check corroborates the other two.
+
+**One correlation gap, stated rather than papered over.** MCP carries no Claude Code
+session id, so an `mcp_list` event usually has none: the interposer records the client's
+self-reported name and version, its own pid and ppid, and honours `AMBIT_SESSION_ID` or
+`CLAUDE_SESSION_ID` when something sets them, but it does not invent an id. An event
+correlated to the wrong session is worse than one correlated to none. Correlation is by
+endpoint, server and time until a documented way to pass the id exists.
+
 ### Wazuh: FIM / syscheck — covers most of D6
 
 Config tamper detection, native. One documented constraint shapes the config:

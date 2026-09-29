@@ -195,6 +195,13 @@ echo "  $BIN"
 bold "Writing config"
 # home is detected by ambitd; trusted_repo_paths marks which CLAUDE.md files are
 # expected, so an instruction file from anywhere else shows up as a D8 candidate.
+#
+# baseline_dir is under $AMBIT_DIR deliberately. mcp-interpose runs as you, not as a
+# system daemon, so a baseline store under /var/lib would be unwritable and every
+# listing would report as degraded rather than compared. This script does not touch
+# .mcp.json: wrapping a server is a deliberate edit you make yourself, and rewriting
+# the file our own FIM watch is pointed at would be a poor way to introduce ourselves.
+# See the README for the .mcp.json shape.
 cat > "$CONFIG" <<EOF
 {
   "hook_addr": "127.0.0.1:$HOOK_PORT",
@@ -203,6 +210,7 @@ cat > "$CONFIG" <<EOF
   "events_path": "$EVENTS",
   "trajectory_path": "$TRAJECTORY",
   "fingerprint_key_path": "$AMBIT_DIR/fingerprint.key",
+  "baseline_dir": "$AMBIT_DIR/baselines",
   "endpoint_id": "ep_$(hostname | tr -cd 'a-zA-Z0-9' | tr 'A-Z' 'a-z' | cut -c1-16)",
   "user_id": "$(id -un)",
   "org_id": "local",

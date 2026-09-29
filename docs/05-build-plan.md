@@ -110,8 +110,14 @@ thing about how a developer's session behaves, it has failed.
 cheap high-confidence detectors alerting.
 
 - `mcp-interpose`: wraps configured servers, captures `tools/list`, hashes name +
-  description + schema per tool, records annotations, labels results. Build-vs-adopt
-  decision first ([07](07-open-questions.md) Q2).
+  description + schema per tool, records annotations, labels results. **Build-vs-adopt
+  is decided — purpose-built, in Go, per server** ([08](08-mcp-interpose-decision.md)).
+  **Built and tested**: D4's baseline with an explicit approval step, D5's metadata
+  scan, annotation carriage, and `mcp_list` emission through `ambitd`, with the
+  interposer inert by construction (byte-exact passthrough, no verdict, degrades to
+  passthrough on every failure). Still open: the Wazuh rules and runbooks that read
+  these events, and HTTP/SSE servers, which a stdio wrapper does not cover and which
+  M0's stream tells us whether the cohort uses.
 - Approval baseline: first-seen metadata hash per server/tool, with an explicit
   operator approval step.
 - **SCA policy for the managed-settings bundle (D12)** — and confirm the SCA alert
@@ -119,7 +125,15 @@ cheap high-confidence detectors alerting.
   [03](03-detection.md) flags as unverified.
 - Wazuh rules for D4, D5, D6, D7, D8, D11, D12, plus D10's scalar
   `prov_fp_notable` tripwire — nearly free once the field exists.
-- Runbooks for each, written for an external analyst.
+  **All twelve are written** across six files under `deploy/wazuh/rules/` (IDs
+  100200–100319), validated offline against fixtures generated from the real pipeline.
+  What remains is confirmation on a live manager of three things that fail silently: the
+  syscheck parent SIDs, the SCA parent SID, and how a `<field>` regex matches an
+  array-valued field ([00](00-sources.md)).
+- Runbooks for each, written for an external analyst. **All twelve are written**
+  (`deploy/wazuh/runbooks/`), each with the six required sections and each naming its own
+  expected false positives. The exit criterion that someone outside the team executes one
+  against a sample alert is still open, and it is the half that actually tests them.
 - Alerting to the Wazuh review queue. **Still no blocking.**
 
 **Exit criteria:** every MCP server the cohort uses is inventoried with an approved

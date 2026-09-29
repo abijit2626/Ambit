@@ -259,6 +259,38 @@ eight unrelated reads across the fleet. Thresholds are placeholders to be set fr
 M2 baseline data, not from intuition — a repo with forty `.env` files in a monorepo
 will trip 8-in-120s during an ordinary build.
 
+### D4 and D5 — shipped
+
+These two are no longer shapes. The rules are in
+`deploy/wazuh/rules/ambit_mcp_rules.xml` (IDs 100230–100248) with runbooks in
+`deploy/wazuh/runbooks/`, and they read the `mcp_list` events `mcp-interpose` produces:
+`mcp_baseline_state` for D4's verdict, `mcp_changed_fields` for what moved,
+`mcp_scan_classes` for D5's finding classes.
+
+Three decisions there are worth repeating here, because each was forced by the rule
+engine rather than chosen:
+
+1. **The listing roll-up and the per-tool verdict use different field names.** A Wazuh
+   rule tests presence and equality and cannot easily test absence, so if the per-server
+   summary and the per-tool events both carried `baseline_state`, every drift would
+   raise two alerts and no rule could tell the roll-up from the finding. The summary
+   carries `mcp_tool_count`; only per-tool events carry `mcp_baseline_state`. The
+   roll-up stays in the spool as `mcp.worst`.
+2. **Per-tool events cross only when they say something.** [04](04-data-model.md)
+   budgets `mcp_list` at one event per server per session, and a 60-tool server matching
+   its approved baseline would otherwise spend 60 events per session saying so. The
+   filter drops the quiet ones; the spool keeps them.
+3. **Array-valued fields are matched with unanchored literals.** How a `<field>` regex
+   matches a multi-valued field is unverified ([00](00-sources.md)), and an unanchored
+   literal is the form that works under either behavior. A test fails the build if
+   anyone anchors one.
+
+The false-positive posture is stated in the D5 runbook rather than implied: two of its
+five classes — `sensitive_file_ref` and `sensitive_action` — are expected to fire on
+servers whose job involves secrets or HTTP, which is why they sit at level 7 with the
+false positive named, and why every finding carries a pattern id so a noisy pattern can
+be retired on evidence during M1.
+
 ### D11 — fail-open run, same shape
 
 ```xml
@@ -298,7 +330,7 @@ correlation rule. Two options, and the second is better:
    the indexer flags endpoints with no heartbeat in N minutes. Requires something
    outside the rule engine to run the query.
 2. **The Wazuh agent reports on `ambitd`'s liveness rather than `ambitd` reporting on
-   its own.** SCA check 10005 (`p:ambitd`) already runs on the Wazuh agent's
+   its own.** SCA check 10007 (`p:ambitd`) already runs on the Wazuh agent's
    schedule and fails when the process is gone. A failed SCA check is an event, so
    this needs no external scheduler and — critically — the signal comes from a
    *different process than the one being watched*, which is the whole point when the
@@ -399,6 +431,42 @@ Three limitations, and they are structural rather than tuning problems:
 So D10 is a Wazuh rule for the scalar tripwire case and code for the real case. It
 lands in M5 either way, and the scalar tripwire is worth having in M1 because it is
 nearly free.
+
+### What writing the rules exposed
+
+All twelve detectors now have rules under `deploy/wazuh/rules/` and a runbook each under
+`deploy/wazuh/runbooks/`. Writing them surfaced four gaps between what this document
+specifies and what the pipeline emits. Each is marked in the rules themselves so nobody
+reads an inert rule as a quiet fleet.
+
+1. **`agent_entrypoint` has no emitter.** D1 is specified in terms of a non-interactive
+   entrypoint, [04](04-data-model.md) gives the field, and nothing populates it: the hook
+   payload ambitd parses carries no entrypoint field and the OTel path has no equivalent
+   attribute. Rule 100204 is marked `ambit_pending_emitter` and cannot fire. What D1 does
+   detect today is `bypassPermissions` combined with a sensitive action, which is a weaker
+   claim than "no human present" and the runbook says so.
+2. **MCP annotations never reach tool *call* events.** The interposer reads them from
+   `tools/list` and they cross on `mcp_list` events, but a call event comes from the hook
+   path, and a hook payload has no annotations. So `tool_mcp_destructive_hint` and
+   `tool_mcp_openworld_hint` are absent on every `tool_pre` and `tool_post`. This makes
+   rule 100303 inert, and it makes the destructive-hint criterion in `internal/filter`
+   inert too — harmlessly, because an unclassified server makes those events cross anyway.
+   The fix is ambitd caching the interposer's per-tool annotations and enriching call
+   events, which is M2 work.
+3. **Sandbox allowlist denials have no field at all.** D9 lists them as a signal; the
+   schema has nowhere to put one, so a *blocked* exfiltration attempt is invisible to the
+   detector. This is a schema addition, not an unpopulated field, and it is the one gap
+   here with nothing to mark.
+4. **An untrusted zone now overrides a trusted-repo prefix**, which was a bug rather than a
+   gap. A `CLAUDE.md` inside `node_modules` of a trusted repository was being reported as
+   trusted, because the prefix check matched the dependency's parent path — which would
+   have made D8 miss dependency-carried instructions, its main case. Fixed in the
+   collector, with a test.
+
+Two further limits are inherent rather than fixable: **absence is not expressible** in a
+rule engine, which is why D1's "SessionStart with no UserPromptSubmit" and D7's "no
+heartbeat for N minutes" are not rules; and **volume or destination profiling is not a
+rule**, which is why D9 reports egress shape rather than anomaly.
 
 ### Proposed MITRE ATT&CK mappings
 

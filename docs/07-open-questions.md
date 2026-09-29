@@ -43,7 +43,7 @@ argument — this is exactly what shadow mode is for. Treat subagent inheritance
 separate call and default to inheriting (conservative) with the laundering path
 documented.
 
-## Q2 — Build `mcp-interpose` or adopt an existing gateway? *(blocking M1)*
+## Q2 — Build `mcp-interpose` or adopt an existing gateway? **RESOLVED.**
 
 Several open-source MCP gateways already do interception, per-tool allowlists,
 argument/result guardrails, and audit trails ([06](06-prior-art.md)). Our unique
@@ -53,11 +53,37 @@ schema.
 Options: write a minimal purpose-built interposer; fork a gateway; write a plugin
 for one.
 
-**Recommendation:** spend two days evaluating lasso-security/mcp-gateway and
-enkryptai/secure-mcp-gateway against our requirements before writing anything. A
-plugin is the right shape if either has a plugin surface. The failure mode to avoid
-is a half-built gateway that needs auth, multi-tenancy, and transport handling we
-did not plan for. Needs an owner and a decision, not a default.
+**Decision: build a minimal purpose-built interposer in Go. Adopt neither
+candidate, and write a plugin for neither.** The evaluation, with evidence and
+the commits it was run against, is [08](08-mcp-interpose-decision.md).
+
+Two findings settled it. **Neither gateway does the thing that is our
+contribution:** neither repository hashes tool metadata or keeps an approved
+baseline, so D4 is ours to implement under either option. And **both aggregate
+servers behind one client entry, which renames tools** — lasso to
+`<server>_<tool>`, enkrypt to a single `enkrypt_secure_call_tools` — breaking the
+`mcp__<server>__<tool>` identity that `internal/hook/payload.go:157` already
+parses and that managed-settings permission rules match. Adopting either makes
+Claude Code's own permission model coarser in order to install our telemetry,
+which is the wrong side of the line this project draws.
+
+Runners-up on the specifics: lasso drops MCP annotations when it re-registers
+tools and enforces at M1 by rewriting `.mcp.json` — the file our own D6 FIM watch
+is pointed at — including on internal errors; enkrypt genuinely has the right
+hook (`validate_tool_registration`, carrying description, schema and
+annotations), but reaching it means a 75k-LOC web stack on every developer
+endpoint and a default guardrail path that POSTs tool content to
+`api.enkryptai.com`, one config key away from contradicting Q3.
+
+Taken from them anyway, both additive and neither a dependency on the endpoint:
+lasso's three-category description-pattern corpus as a first draft for D5, and
+enkrypt's `bad_mcps/` servers as M1's mutation fixtures.
+
+**The failure mode Q2 warned about still applies to what we build.** [08](08-mcp-interpose-decision.md)
+carries the scope fence — not an auth layer, not multi-tenant, not an aggregator,
+not a content guardrail — and the conditions that would reopen this, chiefly a
+cohort that turns out to depend on HTTP/SSE MCP servers a stdio wrapper cannot
+wrap.
 
 ## Q3 — How much content leaves the endpoint? *(blocking M0)*
 
