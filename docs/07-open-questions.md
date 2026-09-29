@@ -328,22 +328,27 @@ from a single source of truth rather than hand-written, so a migration is a
 re-render rather than a rewrite. Price the migration before the rule count gets large.
 Needs an owner to track the 5.0 release and confirm the primitives.
 
-## Q13 — Evaluate Adrian before M1 starts *(blocking M1)*
+## Q13 — Evaluate Adrian before M1 starts. **RESOLVED.**
 
 [`secureagentics/adrian`](https://github.com/secureagentics/adrian) is a runtime
 AI-agent security tool with a native Claude Code plugin, detecting "malicious,
-misaligned, or out-of-remit behaviour" ([06](06-prior-art.md)). It is the closest
-overlap found, and the assessment in that document rests on a one-line description
-rather than on reading it.
+misaligned, or out-of-remit behaviour" ([06](06-prior-art.md)). It was the closest
+overlap found, and the prior assessment rested on a one-line description rather than
+on reading it.
 
-Unresolved: does it already cover M1 and M2's ground? The provisional read is that
-it is per-session, reasoning-trace-inclusive and standalone, where this is
-fleet-level, action-only and SIEM-native — but that distinction is exactly the kind
-that evaporates on contact with the actual code.
+**Decision: build continues.** The full evaluation, with evidence and a
+reproduction script, is [09](09-adrian-evaluation.md). The short version: Adrian's
+entire detection mechanism is a single LLM call per event reading chain-of-thought
+reasoning — the exact signal [03](03-detection.md) identifies as the fragile one —
+with no fleet correlation, no SIEM adjacency, and no Rule-of-Two or provenance
+equivalent. Of the three acceptable outcomes Q13 named, this is cleanly "does not
+fit": not a smaller overlap to adopt around, because the gap **is** the deterministic
+layer this project contributes, not a piece of it.
 
-**Recommendation: half a day, before M1 starts, alongside Q2.** Three outcomes are
-all acceptable and one is not. Acceptable: it does not fit, and we build; it fits
-well, and we adopt it and contribute the Rule-of-Two and provenance layers upstream;
-it partly fits, and `ambitd` narrows to the gap. Not acceptable: building the whole
-thing and discovering the overlap at M3. Needs an owner, and the same person should
-take Q2 since both are build-versus-adopt calls on the same milestone.
+One finding changes the comparison rather than the decision: **Adrian already gates
+tool calls inline today** — a working `PreToolUse` deny path on a ~15-second
+synchronous budget — which ambit does not ship until M3. It blocks on the signal
+[03](03-detection.md) says degrades fastest under adaptive attack, given sole inline
+authority, which is the configuration that document's layer ordering warns against.
+True but backwards-looking as a comparison ("it already blocks and yours doesn't"),
+and worth having an answer ready for rather than being surprised by.
