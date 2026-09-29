@@ -206,3 +206,49 @@ func TestInterestingFractionIsPlausible(t *testing.T) {
 	}
 	t.Logf("synthetic crossing fraction: %.3f%%", frac*100)
 }
+
+// TestMCPListingVolumeControl pins the trade docs/04-data-model.md makes: the
+// per-server summary is the one budgeted event per server per session, the per-tool
+// events that say something cross, and the quiet ones stay in the spool. A 60-tool
+// server matching its approved baseline must not spend 60 events reporting that
+// nothing happened.
+func TestMCPListingVolumeControl(t *testing.T) {
+	f := New(Config{SampleRate: 0})
+
+	listing := func(tool, state string, classes []string) *event.Event {
+		return &event.Event{
+			Kind: event.KindMCPList,
+			Tool: &event.Tool{MCP: &event.MCP{
+				Server: "github", Tool: tool, BaselineState: state, ScanClasses: classes,
+			}},
+		}
+	}
+
+	cases := []struct {
+		name  string
+		event *event.Event
+		cross bool
+	}{
+		{"per-server summary always crosses", listing("", event.MCPStateApproved, nil), true},
+		{"approved tool stays local", listing("create_issue", event.MCPStateApproved, nil), false},
+		{"pending tool stays local", listing("create_issue", event.MCPStatePending, nil), false},
+		{"approved tool with a D5 finding crosses", listing("create_issue", event.MCPStateApproved, []string{"hidden_instruction"}), true},
+		{"drift crosses", listing("create_issue", event.MCPStateDrift, nil), true},
+		{"unapproved change crosses", listing("create_issue", event.MCPStateDriftUnapproved, nil), true},
+		{"new tool crosses", listing("create_issue", event.MCPStateNew, nil), true},
+		{"removed tool crosses", listing("create_issue", event.MCPStateRemoved, nil), true},
+		{"unavailable baseline crosses", listing("create_issue", event.MCPStateUnavailable, nil), true},
+		// The default direction: an unknown verdict is a state somebody added without
+		// updating the filter, and the safe reading of that is "interesting".
+		{"unknown state crosses", listing("create_issue", "some_future_state", nil), true},
+		{"malformed listing crosses", &event.Event{Kind: event.KindMCPList}, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := f.Decide(c.event); got.Cross != c.cross {
+				t.Errorf("Cross = %v (reason %q), want %v", got.Cross, got.Reason, c.cross)
+			}
+		})
+	}
+}

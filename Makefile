@@ -1,13 +1,15 @@
 BIN     := ambitd
+BIN2    := mcp-interpose
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
-.PHONY: all build test race vet fmt check clean cross smoke
+.PHONY: all build test race vet fmt check clean cross smoke fixtures
 
 all: check build
 
 build:
 	go build $(LDFLAGS) -o bin/$(BIN) ./cmd/ambitd
+	go build $(LDFLAGS) -o bin/$(BIN2) ./cmd/mcp-interpose
 
 test:
 	go test ./...
@@ -33,9 +35,20 @@ cross:
 	GOOS=darwin  GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN)-darwin-amd64 ./cmd/ambitd
 	GOOS=linux   GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN)-linux-arm64  ./cmd/ambitd
 	GOOS=linux   GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN)-linux-amd64  ./cmd/ambitd
+	GOOS=darwin  GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN2)-darwin-arm64 ./cmd/mcp-interpose
+	GOOS=darwin  GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN2)-darwin-amd64 ./cmd/mcp-interpose
+	GOOS=linux   GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN2)-linux-arm64  ./cmd/mcp-interpose
+	GOOS=linux   GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN2)-linux-amd64  ./cmd/mcp-interpose
 
 smoke: build
 	./scripts/smoke.sh
+	./scripts/interpose-smoke.sh
+
+# Wazuh rule fixtures are generated from the real pipeline, never hand-edited: a
+# fixture that has drifted from the schema tests nothing while looking like it tests
+# everything. Depends on build so it can never be generated from stale binaries.
+fixtures: build
+	./scripts/gen-fixtures.sh
 
 clean:
 	rm -rf bin

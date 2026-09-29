@@ -1,0 +1,237 @@
+<!--
+  ambit D1, D2 and D3 — session shape, credential sweeps, and blocked attempts.
+
+  Manager-side. Install alongside the other ambit rule files; see the README.
+  IDs 100200-100229. The full allocation map is in ambit_mcp_rules.xml.
+
+  These read the hook stream ambitd writes. Session-constant fields — permission_mode,
+  agent_* , sandbox_* — are repeated on every event by design (docs/04-data-model.md),
+  precisely so a rule evaluating a tool call can test the shape of the session it
+  happened in. That is what makes D1 expressible at all: "a credential read in a
+  bypassPermissions session" is one event, not a correlation.
+
+  TWO THINGS THESE RULES CANNOT DO, stated because the detector catalogue implies they
+  can:
+
+  1. **Absence.** D1's "SessionStart with no UserPromptSubmit" is the absence of an
+     event, and Wazuh rules fire on events. The prompt-less-session half of D1 needs a
+     scheduled query or ambitd-side accounting; it is not here.
+  2. **The invocation flags.** D3 names the permission-bypass flags
+     (dangerously-skip-permissions, yolo, trust-all-tools; written without their leading
+     dashes here because a double hyphen inside an XML comment is not valid XML and
+     Wazuh would refuse the file). ambitd sees hook events, not the agent's argv, so
+     those flags are not observable from this event stream. What is observable is the
+     permission_mode they produce and the denials that follow. SCA check D12 is the
+     control that asserts managed settings still forbid the mode.
+-->
+
+<group name="ambit,ambit_agent,">
+
+  <!-- ===================== D1 — session with no human ===================== -->
+
+  <!--
+    Context: a session started in a mode where every tool call is pre-approved. Level 5
+    rather than 12: some teams legitimately run bypassPermissions in containers, and
+    M0's baseline is what decides whether that is true here. The rules that matter are
+    the ones below, where the mode is combined with what the session then did.
+  -->
+  <rule id="100200" level="5">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^session_start$</field>
+    <field name="permission_mode">^bypassPermissions$</field>
+    <description>ambit D1: session started with bypassPermissions on $(endpoint_id) (session $(session_id))</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+    <group>ambit_d1,runbook_D1,</group>
+  </rule>
+
+  <!--
+    The s1ngularity signature, and the highest-confidence single-event alert in the
+    system: an agent with no permission prompts reading a credential path. That is the
+    documented malware pattern — re-invoke the developer's own agent with permission
+    bypass, then inventory SSH keys and cloud credentials.
+  -->
+  <rule id="100201" level="13">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_pre$</field>
+    <field name="permission_mode">^bypassPermissions$</field>
+    <field name="path_zone">^credential$</field>
+    <description>ambit D1: credential-zone access in a bypassPermissions session - $(tool_name) $(path_op) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1059</id>
+      <id>T1552.001</id>
+    </mitre>
+    <group>ambit_d1,ambit_d2,runbook_D1,</group>
+  </rule>
+
+  <!-- Outbound network from a session that needs no approval to make it. -->
+  <rule id="100202" level="12">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_pre$</field>
+    <field name="permission_mode">^bypassPermissions$</field>
+    <field name="bash_command_class">^network$</field>
+    <description>ambit D1: outbound network command in a bypassPermissions session - $(bash_argv0) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1059</id>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_d1,ambit_d9,runbook_D1,</group>
+  </rule>
+
+  <!--
+    Secret material in a tool call made by a session with no approvals. secret_hit_kinds
+    names the kind only; the value is stripped at the edge and never reaches an event.
+  -->
+  <rule id="100203" level="12">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_pre$</field>
+    <field name="permission_mode">^bypassPermissions$</field>
+    <field name="secret_hit_kinds">\.+</field>
+    <description>ambit D1: secret material ($(secret_hit_kinds)) in a tool call from a bypassPermissions session on $(endpoint_id)</description>
+    <mitre>
+      <id>T1059</id>
+      <id>T1552</id>
+    </mitre>
+    <group>ambit_d1,runbook_D1,</group>
+  </rule>
+
+  <!--
+    PENDING EMITTER. agent_entrypoint is in the flattened schema and D1 is specified in
+    terms of it, but nothing populates it: the hook payload ambitd parses carries no
+    entrypoint field and the OTel path carries no equivalent attribute. Until an emitter
+    exists this rule is inert — which is why it is marked rather than quietly shipped as
+    if it worked. A non-interactive entrypoint is the strongest half of D1: a CI or SDK
+    session has no human to prompt, so "no prompt" is not evidence there either.
+  -->
+  <rule id="100204" level="12">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^session_start$</field>
+    <field name="agent_entrypoint">^(ci|sdk)$</field>
+    <description>ambit D1: session started from a non-interactive entrypoint ($(agent_entrypoint)) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+    <group>ambit_d1,ambit_pending_emitter,runbook_D1,</group>
+  </rule>
+
+  <!-- ===================== D2 — credential sweep ===================== -->
+
+  <!--
+    Base: ambitd reported a credential-zone read. The zone label is cleartext while the
+    path is a keyed digest, which is what makes this triageable by an analyst who cannot
+    see the customer's filesystem.
+  -->
+  <rule id="100210" level="5">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_pre$</field>
+    <field name="path_zone">^credential$</field>
+    <field name="path_op">^read$</field>
+    <description>ambit: credential-zone read by $(agent_kind) session $(session_id)</description>
+    <mitre>
+      <id>T1552.001</id>
+    </mitre>
+    <group>ambit_d2,runbook_D2,</group>
+  </rule>
+
+  <!--
+    D2: many of them, same session, short window. same_field on session_id is what makes
+    this a sweep by one agent rather than eight unrelated reads across the fleet.
+
+    The threshold is a placeholder to be set from M2 baseline data, not from intuition: a
+    monorepo with forty .env files will trip 8-in-120s during an ordinary build, and the
+    runbook names that as the expected false positive.
+  -->
+  <rule id="100211" level="12" frequency="8" timeframe="120" ignore="300">
+    <if_matched_sid>100210</if_matched_sid>
+    <same_field>session_id</same_field>
+    <description>ambit D2: credential sweep - 8+ credential-zone reads in one session within 120s</description>
+    <mitre>
+      <id>T1552.001</id>
+      <id>T1555</id>
+    </mitre>
+    <group>ambit_d2,runbook_D2,</group>
+  </rule>
+
+  <!--
+    A credential-zone WRITE, which the sweep rule does not cover. Reading credentials is
+    staging for exfiltration; writing them is persistence or account takeover — adding an
+    authorized_keys entry, rewriting a token file — and it deserves its own alert rather
+    than being folded into a read threshold.
+  -->
+  <rule id="100212" level="12">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_pre$</field>
+    <field name="path_zone">^credential$</field>
+    <field name="path_op">^write$</field>
+    <description>ambit D2: credential-zone WRITE by $(tool_name) in session $(session_id) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1098</id>
+      <id>T1552.001</id>
+    </mitre>
+    <group>ambit_d2,runbook_D2,</group>
+  </rule>
+
+  <!-- ===================== D3 — bypass attempt ===================== -->
+
+  <!--
+    A tool call the permission layer refused. One is ordinary: a developer declines a
+    prompt, or a deny rule does its job. It alerts at 10 because in a session that has
+    already ingested untrusted content, a refusal is the visible edge of something trying
+    an action the user did not ask for.
+  -->
+  <rule id="100220" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^permission_denied$</field>
+    <description>ambit D3: tool call denied by policy - $(tool_name) in session $(session_id) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d3,runbook_D3,</group>
+  </rule>
+
+  <!--
+    Repeated denials in one session is probing: something is trying actions until one is
+    allowed. This is the shape that distinguishes an attack from a developer clicking no.
+  -->
+  <rule id="100221" level="13" frequency="5" timeframe="300" ignore="600">
+    <if_matched_sid>100220</if_matched_sid>
+    <same_field>session_id</same_field>
+    <description>ambit D3: 5+ denied tool calls in one session within 300s - probing for an allowed path</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d3,runbook_D3,</group>
+  </rule>
+
+  <!--
+    Context: a tool call that failed. Level 5 because most failures are ordinary bugs and
+    typos; it is here so a denial has surrounding detail during triage, and because a
+    burst of failures in a bypassPermissions session is worth seeing.
+  -->
+  <rule id="100222" level="5">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_fail$</field>
+    <description>ambit: tool call failed - $(tool_name) in session $(session_id)</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+    <group>ambit_d3,runbook_D3,</group>
+  </rule>
+
+  <!--
+    A permission prompt was raised. This is the event whose ABSENCE matters most: an
+    autonomous session that never prompts is D1's core shape, and this rule exists so
+    "prompts happened here" is in the timeline as evidence a human was present.
+  -->
+  <rule id="100223" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^permission_request$</field>
+    <description>ambit: permission prompt raised for $(tool_name) in session $(session_id)</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+    <group>ambit_d3,runbook_D3,</group>
+  </rule>
+
+</group>

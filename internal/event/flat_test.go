@@ -26,8 +26,14 @@ func fullEvent() *Event {
 		Session: Session{SessionID: "s_1", PromptID: "p_1", Sequence: 1487, AgentType: "Explore", ParentSessionID: "s_0"},
 		Tool: &Tool{
 			Name: "Bash", UseID: "toolu_1", InputDigest: "hmac:i", ResultDigest: "hmac:o", ResultBytes: 18422,
-			MCP: &MCP{Server: "github", Tool: "create_issue", MetadataHash: "hmac:m", Trust: "external",
-				Annotations: Annotations{ReadOnlyHint: b(false), DestructiveHint: b(true), IdempotentHint: b(false), OpenWorldHint: b(true)}},
+			MCP: &MCP{Server: "github", Tool: "create_issue", MetadataHash: "sha256:m", Trust: "external",
+				Annotations: Annotations{ReadOnlyHint: b(false), DestructiveHint: b(true), IdempotentHint: b(false), OpenWorldHint: b(true)},
+				// Listing fields, set only on mcp_list events in practice. Present here
+				// so the ceiling test bounds them too.
+				BaselineState: MCPStateDrift, PrevMetadataHash: "sha256:p",
+				ChangedFields: []string{"description"}, ScanClasses: []string{"hidden_instruction"},
+				ScanRules: []string{"hidden.ignore_previous"}, ToolCount: 12, DriftCount: 1,
+				Trigger: "tools_list", ServerVersion: "1.4.0", CallsObserved: 12},
 			Bash: &Bash{Argv0: "curl", CommandClass: "network", CommandDigest: "hmac:b"},
 			Paths: []PathRef{
 				{PathDigest: "hmac:p1", Zone: ZoneWorkdir, Op: "read"},
@@ -97,6 +103,7 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 	}{
 		{"tool_pre_bash", bashToolEvent()},
 		{"tool_pre_mcp", mcpToolEvent()},
+		{"mcp_list", mcpListEvent()},
 		{"session_start", sessionStartEvent()},
 		{"config_change", configEvent()},
 		{"ambitd_health", healthEvent()},
@@ -279,6 +286,30 @@ func mcpToolEvent() *Event {
 	e.Scores = Scores{}
 	e.Tool.Bash = nil
 	e.Tool.Paths = nil
+	e.Tool.Name = "mcp__github__create_issue"
+	// A tool *call* carries no listing verdict: the collector fills server, tool and
+	// trust for a call, and only the interposer's mcp_list events carry the D4 and D5
+	// fields. Clearing them here keeps this case measuring an event that can exist.
+	m := e.Tool.MCP
+	m.BaselineState, m.PrevMetadataHash, m.Trigger, m.ServerVersion = "", "", "", ""
+	m.ChangedFields, m.ScanClasses, m.ScanRules = nil, nil, nil
+	m.ToolCount, m.NewCount, m.DriftCount, m.RemovedCount, m.CallsObserved = 0, 0, 0, 0, 0
+	return e
+}
+
+// mcpListEvent is what the interposer produces: an MCP block with the D4 verdict and
+// D5 classes, and none of the bash, path, config or health blocks.
+func mcpListEvent() *Event {
+	e := fullEvent()
+	e.Kind = KindMCPList
+	e.Source = SourceInterpose
+	e.Config = nil
+	e.Health = nil
+	e.Scores = Scores{}
+	e.Provenance = Provenance{}
+	e.Tool.Bash = nil
+	e.Tool.Paths = nil
+	e.Tool.InputFeatures = nil
 	e.Tool.Name = "mcp__github__create_issue"
 	return e
 }

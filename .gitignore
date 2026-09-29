@@ -1,6 +1,11 @@
 bin/
 *.jsonl
 *.jsonl.*
+# The Wazuh rule fixtures are committed on purpose: deploy/wazuh/rules_test.go reads them,
+# so without them `go test ./...` fails on a fresh clone, and wazuh-logtest has nothing to
+# verify the rules against. The *.jsonl rule above exists to keep event sinks and spools
+# out of the repository, and it silently swallowed these until CI was added.
+!deploy/**/*.jsonl
 fingerprint.key
 *.key
 !deploy/**/*.key

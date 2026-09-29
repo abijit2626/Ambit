@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -70,6 +71,11 @@ type Options struct {
 	Decider Decider
 	Logger  *slog.Logger
 	Budget  time.Duration
+	// Extra mounts additional handlers on the same loopback listener, keyed by
+	// path. ambitd uses it for the interposer's report endpoint: one loopback bind
+	// means one bind control to get right (internal/loopback), and one address for
+	// a component on this endpoint to know. /hook and /healthz are reserved.
+	Extra map[string]http.Handler
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -94,6 +100,19 @@ func NewServer(opts Options) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/hook", s.serveHook)
 	mux.HandleFunc("/healthz", s.serveHealth)
+	for path, h := range opts.Extra {
+		switch path {
+		case "", "/hook", "/healthz":
+			// Refused rather than ignored: silently dropping a mount would present
+			// as an endpoint that accepts nothing, and shadowing /hook would break
+			// the synchronous path.
+			return nil, fmt.Errorf("hook: extra mount %q is reserved", path)
+		}
+		if h == nil {
+			return nil, fmt.Errorf("hook: extra mount %q has a nil handler", path)
+		}
+		mux.Handle(path, h)
+	}
 	s.srv = &http.Server{
 		Addr:    opts.Addr,
 		Handler: mux,
