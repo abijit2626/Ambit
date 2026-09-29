@@ -161,13 +161,19 @@ metadata is shared rather than tenant-scoped. All community sources
 is the product doc for the RBAC half; the tenancy patterns are blog and mailing-list
 material). Basis for [07](07-open-questions.md) Q11.
 
-**Secondary — Wazuh 5.0 engine.** 5.0 migrates decoders and rules from XML to YAML with
-an ECS-normalized common schema, per Wazuh's own migration issues
-([wazuh/wazuh#8004](https://github.com/wazuh/wazuh/issues/8004),
-[#7914](https://github.com/wazuh/wazuh/issues/7914),
-[#8011](https://github.com/wazuh/wazuh/issues/8011)). Corroborating signal: the
-main-branch `internal-options.rst` no longer lists `analysisd.decoder_order_size`. Not
-verified against a 5.0 release note. Basis for [07](07-open-questions.md) Q12.
+**Primary — Wazuh 5.0 engine, resolved.** Q12 was reopened against the actual source
+rather than the secondary GitHub issues previously cited. `wazuh/wazuh` cloned at tag
+`v5.0.0-beta5` (commit `49b96be`; `main` at `ef75192`, 2026-09-28, is already
+`5.1.0-alpha0`) confirms `src/analysisd` no longer exists and the new `src/engine`'s
+asset model (`builder/src/syntax.hpp`) has no `rule` kind. Wazuh's own in-tree
+migration guide (`docs/guide/migration/rules-4x-to-5x.md`, first-party — shipped in the
+product repo, not an issue thread) states directly that `frequency`/`timeframe`/
+`same_*`/`if_matched_sid` are "not natively supported" in the 5.x rule format and
+instructs migrators to "document as a gap" rather than offering a mapping.
+`wazuh/wazuh-indexer-plugins` (commit `7288aef`) confirms rule fields are validated
+against a closed schema (WCS) and documents the `labels` escape-hatch field, not yet
+confirmed against a working example. Full evidence and reproduction script:
+[10](10-wazuh5-migration.md). Basis for [07](07-open-questions.md) Q12, now RESOLVED.
 
 ## Incidents
 
