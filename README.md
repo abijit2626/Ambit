@@ -98,9 +98,10 @@ platform, not a replacement for either.**
 | [04-data-model.md](docs/04-data-model.md) | Rich internal schema, flattened SIEM-bound schema, the mapping and what it loses, what crosses to Wazuh, split retention |
 | [05-build-plan.md](docs/05-build-plan.md) | M0–M5, what adopting Wazuh deletes, enforcement sequenced after a measured baseline |
 | [06-prior-art.md](docs/06-prior-art.md) | What already exists, reuse decisions, ten non-goals |
-| [07-open-questions.md](docs/07-open-questions.md) | Thirteen decisions, three resolved; Q11 (tenancy) blocks MSSP onboarding |
+| [07-open-questions.md](docs/07-open-questions.md) | Thirteen decisions, four resolved; Q11 (tenancy) blocks MSSP onboarding |
 | [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md) | Q2 resolved: why `mcp-interpose` is purpose-built rather than adopted, with the evaluation evidence |
 | [09-adrian-evaluation.md](docs/09-adrian-evaluation.md) | Q13 resolved: why Adrian doesn't cover M1/M2, and the one finding that changes how the comparison reads |
+| [10-wazuh5-migration.md](docs/10-wazuh5-migration.md) | Q12 resolved: 5.0's rule engine has no home for `frequency`/`same_field`/`if_matched_sid`, evaluated against the actual 5.0.0-beta5 source |
 
 ## Third-party monitoring
 
@@ -244,7 +245,10 @@ five of the thirteen are blocking. Q2 (build vs. adopt for the MCP interposer) i
 decided — [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md). Q13
 (evaluate Adrian before M1) is decided —
 [09-adrian-evaluation.md](docs/09-adrian-evaluation.md): build continues, the overlap
-does not fit.
+does not fit. Q12 (target Wazuh 4.x or 5.x) is decided —
+[10-wazuh5-migration.md](docs/10-wazuh5-migration.md): stay on 4.x, since 5.0's rule
+engine has no shipped mechanism for the correlation primitives D2, D10 and D11 depend
+on.
 
 ## Sourcing note
 
