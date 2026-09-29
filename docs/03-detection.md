@@ -45,11 +45,37 @@ sensitive data, and changing state or communicating externally. An agent needing
 all three without a fresh context window should not operate autonomously and
 requires at minimum human-in-the-loop supervision.
 
-Everything needed is in the hook stream. Nobody tracks it. Lives in `ambitd`
-because the bits are live session state and the gate must return inline.
+Everything needed is in the hook stream. Lives in `ambitd` because the bits are
+live session state and the gate must return inline.
 
 Three bits per session, monotonically set (never cleared within a session — see
 [07](07-open-questions.md) Q1).
+
+**Implemented, in shadow mode.** `internal/r2` classifies each event against the
+bullets below in isolation; `internal/collector`'s `sessionState` accumulates the
+bits monotonically, keyed on session_id, per Q1's option 1. This is instrumentation
+only — the gate table further down is not built, `policy_decision` stays empty, and
+nothing about a session's behavior changes. The point is to let a real cohort's
+usage answer Q1's "how fast does an 8-hour session saturate" question with data
+instead of argument.
+
+Two things this surfaced, worth stating rather than only in code comments:
+
+- **Subagent inheritance is free, not implemented.** Claude Code gives a subagent
+  the same top-level session_id as its parent, distinguished only by
+  `agent_id`/`agent_type` (code.claude.com/docs/en/hooks). Keying `sessionState` on
+  session_id alone means a subagent's tool calls read and write the exact same bits
+  as its parent, which is Q1's "default to inheriting (conservative)"
+  recommendation, achieved by the session-id keying rather than by a separate
+  parent-bits-copy.
+- **A new session_id is a genuine reset, for all three bits, not just A.** `/clear`
+  is reported to regenerate the session_id without re-firing `SessionStart`
+  (`anthropics/claude-code` issue #70606 — not primary documentation; see
+  [00](00-sources.md)), so the first post-`/clear` event lands on an empty
+  `sessionState`. Q1 already flags this as unsound for B and C specifically — the
+  credential already read or the tool already reachable does not actually reset —
+  and this implementation does not solve that. It is the behavior shadow mode needs
+  to measure the cost of.
 
 **Bit A — untrusted input ingested.** Set by:
 - `WebFetch` / `WebSearch` result from a domain not on the trusted-content list

@@ -25,6 +25,7 @@ import (
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/filter"
 	"github.com/abijit2626/ambit/internal/hook"
+	"github.com/abijit2626/ambit/internal/r2"
 	"github.com/abijit2626/ambit/internal/redact"
 )
 
@@ -38,9 +39,12 @@ type Sink interface {
 
 // sessionState is the per-session state the collector keeps.
 //
-// In M0 this only tracks what is needed to populate events. The Rule-of-Two bits
-// and the provenance fingerprint set live here in M2, which is why the type
-// exists now rather than being inlined.
+// It is keyed on Claude Code's session_id (see (c *Collector) session below),
+// which is also the unit Rule-of-Two accounting uses: docs/07-open-questions.md
+// Q1 option 1, monotonic bits that never clear within a session, shipped in
+// shadow mode specifically to measure how fast a session saturates to all
+// three before choosing between the narrower options Q1 leaves open. The
+// provenance fingerprint set is M2 work not yet built; r2 is not — see setR2Bits.
 type sessionState struct {
 	mu       sync.Mutex
 	sequence int64
@@ -48,9 +52,44 @@ type sessionState struct {
 	model    string
 	permMode string
 	zoner    *classify.Zoner
-	// r2 is carried but never set in M0: no accounting yet, and emitting
-	// half-computed bits would put untrustworthy fields in front of a reviewer.
+	// r2 accumulates monotonically for the lifetime of this sessionState. Never
+	// cleared by anything short of Collector.Forget (SessionEnd) — not by
+	// PreCompact/PostCompact (Q1: clearing bit A on compaction is unsound,
+	// since a summary can still carry an injected instruction) and there is no
+	// dedicated hook event for /clear to even consider clearing on. r2.Transition
+	// is deliberately never persisted here: it is meaningful only for the one
+	// event that caused it, so setR2Bits returns it per-call rather than storing
+	// it, and a caller reading r2 directly (snapshotR2) always sees it false.
 	r2 event.R2
+}
+
+// setR2Bits ORs newBits into the session's Rule-of-Two state and returns the
+// event.R2 snapshot for the ONE event that triggered this call: the cumulative
+// bits, plus Transition true and SetBy set only when this call caused a bit to
+// flip from unset to set.
+//
+// Calling this twice for the same tool call (once on PreToolUse, once on
+// PostToolUse) is expected, not a bug: PostToolUse additionally carries the
+// tool's result, so it can contribute bits PreToolUse could not have known
+// about (a secret surfacing only in the output, for one). Re-applying the
+// same input-side bits on the second call is a no-op under monotonic OR, and
+// will not report a second Transition for something that already transitioned.
+func (s *sessionState) setR2Bits(newBits r2.Bits, eventID string) event.R2 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	transitioned := (newBits.A && !s.r2.A) || (newBits.B && !s.r2.B) || (newBits.C && !s.r2.C)
+	s.r2.A = s.r2.A || newBits.A
+	s.r2.B = s.r2.B || newBits.B
+	s.r2.C = s.r2.C || newBits.C
+
+	out := s.r2
+	out.Transition = transitioned
+	if transitioned {
+		s.r2.SetBy = eventID
+		out.SetBy = eventID
+	}
+	return out
 }
 
 // Collector implements hook.Handler.
@@ -64,6 +103,11 @@ type Collector struct {
 	log      *slog.Logger
 	version  string
 	hostname string
+	// webDomainTrust holds keyed digests of cfg.TrustedContentDomains,
+	// precomputed once so a WebFetch/WebSearch classification never re-digests
+	// the operator's list. Nil or empty means nothing is trusted, the safe
+	// default.
+	webDomainTrust map[string]bool
 
 	mu       sync.Mutex
 	sessions map[string]*sessionState
@@ -109,18 +153,31 @@ func New(opts Options) *Collector {
 
 	hostname, _ := os.Hostname()
 
+	webDomainTrust := make(map[string]bool, len(opts.Config.TrustedContentDomains))
+	for _, d := range opts.Config.TrustedContentDomains {
+		if d == "" {
+			continue
+		}
+		// The same reduction Extract applies to an extracted domain, so a
+		// configured "www.example.com" and an extracted "example.com" compare
+		// equal — see features.Registrable's comment for why this has to be
+		// the same function rather than a second implementation.
+		webDomainTrust[opts.Extractor.Digest(features.Registrable(d))] = true
+	}
+
 	return &Collector{
-		cfg:          opts.Config,
-		hostname:     hostname,
-		events:       opts.EventsSink,
-		traj:         opts.TrajectorySink,
-		filt:         filter.New(fc),
-		ext:          opts.Extractor,
-		red:          redact.New(),
-		log:          opts.Logger,
-		version:      opts.Version,
-		sessions:     map[string]*sessionState{},
-		crossReasons: map[string]int64{},
+		cfg:            opts.Config,
+		hostname:       hostname,
+		events:         opts.EventsSink,
+		traj:           opts.TrajectorySink,
+		filt:           filter.New(fc),
+		ext:            opts.Extractor,
+		red:            redact.New(),
+		log:            opts.Logger,
+		version:        opts.Version,
+		sessions:       map[string]*sessionState{},
+		crossReasons:   map[string]int64{},
+		webDomainTrust: webDomainTrust,
 	}
 }
 
@@ -292,6 +349,46 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 	}
 
 	e.Tool = t
+
+	// Rule-of-Two accounting applies only to PreToolUse and PostToolUse: a call
+	// that was denied (PermissionRequest/PermissionDenied) or that failed
+	// (ToolFail) did not actually read, write, or reach anything, and setting a
+	// bit for an action that never happened would manufacture exactly the kind
+	// of untrustworthy signal Q1's shadow-mode measurement depends on being
+	// real. e.Tool is still built for these kinds above, for investigation.
+	if e.Kind == event.KindToolPre || e.Kind == event.KindToolPost {
+		bits := r2.ClassifyTool(r2.ToolInput{
+			ToolName:       t.Name,
+			Paths:          t.Paths,
+			Bash:           t.Bash,
+			MCP:            t.MCP,
+			SecretHitCount: len(t.InputFeatures.SecretHits),
+			WebUntrusted:   c.webUntrusted(t.Name, t.InputFeatures),
+		})
+		e.R2 = st.setR2Bits(bits, e.EventID)
+	}
+}
+
+// webUntrusted reports whether a WebFetch/WebSearch result's domain is not on
+// the operator's trusted-content list — Rule-of-Two bit A's first bullet.
+//
+// An empty Domains set (WebSearch typically carries no URL to extract one
+// from; a WebFetch whose target didn't match the extractor's regex) is
+// treated as untrusted: an unverifiable domain gets the same conservative
+// default as an unclassified MCP server, not the benefit of the doubt.
+func (c *Collector) webUntrusted(toolName string, f *event.Features) bool {
+	if toolName != "WebFetch" && toolName != "WebSearch" {
+		return false
+	}
+	if f == nil || len(f.Domains) == 0 {
+		return true
+	}
+	for _, d := range f.Domains {
+		if !c.webDomainTrust[d] {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Collector) fillConfig(e *event.Event, p *hook.Payload, st *sessionState) {
@@ -313,6 +410,14 @@ func (c *Collector) fillConfig(e *event.Event, p *hook.Payload, st *sessionState
 		ci.Trusted = c.isTrustedRepoPath(path) && ci.Zone != event.ZoneUntrusted
 	}
 	e.Config = ci
+
+	// Rule-of-Two bit A, fourth bullet: only InstructionsLoaded is an ingest
+	// event here. ConfigChange and FileChanged are D6/D8 signals about the
+	// endpoint's own configuration, not content the agent reads as context, so
+	// they contribute nothing to R2.
+	if e.Kind == event.KindInstructionsLoaded {
+		e.R2 = st.setR2Bits(r2.ClassifyInstructionsLoaded(ci.Trusted), e.EventID)
+	}
 }
 
 // isTrustedRepoPath reports whether an instruction file came from a trusted
@@ -327,6 +432,30 @@ func (c *Collector) isTrustedRepoPath(path string) bool {
 	return false
 }
 
+// session finds or creates the state for p's session_id.
+//
+// This is the concrete answer this codebase gives to half of
+// docs/07-open-questions.md Q1's subagent question, and it costs no extra
+// code: Claude Code gives a subagent the SAME top-level session_id as its
+// parent, distinguished only by agent_id/agent_type (code.claude.com/docs/en/hooks,
+// "the input carries the agent_id and agent_type... that identify the
+// subagent" — no separate parent-session field is documented). Keying
+// sessionState on session_id alone therefore means a subagent's tool calls
+// accumulate into, and read from, the exact same Rule-of-Two bits as its
+// parent — Q1's "default to inheriting (conservative)" recommendation,
+// achieved by construction rather than by a parent-bits-copy this function
+// would otherwise need to implement and get wrong.
+//
+// The other half of Q1 — a new session_id — is a genuine reset under this
+// scheme, for ALL three bits, not just bit A. `/clear` is reported to call
+// regenerateSessionId() without re-firing SessionStart (anthropics/claude-code
+// issue #70606; not primary documentation, see docs/00-sources.md), so the
+// first post-/clear event lands on a fresh, empty sessionState here. Q1 flags
+// exactly this as unsound for bits B and C — the credential already read or
+// the tool already reachable does not actually reset just because the context
+// did — and this implementation does not solve that; it is the behavior
+// shadow mode needs to measure the cost of before Q1 can be answered rather
+// than assumed.
 func (c *Collector) session(p *hook.Payload) *sessionState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
