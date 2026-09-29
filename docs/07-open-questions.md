@@ -165,7 +165,7 @@ start.
 **Recommendation:** Claude Code only through M3, with the schema left agent-agnostic
 so adapters are additive. Do not build adapters speculatively.
 
-## Q6 — Is the goal-drift scorer worth its cost?
+## Q6 — Is the goal-drift scorer worth its cost? *(refined against SHADE-Arena's public split; still open ahead of M4)*
 
 Layer 3 runs a model on a large fraction of tool calls. At fleet scale — the
 [04](04-data-model.md) estimate is ~126k tool calls/day for 63 agents — that is a
@@ -175,10 +175,22 @@ Unresolved: sample rate versus full coverage; which model; whether a cheap
 deterministic pre-filter (only score actions that set an R2 bit or carry a
 provenance edge) captures most of the value at a fraction of the cost.
 
-**Recommendation:** pre-filter. Score only actions that already tripped a
-deterministic or provenance signal. This loses the pure-decomposition case where no
-individual action trips anything, which is exactly the A4 threat, so measure that
-loss on SHADE-Arena before accepting it.
+**Recommendation, refined with evidence in [11](11-goal-drift-prefilter-evaluation.md):
+pre-filter, but key it to the action's own R2 bits, never to `sessionState`'s
+`Transition` field.** Checked by hand against all five of SHADE-Arena's publicly
+released task pairs and `internal/r2`'s actual classification rules: every side
+task's terminal action is a call to a non-internal MCP-shaped tool (booking, payment,
+email), which `ClassifyTool`'s fallback rule sets A and C for unconditionally — so the
+pre-filter does not skip any of the five, *provided* it checks each action's own
+`ClassifyTool(...).Any()` rather than the session-level `Transition` flag, which would
+silently skip every repeat of an already-tripped bit (the sixteenth flight booking,
+the tenth bank transfer) and gut coverage for exactly this pattern. The sharper
+finding: the actual risk surface is operator `TrustedMCPServers` classification, not
+the pre-filter's design — a same-vendor admin tool (`spam_filter_update`'s mail-rule
+manager) marked `internal` to cut noise loses R2 and goal-drift coverage identically,
+pre-filter or not. Still open: the twelve SHADE-Arena task pairs withheld to prevent
+contamination, and the literal `ambitd` replay harness [05](05-build-plan.md) scopes
+to M4 — this evaluation narrows the implementation, it is not that measurement.
 
 ## Q7 — Fail-closed set membership.
 
