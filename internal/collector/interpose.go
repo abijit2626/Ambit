@@ -15,7 +15,7 @@ import (
 // label from operator configuration, and the Wazuh verdict. The interposer runs as
 // the developer, as a child of the agent process, and giving a process inside that
 // blast radius any of those would defeat the point of the split. See
-// docs/08-mcp-interpose-decision.md.
+// docs/05-mcp-interpose-decision.md.
 //
 // One report becomes a per-server summary event plus one event per tool. The
 // summary always crosses to Wazuh; the per-tool events cross only when they say
@@ -73,7 +73,7 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 			// what makes tool identity survive interposition: a Wazuh rule can
 			// correlate this listing against the calls that follow, and a
 			// managed-settings permission rule still names the same tool. The
-			// gateways evaluated in docs/08 broke exactly this.
+			// gateways evaluated in docs/05 broke exactly this.
 			Name: mcpToolName(rep.Server, t.Tool),
 			MCP: &event.MCP{
 				Server:           rep.Server,

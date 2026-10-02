@@ -5,9 +5,13 @@ endpoint half is `ambitd` (see the repository root README).
 
 **Version:** everything here targets **Wazuh 4.x**, whose XML ruleset and the
 `frequency`/`timeframe`/`if_matched_sid`/`same_field` primitives this design leans
-on are verified in `docs/00-sources.md`. Wazuh 5.0 migrates decoders and rules to
-YAML with an ECS-normalized schema, which would require reworking the rules — see
-`docs/07-open-questions.md` Q12.
+on. **Wazuh 5.x is not supported.** Its rule format does not rename those
+correlation primitives, it does not support them: detection moved to a separate
+OpenSearch plugin that evaluates Sigma YAML, and no replacement correlation
+mechanism ships yet, so D2, D10's tripwire and D11 have no migration path today.
+Its rule fields are also validated against a closed schema, so the
+zero-custom-decoder approach used here would first need a purpose-built decoder.
+Revisit if Wazuh ships a correlation mechanism for 5.x.
 
 ## Files
 
@@ -112,8 +116,8 @@ fired anywhere:
 **One behavior to confirm here rather than assume.** `mcp_changed_fields` and
 `mcp_scan_classes` are JSON arrays of strings. Arrays of scalars are supported by the
 decoder, but *how* a `<field>` regex matches a multi-valued field — against each value,
-or against one joined string — was not verified during research
-(`docs/00-sources.md`). Rules 100241–100247 therefore match array contents with
+or against one joined string — was not verified against a live
+manager. Rules 100241–100247 therefore match array contents with
 **unanchored literals**, which work under either behavior, and `rules_test.go` fails the
 build if anyone anchors one. Confirm with step 2 before relying on those rules; if
 neither form matches, the fix is in the rules, not in the interposer.

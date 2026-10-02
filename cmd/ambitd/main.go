@@ -5,7 +5,7 @@
 // slice to a file the Wazuh agent tails. It returns no decision to Claude Code,
 // so no session behaves differently for its presence. That is the milestone's
 // whole point — a baseline cannot be measured from a system that is already
-// changing behavior. See docs/05-build-plan.md.
+// changing behavior. See the Roadmap in README.md.
 package main
 
 import (

@@ -80,7 +80,7 @@ type Config struct {
 	// domain not listed here is untrusted, matching the safe-default posture
 	// of TrustedMCPServers and TrustedRepoPaths: absence of classification
 	// makes an event interesting, never the reverse. See docs/03-detection.md
-	// Layer 1 and docs/07-open-questions.md Q1.
+	// Layer 1.
 	TrustedContentDomains []string `json:"trusted_content_domains"`
 
 	// SampleRate is the fraction of uninteresting tool events that cross anyway,

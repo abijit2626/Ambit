@@ -31,7 +31,7 @@ cross-endpoint correlation is a Wazuh rule.
 | D7 telemetry gap | **Wazuh** | Wazuh rule 504 + absence rule | Native agent-disconnect; absence rule for the finer half |
 | D8 poisoned instruction file | ambitd emits | Wazuh rule | From `InstructionsLoaded` |
 | D9 egress anomaly | ambitd + sandbox denials | Wazuh rule | Baselining is cross-event |
-| D10 cross-session propagation | **Wazuh rule** (partial) | Wazuh | See [the D10 investigation](#d10-can-wazuh-rules-do-cross-session-propagation) |
+| D10 cross-session propagation | **Wazuh rule** (partial) | Wazuh | See [the D10 investigation](#d10--can-wazuh-rules-do-cross-session-propagation) |
 | D11 fail-open run | ambitd emits | **Wazuh rule** | `frequency` + `timeframe` |
 | D12 managed-settings drift | **Wazuh SCA** | Wazuh | Policy-as-YAML, native |
 | Goal drift | **ambitd**, async | Wazuh rule on score | Needs the declared objective and action history |
@@ -48,15 +48,15 @@ requires at minimum human-in-the-loop supervision.
 Everything needed is in the hook stream. Lives in `ambitd` because the bits are
 live session state and the gate must return inline.
 
-Three bits per session, monotonically set (never cleared within a session — see
-[07](07-open-questions.md) Q1).
+Three bits per session, monotonically set (never cleared within a session; see the
+honest limitation below).
 
 **Implemented, in shadow mode.** `internal/r2` classifies each event against the
 bullets below in isolation; `internal/collector`'s `sessionState` accumulates the
-bits monotonically, keyed on session_id, per Q1's option 1. This is instrumentation
+bits monotonically, keyed on session_id, the simplest scoping there is. This is instrumentation
 only — the gate table further down is not built, `policy_decision` stays empty, and
 nothing about a session's behavior changes. The point is to let a real cohort's
-usage answer Q1's "how fast does an 8-hour session saturate" question with data
+usage answer how fast a long session saturates to all three bits with data
 instead of argument.
 
 Two things this surfaced, worth stating rather than only in code comments:
@@ -65,16 +65,15 @@ Two things this surfaced, worth stating rather than only in code comments:
   the same top-level session_id as its parent, distinguished only by
   `agent_id`/`agent_type` (code.claude.com/docs/en/hooks). Keying `sessionState` on
   session_id alone means a subagent's tool calls read and write the exact same bits
-  as its parent, which is Q1's "default to inheriting (conservative)"
-  recommendation, achieved by the session-id keying rather than by a separate
-  parent-bits-copy.
+  as its parent: inheriting is the conservative default, achieved by the
+  session-id keying rather than by a separate parent-bits-copy.
 - **A new session_id is a genuine reset, for all three bits, not just A.** `/clear`
   is reported to regenerate the session_id without re-firing `SessionStart`
-  (`anthropics/claude-code` issue #70606 — not primary documentation; see
-  [00](00-sources.md)), so the first post-`/clear` event lands on an empty
-  `sessionState`. Q1 already flags this as unsound for B and C specifically — the
-  credential already read or the tool already reachable does not actually reset —
-  and this implementation does not solve that. It is the behavior shadow mode needs
+  (`anthropics/claude-code` issue #70606 — a community report, not primary
+  documentation), so the first post-`/clear` event lands on an empty
+  `sessionState`. That is unsound for B and C specifically — the credential already
+  read or the tool already reachable does not actually reset — and this
+  implementation does not solve it. It is the behavior shadow mode needs
   to measure the cost of.
 
 **Bit A — untrusted input ingested.** Set by:
@@ -117,13 +116,30 @@ Two things this surfaced, worth stating rather than only in code comments:
 | Everything else | `allow` + alert |
 
 Start all of these at `ask` or `allow`+alert and promote to `deny` only with
-baseline data ([05](05-build-plan.md)).
+baseline data (observe before enforce; see the Roadmap in the README).
 
 **Honest limitation.** The rule is stated over a session, and "session" is doing
 real work in that sentence. Compaction, `/clear`, subagents, and long-running
 sessions all make the boundary ambiguous, and a monotonic bit over an 8-hour session
 saturates to all-three and gates everything. Biggest open design problem in the
-system; [07](07-open-questions.md) Q1.
+system.
+
+Candidate scopings, to be chosen from shadow-mode data rather than argument:
+
+1. **Monotonic per session** — the current implementation. Provably conservative;
+   almost certainly unusable on long sessions.
+2. **Decay** — bits expire after N turns or M minutes without reinforcement. Tunable,
+   but the constant has no principled basis and an attacker who knows the window waits
+   it out.
+3. **Per-prompt-turn windows** keyed on `prompt_id`. Matches the natural unit of work
+   and the observation that most injection-to-action sequences are short; loses slow
+   attacks that span turns.
+4. **Per-ingest scoping** — bind each provenance ingest to a decaying relevance and
+   evaluate C-actions against *live* ingests. Most faithful to what the rule
+   expresses; most complex.
+
+Clearing bit A on compaction is unsound (a summary can carry the injected
+instruction), and not clearing it is what makes long sessions saturate.
 
 ## Layer 2 — Provenance
 
@@ -225,8 +241,7 @@ security boundary. And "unrelated to the stated objective" describes a great dea
 legitimate engineering — reading unrelated files to understand a codebase, fixing an
 unrelated broken test. Expect noise; budget for tuning.
 
-**Implementation note for the cost pre-filter ([07](07-open-questions.md) Q6,
-evidence in [11](11-goal-drift-prefilter-evaluation.md)):** if scoring is gated to
+**Implementation note for the cost pre-filter:** if scoring is gated to
 actions that already carry an R2 signal, gate it on that event's own
 `r2.ClassifyTool(...).Any()`, never on `sessionState`'s `Transition` field.
 `Transition` is correct for `internal/filter`'s alerting use (new-to-this-session, so
@@ -316,7 +331,7 @@ engine rather than chosen:
    its approved baseline would otherwise spend 60 events per session saying so. The
    filter drops the quiet ones; the spool keeps them.
 3. **Array-valued fields are matched with unanchored literals.** How a `<field>` regex
-   matches a multi-valued field is unverified ([00](00-sources.md)), and an unanchored
+   matches a multi-valued field is unverified, and an unanchored
    literal is the form that works under either behavior. A test fails the build if
    anyone anchors one.
 

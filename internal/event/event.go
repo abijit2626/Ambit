@@ -62,7 +62,7 @@ const (
 
 // Decision is a policy verdict. In M0 the policy engine does not exist and
 // every event carries DecisionNone: ambitd is observe-only and must not change
-// how any session behaves. See docs/05-build-plan.md M0.
+// how any session behaves. See the Roadmap in README.md.
 type Decision string
 
 const (

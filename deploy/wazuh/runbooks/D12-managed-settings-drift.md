@@ -29,8 +29,8 @@ and protocol are pinned (10006, 10008), and ambitd is running (10007 — that on
 ## What it does not assert
 
 - **The parent SID and the `sca.*` field names are unverified.** These rules chain from SCA alert
-  rule 19007 and read `sca.policy_id`; neither was confirmed against the deployed ruleset
-  (`docs/00-sources.md`). **If you have never seen a D12 alert on an endpoint where managed
+  rule 19007 and read `sca.policy_id`; neither was confirmed against the deployed ruleset.
+  **If you have never seen a D12 alert on an endpoint where managed
   settings were demonstrably wrong, suspect the wiring before concluding the fleet is compliant.**
   A wrong parent does not error; the rule silently never fires.
 - **SCA matches file text, not JSON semantics.** The checks are regexes over the settings file.
