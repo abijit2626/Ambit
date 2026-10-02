@@ -62,7 +62,7 @@ func TestClassifyTool_UnknownZoneReadSetsNothing(t *testing.T) {
 
 func TestClassifyTool_HomeReadSetsB(t *testing.T) {
 	// Literal reading of "outside the working-directory boundary" per docs/03 —
-	// deliberately broad, and the reason Q1 exists to measure the cost of it.
+	// deliberately broad, and the reason shadow mode exists: to measure the cost of it.
 	got := ClassifyTool(ToolInput{
 		Paths: []event.PathRef{{Zone: event.ZoneHome, Op: "read"}},
 	})

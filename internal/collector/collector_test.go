@@ -321,7 +321,7 @@ func TestM0EmitsNoDecision(t *testing.T) {
 	if d, present := pol["decision"]; present && d != "" {
 		t.Errorf("policy.decision = %v, want empty: no policy engine exists before M3", d)
 	}
-	// Rule-of-Two accounting DOES run (docs/07 Q1's shadow-mode instrument): a
+	// Rule-of-Two accounting DOES run (the shadow-mode instrument, docs/03): a
 	// credential-path read sets bit B. What must stay false is C — nothing about
 	// reading a file is a state change or external communication.
 	r2 := m["r2"].(map[string]any)
@@ -451,7 +451,7 @@ func TestUntrustedZoneOverridesTrustedRepoPrefix(t *testing.T) {
 	}
 }
 
-// --- Rule-of-Two accounting (docs/07 Q1's shadow-mode instrument) ---
+// --- Rule-of-Two accounting (the shadow-mode instrument, docs/03) ---
 
 func r2Of(t *testing.T, traj *memSink, i int) map[string]any {
 	t.Helper()
@@ -655,7 +655,7 @@ func TestR2WebSearchAlwaysUntrusted(t *testing.T) {
 }
 
 // TestR2SubagentSharesParentSessionBits is the concrete resolution this
-// codebase gives to half of Q1's subagent question: Claude Code gives a
+// codebase gives to the subagent question: Claude Code gives a
 // subagent the same session_id as its parent, so keying sessionState on
 // session_id alone means the subagent's tool calls see the parent's
 // already-set bits with no separate propagation step.
@@ -684,11 +684,11 @@ func TestR2SubagentSharesParentSessionBits(t *testing.T) {
 	}
 }
 
-// TestR2NewSessionIDStartsClean documents the other half of Q1: a session_id
+// TestR2NewSessionIDStartsClean documents the other half of that question: a session_id
 // ambitd has not seen before gets a fresh sessionState with all three bits
 // unset, whether that is a genuinely new Claude Code session or -- per the
 // evidence cited on (c *Collector) session -- the first event after /clear.
-// This is the behavior Q1 flags as unsound for B and C specifically; this
+// This is the behavior flagged as unsound for B and C specifically; this
 // test pins what the code actually does today, not that the behavior is right.
 func TestR2NewSessionIDStartsClean(t *testing.T) {
 	c, _, traj := newTestCollector(t)

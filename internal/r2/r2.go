@@ -6,16 +6,16 @@
 // This package answers "what does this one event contribute", nothing more.
 // It does not accumulate bits across a session, and it does not decide what a
 // "session" is for that accumulation — that is internal/collector's
-// sessionState and docs/07-open-questions.md Q1's open question,
+// sessionState and the open session-scoping question in docs/03-detection.md,
 // respectively. The split is deliberate: these rules should be testable
-// without a fake session, and a future change to session scoping (Q1 options
-// 3 or 4, chosen from the shadow-mode data this package's output feeds) should
-// touch the accumulator, never these classification rules.
+// without a fake session, and a future change to session scoping (per-turn or
+// per-ingest windows, chosen from the shadow-mode data this package's output
+// feeds) should touch the accumulator, never these classification rules.
 //
 // Every rule here mirrors one bullet in docs/03-detection.md's Layer 1,
 // deliberately literally rather than narrowed by judgment calls this package
 // has no business making — including the ones that read as overly broad on a
-// long session. That breadth is the known problem Q1 exists to solve with
+// long session. That breadth is the known problem shadow mode exists to solve with
 // measured data, not something to paper over here.
 //
 // Two of docs/03's bullets are not implemented, and are not silently dropped:

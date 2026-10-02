@@ -34,7 +34,7 @@ Four signals, from three different places on purpose:
 - **Absence is not alertable.** No rule here fires on "no heartbeat for N minutes", because a
   rule engine fires on events. 100314 is the substitute, and it runs on the SCA schedule rather
   than continuously — so there is a detection window equal to that interval.
-- **The SCA parent SID and field names are unverified** (`docs/00-sources.md`). If 100314 has
+- **The SCA parent SID and field names are unverified**. If 100314 has
   never fired on an endpoint where ambitd demonstrably stopped, suspect the wiring.
 - **Both streams quiet is an idle endpoint, not a discrepancy.** The comparison ambitd makes is
   deliberately "exactly one silent", not a ratio: the hook and OTel paths legitimately see

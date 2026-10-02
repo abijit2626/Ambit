@@ -21,7 +21,7 @@
 // precedence. The store lives under the ambit directory so Wazuh FIM can watch it
 // (deploy/wazuh/ossec-syscheck.xml), which turns a silent rewrite into a D6 event.
 // A stronger answer — approval held off the endpoint — is an M3 question tied to
-// docs/07-open-questions.md Q8 on bundle signing.
+// policy bundle signing (docs/02-architecture.md).
 package baseline
 
 import (

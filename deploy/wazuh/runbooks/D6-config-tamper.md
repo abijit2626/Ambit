@@ -39,7 +39,7 @@ doing the editing.
 
 - **The FIM parent SIDs and field names are unverified.** Rules 100254–100256 chain from
   syscheck rule IDs 550/553/554 and read `file` and `syscheck.audit.*`. Those values were not
-  confirmed against the deployed ruleset (`docs/00-sources.md`). A wrong parent does not
+  confirmed against the deployed ruleset. A wrong parent does not
   error — the rule silently never fires. If you have never seen one of these alerts on an
   endpoint where settings demonstrably changed, suspect the wiring rather than the endpoint.
 - **In-session changes are ordinary.** Developers edit their own settings. 100250 is level 7

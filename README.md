@@ -68,8 +68,7 @@ custom rules at ID ≥ 100000, each with a runbook.
 Claude Code already ships a strong *preventive* layer: an OS-enforced Bash sandbox with
 filesystem and network isolation, an egress allowlist with managed lockdown, credential
 masking with proxy-side injection, deny rules that managed settings pin above every
-other scope, and 33 hook events that can block a tool call before it runs. See
-[docs/06-prior-art.md](docs/06-prior-art.md).
+other scope, and 33 hook events that can block a tool call before it runs.
 
 What does not exist, and is therefore what this repo designs:
 
@@ -87,22 +86,17 @@ What does not exist, and is therefore what this repo designs:
 The system is a **consumer and configurator of Claude Code's primitives and Wazuh's
 platform, not a replacement for either.**
 
-## Documents
+## Documentation
 
 | Doc | Contents |
 | --- | --- |
-| [00-sources.md](docs/00-sources.md) | Every claim with primary / secondary / unverified status |
 | [01-threat-model.md](docs/01-threat-model.md) | Five adversaries, assets, trust assumptions, the MSSP egress posture, residual risk |
-| [02-architecture.md](docs/02-architecture.md) | `ambitd`, `mcp-interpose`, Wazuh; interception points; FIM and SCA config; trust boundaries; latency and failure modes |
+| [02-architecture.md](docs/02-architecture.md) | `ambitd`, `mcp-interpose`, Wazuh; interception points; FIM and SCA config; trust boundaries; latency and failure modes; tenancy |
 | [03-detection.md](docs/03-detection.md) | Three detection layers, the ambitd/Wazuh split, rule snippets, D1–D12, ATT&CK mappings, runbook requirements |
 | [04-data-model.md](docs/04-data-model.md) | Rich internal schema, flattened SIEM-bound schema, the mapping and what it loses, what crosses to Wazuh, split retention |
-| [05-build-plan.md](docs/05-build-plan.md) | M0–M5, what adopting Wazuh deletes, enforcement sequenced after a measured baseline |
-| [06-prior-art.md](docs/06-prior-art.md) | What already exists, reuse decisions, ten non-goals |
-| [07-open-questions.md](docs/07-open-questions.md) | Thirteen decisions, four resolved; Q11 (tenancy) blocks MSSP onboarding |
-| [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md) | Q2 resolved: why `mcp-interpose` is purpose-built rather than adopted, with the evaluation evidence |
-| [09-adrian-evaluation.md](docs/09-adrian-evaluation.md) | Q13 resolved: why Adrian doesn't cover M1/M2, and the one finding that changes how the comparison reads |
-| [10-wazuh5-migration.md](docs/10-wazuh5-migration.md) | Q12 resolved: 5.0's rule engine has no home for `frequency`/`same_field`/`if_matched_sid`, evaluated against the actual 5.0.0-beta5 source |
-| [11-goal-drift-prefilter-evaluation.md](docs/11-goal-drift-prefilter-evaluation.md) | Q6 refined: the Layer 3 pre-filter holds against SHADE-Arena's public task pairs, keyed to an action's own R2 bits rather than a session transition |
+| [05-mcp-interpose-decision.md](docs/05-mcp-interpose-decision.md) | Why `mcp-interpose` is purpose-built rather than adopted, with the evaluation evidence |
+| [deploy/wazuh/README.md](deploy/wazuh/README.md) | Wazuh rules, SCA policy, FIM and localfile config, install and verification steps |
+| [deploy/wazuh/runbooks/](deploy/wazuh/runbooks/) | One runbook per detector, written for an analyst with no access to our source |
 
 ## Third-party monitoring
 
@@ -116,13 +110,14 @@ handing over a map of our source tree. Digest resolution runs on our side on req
 and **every runbook must be written for an analyst who cannot see our source tree.**
 
 These are policy controls resting on Wazuh RBAC, agent groups, and index-level
-restrictions — and Wazuh's multi-tenancy is thin. Until
-[Q11](docs/07-open-questions.md) is settled they are intentions, not enforced
-guarantees, and the docs say so rather than claiming coverage.
+restrictions — and Wazuh's multi-tenancy is thin. Until the
+[tenancy model](docs/02-architecture.md#tenancy-for-third-party-monitoring) is settled
+they are intentions, not enforced guarantees, and the docs say so rather than
+claiming coverage.
 
 ## Code
 
-M0 is implemented: `ambitd` is **observe-only**. It receives Claude Code hook
+`ambitd` is **observe-only** (M0; see the Roadmap below). It receives Claude Code hook
 events, normalizes them, writes the full trajectory to a local spool and the
 filtered security-relevant slice to a file the Wazuh agent tails. It returns no
 decision, so no session behaves differently for its presence — that is the
@@ -134,7 +129,7 @@ cmd/ambitd/              the endpoint daemon
 cmd/mcp-interpose/       the MCP interposer: one per server, in front of it
 internal/event/          rich internal schema + flattened SIEM-bound schema
 internal/classify/       path zone and bash command classification
-internal/r2/             Rule-of-Two bit classification (shadow mode; see docs/07 Q1)
+internal/r2/             Rule-of-Two bit classification (shadow mode; see docs/03-detection.md)
 internal/features/       keyed fingerprint extraction
 internal/redact/         secret detection and stripping at the edge
 internal/filter/         what crosses to Wazuh
@@ -184,7 +179,7 @@ mcp-interpose -server github -approve   # the explicit operator step D4 compares
 mcp-interpose -server github -revoke    # withdraw approval after an incident
 ```
 
-Three properties the tests enforce, each because getting it wrong is silent:
+Properties the tests enforce, each because getting it wrong is silent:
 
 - **`ambitd` is inert.** Every hook response is `{}`. An empty response means no
   opinion, so Claude Code's permission pipeline behaves as if no hook were
@@ -211,55 +206,88 @@ Three properties the tests enforce, each because getting it wrong is silent:
   goes silent. "Configured but never received" is the failure mode that would
   otherwise hide.
 
-## Status
+## Roadmap
 
-fraction** — are still open.
+Observe before enforce. A `PreToolUse` deny sits in the critical path of every tool
+call on every endpoint, and a false deny stops a developer mid-task, fleet-wide and
+simultaneously. So M0 and M1 cannot block; enforcement begins at M3 at `ask` rather
+than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed evidence
+(at least two weeks at `ask`).
 
-From M1, the **endpoint half is built**: `mcp-interpose` implements D4 (metadata
-hashing against an approved baseline, with an explicit operator approval step) and D5
-(instruction-shaped metadata and cross-server references), carries MCP annotations
-stricter-only, and emits `mcp_list` events through `ambitd`. The **Wazuh half of M1 is also written**: rules for
-all twelve detectors (IDs 100200–100319, six files) with a runbook each, validated offline
-by `go test` against fixtures generated from the real pipeline rather than hand-written.
+| Milestone | Scope | State |
+| --- | --- | --- |
+| **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Not yet deployed to a cohort. |
+| **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policy. | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. |
+| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`): it records bits, with no gate, no alert and no change to session behavior. The provenance engine, shadow verdicts and replay harness are not built. |
+| **M3 Enforce** | Policy engine, signed policy bundles, split fail policy, containment-only active response. | Design only. |
+| **M4 Goal drift** | Async scoring of actions against the stated objective. | Design only. |
+| **M5 Fleet correlation** | Cross-session fingerprint set intersection; session-shape analysis. | Design only. |
 
-Three of those rules are inert and marked as such rather than shipped as if they worked —
-`agent_entrypoint` has no emitter anywhere, MCP annotations do not reach tool-call events,
-and the policy engine that sets `policy_decision` is M3. Sandbox allowlist denials have no
-schema field at all. [03-detection.md](docs/03-detection.md) records all four.
+Exit criteria gate each milestone. **M0:** a 5–10 endpoint volunteer cohort; p99 hook
+response under 5 ms; zero developer-visible behavior change, verified by asking; local
+spool event loss under 0.1%; the share of tool calls that cross to Wazuh measured
+(design estimate 2–5%; `./scripts/dev-local.sh --status` reports it); and no
+`Too many fields for JSON decoder` errors in the manager log. **M1:** every MCP server
+the cohort uses inventoried with an approved baseline; a deliberately mutated server
+triggers D4 within a session; killing `ambitd` fires D7 and stopping the Wazuh agent
+fires rule 504; reverting a managed-settings key fires D12; and someone outside the
+team executes a runbook against a sample alert.
 
-What M1 still needs is the MCP inventory across a real cohort, confirmation on a live
-manager of three things that fail silently (the syscheck and SCA parent SIDs, and how a
-rule matches an array-valued field), and the exit criterion that actually tests a runbook:
-someone outside the team executing one against a sample alert. Two limits are stated in
-the code and in [02-architecture.md](docs/02-architecture.md) rather than implied: a
-stdio wrapper does not cover MCP servers reached over HTTP/SSE, and `mcp_list` events
-usually carry no session id because MCP does not carry one. M2 onward is design only,
-with one exception: Q1's Rule-of-Two bit accounting (`internal/r2`) is built and
-running in shadow mode ahead of M2 proper, specifically to start gathering the
-saturation data that question needs — see
-[07-open-questions.md](docs/07-open-questions.md) Q1. It computes and records bits
-only; no gate, no alert, no change to session behavior.
+## Known limitations
 
-Nothing here is final —
-[07-open-questions.md](docs/07-open-questions.md) lists what still needs deciding, and
-five of the thirteen are blocking. Q2 (build vs. adopt for the MCP interposer) is now
-decided — [08-mcp-interpose-decision.md](docs/08-mcp-interpose-decision.md). Q13
-(evaluate Adrian before M1) is decided —
-[09-adrian-evaluation.md](docs/09-adrian-evaluation.md): build continues, the overlap
-does not fit. Q12 (target Wazuh 4.x or 5.x) is decided —
-[10-wazuh5-migration.md](docs/10-wazuh5-migration.md): stay on 4.x, since 5.0's rule
-engine has no shipped mechanism for the correlation primitives D2, D10 and D11 depend
-on. Q6 (is the goal-drift pre-filter safe) is refined with evidence, still open ahead
-of M4 — [11-goal-drift-prefilter-evaluation.md](docs/11-goal-drift-prefilter-evaluation.md):
-the pre-filter holds against SHADE-Arena's public task pairs as long as it keys on an
-action's own R2 bits, never on a session-level transition.
+- **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
+  `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
+  and validates rule fields against a closed schema. See
+  [deploy/wazuh/README.md](deploy/wazuh/README.md).
+- **Third-party monitoring restrictions are intentions until a tenancy model is chosen
+  and tested.** They rest on Wazuh RBAC, agent groups and index restrictions. See
+  [docs/02-architecture.md](docs/02-architecture.md#tenancy-for-third-party-monitoring).
+- **Three rules are inert and marked as such**, rather than shipped as if they worked:
+  `agent_entrypoint` has no emitter, MCP annotations do not reach tool-call events, and
+  the policy engine that sets `policy_decision` is M3. Sandbox allowlist denials have no
+  schema field at all. [docs/03-detection.md](docs/03-detection.md) records all four.
+- **Three Wazuh behaviors are unconfirmed on a live manager and fail silently when
+  wrong:** the syscheck parent SIDs, the SCA parent SID, and how a `<field>` regex
+  matches an array-valued field. Confirm them on the deployed version before relying on
+  the rules that use them.
+- **MCP coverage is stdio only.** `mcp-interpose` is a stdio wrapper and does not cover
+  servers reached over HTTP/SSE. `mcp_list` events usually carry no session id, because
+  MCP does not carry one.
+- **Rule-of-Two session scoping is unresolved.** Bits are monotonic per session. A
+  session that runs long saturates to all three, and `/clear` is reported to start a new
+  session id, which would reset bits B and C that should not reset. Shadow mode exists
+  to measure both. See [docs/03-detection.md](docs/03-detection.md).
+- **The goal-drift pre-filter must key on an action's own Rule-of-Two bits**, never on a
+  session-level transition, or it skips every repeat of an already-tripped bit.
+  Operator `TrustedMCPServers` classification is the larger coverage risk: marking a
+  same-vendor admin tool `internal` removes it from Rule-of-Two and goal-drift coverage.
 
-## Sourcing note
+## Non-goals
 
-Claude Code's hooks, permissions, sandboxing, telemetry, and managed settings were
-verified against the official documentation at `code.claude.com`. Wazuh specifics —
-rule syntax, JSON decoder constraints, FIM, SCA, agent-disconnect alerting, archiving
-— were verified against the Wazuh 4.x documentation source and shipped ruleset, since
-`documentation.wazuh.com` is unreachable from this environment; each claim's status is
-recorded in [00-sources.md](docs/00-sources.md). Claims that rest on secondary sources
-or post-May-2026 publications are marked *(unverified)* where they appear.
+Out of scope, so nobody builds them by accident:
+
+1. **A sandbox.** Claude Code's is OS-enforced and better than anything written here.
+2. **An egress proxy or allowlist engine.** Claude Code has one, with managed lockdown.
+3. **A credential vault or masking layer.** Claude Code has one.
+4. **A prompt-injection classifier as the primary defense.** Architecture and
+   blast-radius reduction over filtering; a classifier may be one weak signal, never the
+   boundary.
+5. **A static MCP scanner.** Runtime baseline diffing is a different thing.
+6. **An eval harness.** AgentDojo, SHADE-Arena and ControlArena are the regression suite.
+7. **Model-level alignment or sabotage evaluation.** This monitors deployed agents under
+   the assumption that the model is hijacked, not scheming.
+8. **Blocking on reasoning content.** Chain-of-thought monitoring is the fragile signal;
+   actions are monitored instead.
+9. **SIEM functionality.** Wazuh is the event store, retention engine, alert router and
+   review queue. The one exception is the local spool, which exists because the full
+   trajectory must not go to the indexer.
+10. **A custom Wazuh decoder.** The built-in JSON decoder gives addressable fields from
+    `log_format json`; the flattened schema exists so that it suffices.
+
+## Verification
+
+Claude Code's hooks, permissions, sandboxing, telemetry and managed settings were
+checked against the official documentation at `code.claude.com`. Wazuh specifics — rule
+syntax, JSON decoder constraints, FIM, SCA, agent-disconnect alerting — were checked
+against the Wazuh 4.x documentation source and shipped ruleset. Anything not confirmed
+is marked *unverified* in the rules, runbooks and docs where it matters.

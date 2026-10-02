@@ -62,8 +62,8 @@ expected to produce false positives:
   returning prompts will contain "you are a…" as data.
 - **It does not assert the agent was influenced.** Detection happens at advertisement.
   Whether any model output changed is not observable here, and this system does not
-  claim it is: docs/06-prior-art.md lists a prompt-injection classifier as an explicit
-  non-goal, and these patterns are one weak signal, never a boundary. Nothing was
+  claim it is: a prompt-injection classifier is an explicit non-goal of this system,
+  and these patterns are one weak signal, never a boundary. Nothing was
   blocked.
 - **The patterns are a first draft.** Every finding carries a stable pattern id on the
   endpoint precisely so a noisy pattern can be retired on measured evidence during M1.

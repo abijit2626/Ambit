@@ -20,7 +20,7 @@
   UNVERIFIED PARENT SIDs. The syscheck parents (550 checksum changed, 553 deleted, 554
   added) and the SCA parent (19007) are the widely used values, but they were not read
   from the shipped ruleset during research, and neither were the exact syscheck.* and
-  sca.* field names (docs/00-sources.md). Confirm all of them on the deployed version
+  sca.* field names. Confirm all of them on the deployed version
   before relying on these five rules: 100254, 100255, 100256, 100270 and 100271. A wrong
   parent SID does not error — the rule simply never fires.
 -->
