@@ -59,7 +59,7 @@ spools.
   "source": "hook|otel|interpose|ambitd", "schema_v": 2,
 
   "endpoint": { "endpoint_id": "ep_7f3a...", "hostname_digest": "...",
-                "os": "darwin|linux|wsl2", "ambitd_version": "0.3.1" },
+                "os": "darwin|linux|windows", "ambitd_version": "0.3.1" },
   "actor":    { "user_id": "u_1a2b", "org_id": "o_9x8y" },
   "agent":    { "kind": "claude-code", "version": "2.1.271",
                 "entrypoint": "cli|sdk|ci|web", "model": "...",

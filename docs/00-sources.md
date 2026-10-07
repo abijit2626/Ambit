@@ -270,3 +270,36 @@ Carried over from the originating research brief and listed in
 The design does not depend on any of these. It depends on the
 action-monitoring-beats-reasoning-monitoring conclusion, which SHADE-Arena supports
 on its own, and on the documented incidents above.
+
+## Windows support — Claude Code facts are primary; Wazuh-on-Windows behavior is unverified
+
+Read for the Windows port (this repository's native Windows support):
+
+- [Deploy managed settings](https://code.claude.com/docs/en/managed-settings) — **primary.**
+  Managed settings file locations: `/Library/Application Support/ClaudeCode/` (macOS),
+  `/etc/claude-code/` (Linux and WSL), `C:\Program Files\ClaudeCode\` (Windows); Claude Code
+  does not read the legacy `C:\ProgramData` location. Also deliverable as a Windows `HKLM`
+  registry value (`SOFTWARE\Policies\ClaudeCode`, value `Settings`). The `HKCU` equivalent
+  is user-writable and is not an admin source. On WSL, `/etc/claude-code` is user-writable.
+- [Sandboxing](https://code.claude.com/docs/en/sandboxing) — **primary.** "The sandbox runs
+  on macOS, Linux, and WSL2. On native Windows, Claude Code runs commands unsandboxed." This
+  is why the Windows SCA policy omits the sandbox and egress checks.
+- [Hooks reference](https://code.claude.com/docs/en/hooks) — **primary**, for the PowerShell
+  tool: a hook matcher can name `PowerShell` alongside `Bash`, and the script is in
+  `tool_input.command`. The `tool_name` value is inferred from those examples rather than
+  stated outright. Command hooks run in Git Bash on Windows, or PowerShell when Git Bash is
+  absent; `ambitd` uses `type: http` hooks and does not depend on either.
+- [Settings](https://code.claude.com/docs/en/settings) — **primary.** On Windows `~/.claude`
+  means `%USERPROFILE%\.claude`, relocatable with `CLAUDE_CONFIG_DIR`.
+
+**Unverified** — not tested against a live Windows agent, and each fails silently. They are
+listed with their consequences in [deploy/wazuh/README.md](../deploy/wazuh/README.md#windows-agents):
+FIM wildcard expansion in `C:\Users\*\...`, `log_format json` across a rotation by rename,
+SCA `f:` and `c:` rule behavior on Windows, `whodata` availability, and the case in which
+Windows syscheck reports a path.
+
+What *was* verified on a real Windows host, by the `windows` job in
+`.github/workflows/check.yml`: that the Go packages vet and pass their tests (including the
+directory-ACL tests and the interposer end-to-end tests), that `smoke.ps1` passes under
+Windows PowerShell 5.1 and PowerShell 7, and that `dev-local.ps1` installs, re-installs,
+reports status and uninstalls under both.

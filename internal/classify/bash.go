@@ -325,7 +325,11 @@ func matchesAny(s string, candidates []string) bool {
 // grouping punctuation, lower case, and no Windows executable suffix, so that
 // `"C:\Windows\System32\curl.exe"` and `curl` are the same tool.
 func baseName(tok string) string {
-	tok = strings.Trim(tok, "\"'(){}[]")
+	// Trim quotes and grouping punctuation, but never down to nothing: `[` and `[[` are
+	// real commands and keep their names.
+	if t := strings.Trim(tok, "\"'(){}[]"); t != "" {
+		tok = t
+	}
 	tok = strings.ReplaceAll(tok, `\`, "/")
 	if i := strings.LastIndex(tok, "/"); i >= 0 {
 		tok = tok[i+1:]

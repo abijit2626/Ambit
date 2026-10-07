@@ -148,7 +148,7 @@ internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
-deploy/wazuh/            localfile, syscheck, SCA policy, logtest fixtures
+deploy/wazuh/            localfile, syscheck, SCA policy (Unix and Windows), logtest fixtures
 deploy/wazuh/rules/      all twelve detectors, six files, validated by go test
 deploy/wazuh/runbooks/   one per detector, for an analyst with no access to our source
 deploy/claude-code/      managed-settings bundle (M0: observation only)
@@ -160,9 +160,50 @@ deploy/claude-code/      managed-settings bundle (M0: observation only)
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
-make cross   # static binaries for darwin/linux, arm64/amd64
+make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 ```
+
+### Windows
+
+`ambitd` and `mcp-interpose` run natively on Windows (10, 11, Server), and in WSL2, where
+they behave exactly as on Linux. The setup scripts have PowerShell counterparts that run
+under both the Windows PowerShell 5.1 that ships with the OS and PowerShell 7:
+
+```powershell
+go build -o bin\ambitd.exe .\cmd\ambitd            # Go 1.24 or newer
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1            # install
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Status    # the M0 readout
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Uninstall
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke.ps1                # end-to-end check
+```
+
+What differs from Unix, and why it matters:
+
+- **There is no OS sandbox on native Windows.** Claude Code's sandbox runs on macOS, Linux
+  and WSL2 only; on native Windows it runs commands unsandboxed
+  ([sandboxing](https://code.claude.com/docs/en/sandboxing)). Detection is therefore the
+  only layer there, and the detectors that read sandbox denials (D9's allowlist half) have
+  no source. If you need the preventive layer, run Claude Code and `ambitd` inside WSL2.
+  `deploy/wazuh/sca/ambit_managed_settings_windows.yml` leaves out the two checks that
+  assert sandbox settings, because no configuration could satisfy them.
+- **Privacy is an ACL, not a mode.** `0700` means nothing on Windows, and `%ProgramData%`
+  is readable by every local user. A directory `ambitd` creates gets an explicit ACL
+  (the account that created it, SYSTEM, Administrators), set with `icacls`; the Wazuh agent
+  runs as SYSTEM and needs to read `events.jsonl`. A directory that already exists is never
+  touched. Default data path: `%ProgramData%\ambit`.
+- **Paths are normalized before anything is compared.** Windows drive paths are
+  case-insensitive; Claude Code can report them with backslashes, as `/mnt/c/...` from WSL,
+  or as `/c/...` from Git Bash. All of them reach the same zone label. Claude Code's
+  `PowerShell` tool carries its script in `tool_input.command`, like `Bash`, and goes
+  through the same classifier, which knows the common cmdlets, their aliases and
+  `.exe`/`.cmd` suffixes.
+- **Managed settings** live at `C:\Program Files\ClaudeCode\managed-settings.json`, or in
+  `HKLM\SOFTWARE\Policies\ClaudeCode`. Claude Code does not read the legacy
+  `C:\ProgramData\ClaudeCode`. The SCA policy reads the file, so an endpoint managed only
+  through the registry would report check 10001 as failed.
+- Wazuh agent configuration for Windows is in `deploy/wazuh/*.windows.xml`; see
+  [deploy/wazuh/README.md](deploy/wazuh/README.md) for what is and is not verified.
 
 `mcp-interpose` goes in front of one MCP server, per server, so Claude Code still sees
 that server under its own name and tool identity stays `mcp__<server>__<tool>`:
