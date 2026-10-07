@@ -242,7 +242,7 @@ Filtering happens in `ambitd`, by event kind:
 | `config_change` | **yes** | D6; low volume |
 | `mcp_list` | **yes** | D4, D5; once per server per session |
 | `subagent_start` / `subagent_stop` | **yes** | Low volume, needed for provenance scoping |
-| `compact` | **yes** | Low volume; needed to interpret R2 state ([07](07-open-questions.md) Q1) |
+| `compact` | **yes** | Low volume; needed to interpret R2 state ([03](03-detection.md#layer-1--rule-of-two-accounting)) |
 | `ambitd_health` | **yes** | D7, D11 |
 | `goal_drift_score` | **only above threshold** | One score per tool call is the firehose again |
 
@@ -325,7 +325,7 @@ never the trajectory spool, the blobs, or the reverse maps.
 
 These numbers are starting points, not researched compliance positions. Whoever owns
 data retention needs to review them before any deployment handling regulated data,
-and the MSSP contract has to match ([07](07-open-questions.md) Q3).
+and the MSSP contract has to match.
 
 ## Volume estimate
 

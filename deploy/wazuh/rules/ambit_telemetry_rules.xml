@@ -29,7 +29,7 @@
   directly, and docs/03-detection.md recommends against relying on it as primary.
 
   UNVERIFIED PARENT SID. The SCA parent (19007) and the sca.* field names were not read
-  from the shipped ruleset (docs/00-sources.md). Rule 100314 is the intended shape.
+  from the shipped ruleset. Rule 100314 is the intended shape.
 -->
 
 <group name="ambit,ambit_integrity,">

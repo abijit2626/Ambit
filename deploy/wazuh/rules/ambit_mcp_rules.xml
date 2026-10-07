@@ -40,8 +40,8 @@
   UNVERIFIED — ARRAY FIELD MATCHING. mcp_changed_fields and mcp_scan_classes are JSON
   arrays of strings. The decoder documentation says arrays of scalars are supported
   ("lists with zero or more values"), but HOW a <field> regex matches a multi-valued
-  field — against each value, or against one joined string — was not verified during
-  research (docs/00-sources.md). Every rule here therefore matches array contents
+  field — against each value, or against one joined string — was not verified against a
+  live manager. Every rule here therefore matches array contents
   with an UNANCHORED literal, which works under either behavior. Confirm with
   wazuh-logtest before relying on these five rules: 100241-100245 and 100246.
 

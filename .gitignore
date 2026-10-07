@@ -9,3 +9,6 @@ bin/
 fingerprint.key
 *.key
 !deploy/**/*.key
+
+# Local agent instructions; never published.
+CLAUDE.md

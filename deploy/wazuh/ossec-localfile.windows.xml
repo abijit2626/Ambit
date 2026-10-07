@@ -18,7 +18,7 @@
   the agent can read it and other local users cannot. If you point events_path at a
   directory you created yourself, SYSTEM needs read access to it.
 
-  NOT VERIFIED ON A LIVE WINDOWS AGENT (docs/00-sources.md): that log_format json
+  NOT VERIFIED ON A LIVE WINDOWS AGENT (see "Windows agents" in README.md): that log_format json
   tails a file ambitd rotates by rename without losing lines. ambitd survives a rename
   that fails because the agent holds the file open (it keeps writing and retries), but
   whether the agent releases a rotated file promptly is the agent's behavior, not ours.

@@ -119,7 +119,7 @@ per event.
 | `FileChanged` | Watched file changed on disk. | No |
 | `SubagentStart` / `SubagentStop` | Subagent subtree scoping for provenance. | No |
 | `Elicitation` / `ElicitationResult` | MCP server requesting user input mid-call. | Elicitation: yes |
-| `PreCompact` / `PostCompact` | Context compaction — a session boundary question for R2 state. See [07](07-open-questions.md) Q1. | No |
+| `PreCompact` / `PostCompact` | Context compaction — a session boundary question for R2 state. See [03](03-detection.md#layer-1--rule-of-two-accounting). | No |
 
 Two ordering facts the design depends on:
 
@@ -369,7 +369,8 @@ might increase the vulnerability of an endpoint," and that caution applies with
 force here: every one of these actions is disruptive, and each is triggered by a
 detector with a non-zero false-positive rate. Start with credential revocation only,
 require a reviewed alert for anything that stops a developer working, and see
-[07](07-open-questions.md) Q7 on failure modes.
+[Latency budget and failure modes](#latency-budget-and-failure-modes) for how
+`ambitd` itself fails.
 
 ### Managed settings — the anchor
 
@@ -431,7 +432,7 @@ compromised or malicious MSSP operator. Mitigations:
   automatic trigger.
 - MSSP roles get **no active-response dispatch permission** — containment is ours
   to execute on their recommendation. This is a policy control, and it depends
-  entirely on the tenancy model in [07](07-open-questions.md) Q11 holding.
+  entirely on the [tenancy model](#tenancy-for-third-party-monitoring) holding.
 
 **Direction 2 — the endpoint's agent credential is on the endpoint.** Adversary A1
 has local code execution and can therefore read the Wazuh agent's enrollment key
@@ -451,7 +452,7 @@ Full table:
 | Claude Code → ambitd | inbound, semi-trusted | Structurally cannot widen permissions (deny-first precedence) |
 | ambitd → events.jsonl → wazuh-agent | local, same host | Filtered and redacted at source; file is append-only to `ambitd`, read-only to the Wazuh agent |
 | wazuh-agent ↔ wazuh-manager | **bidirectional, authenticated** | Per-agent enrollment keys; endpoint-side active-response allowlist; per-agent volume baselining |
-| wazuh-manager → MSSP | outbound, contractual | RBAC + agent groups + index restrictions; digests-only; no AR dispatch. See [07](07-open-questions.md) Q11 |
+| wazuh-manager → MSSP | outbound, contractual | RBAC + agent groups + index restrictions; digests-only; no AR dispatch. See [Tenancy](#tenancy-for-third-party-monitoring) |
 | fleet → ambitd policy | inbound policy | Signed policy bundles, version-pinned; `ambitd` refuses unsigned or downgraded bundles. **Not delivered over the Wazuh channel** — separate path, separate trust root |
 | Developer/malware → settings | adversarial | Managed settings outrank all; FIM + SCA + `ConfigChange` report attempts |
 
@@ -461,6 +462,31 @@ even though it exists and would be convenient. Doing so would make the manager �
 whoever has manager access, including an MSSP — able to rewrite the inline gate.
 Keeping the enforcement path's trust root separate from the monitoring path's is
 worth the extra plumbing.
+
+## Tenancy for third-party monitoring
+
+Every restriction placed on a monitoring firm — in [01](01-threat-model.md) and in the
+table above — is a policy control resting on a tenancy model. Wazuh is not natively
+multi-tenant the way commercial SIEMs are, so the model chosen decides whether those
+restrictions are enforced or only intended. Until one is chosen and its configuration
+is tested, treat them as intentions.
+
+| Model | For | Against |
+| --- | --- | --- |
+| **a. Manager per tenant** | Strongest isolation of rules, agent configuration and active-response scope; one firm's rule changes cannot affect another's. | Agents are partitioned by firm, so two firms cannot watch the same fleet. Some internal Wazuh metadata is shared when several managers feed one indexer, so isolation is not clean there either. Heaviest to operate. |
+| **b. One manager: agent groups, API RBAC, index-level restrictions** | One deployment. The supported path: agent group labels appear on every indexed alert, which is what index restrictions key on. Several firms can watch the same agents with different scopes. | Isolation is a configuration property, so a misconfigured role is a silent data leak. Rule definitions are global. Withholding active-response dispatch is an RBAC permission, not an architectural boundary. |
+| **c. Forward alerts into each firm's own Wazuh** | Their analysts work in their own tooling; no access to our manager, so the active-response concern disappears. | Changes the egress posture: alert data is exported to infrastructure we do not operate, digests-only guarantees become contract terms rather than properties of our deployment, and revocation stops being unilateral. Breaks the digest-resolution workflow. |
+
+**Recommendation: (b), with (a) held in reserve, and (c) only if a firm's own platform
+is a hard requirement of the engagement** — in which case the egress analysis in
+[01](01-threat-model.md) must be redone before agreeing. Treat the RBAC and index
+restriction configuration as security-critical: version-controlled, reviewed, and
+tested by an access-attempt test rather than by inspection.
+
+The decision is as much legal and commercial as technical — it depends on what the
+monitoring contract says about data location and retention — and it needs an owner.
+It gates onboarding any external party, not deploying internally: run single-tenant
+first.
 
 ## Why a local daemon rather than hooks calling Wazuh directly
 
@@ -490,9 +516,9 @@ detection latency, not developer throughput.
 
 - **Fail closed** for a small, enumerated set of high-impact classes: writes to
   credential paths, outbound network from Bash, `git push`, MCP tools annotated
-  destructive, writes outside the working directory. Per
-  [07](07-open-questions.md) Q7 the recommendation is that "fail closed" means
-  `ask`, not `deny`.
+  destructive, writes outside the working directory. "Fail closed" means `ask`,
+  not `deny`: a developer answering a prompt during an `ambitd` outage is a far
+  better failure mode than a blocked task with an opaque reason.
 - **Fail open** for everything else, and **emit a fail-open record every time**. A
   run of fail-opens is itself an alert (D11) — it is what suppressing the daemon
   looks like.
