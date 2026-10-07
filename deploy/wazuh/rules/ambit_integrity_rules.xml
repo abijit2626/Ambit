@@ -127,9 +127,15 @@
     — and a rewritten baseline makes a rug pull read as approved, which is the one way to
     turn D4 off without killing anything.
   -->
+  <!--
+    The path is matched with both separators, as two alternatives, because syscheck
+    reports a path in the host's own form and Wazuh's regex dialect has no character
+    class to say "either slash". With only the forward-slash form this rule never fires
+    on a Windows agent, and nothing reports that it does not.
+  -->
   <rule id="100256" level="13">
     <if_sid>550,553,554</if_sid>
-    <field name="file">/baselines/.*\.json$</field>
+    <field name="file">/baselines/.*\.json$|\\baselines\\.*\.json$</field>
     <description>ambit D6: MCP baseline store modified - $(file) by $(syscheck.audit.process.name); D4 may now compare against an attacker-chosen baseline</description>
     <mitre>
       <id>T1562.001</id>
