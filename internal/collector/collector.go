@@ -40,10 +40,10 @@ type Sink interface {
 // sessionState is the per-session state the collector keeps.
 //
 // It is keyed on Claude Code's session_id (see (c *Collector) session below),
-// which is also the unit Rule-of-Two accounting uses: docs/07-open-questions.md
-// Q1 option 1, monotonic bits that never clear within a session, shipped in
-// shadow mode specifically to measure how fast a session saturates to all
-// three before choosing between the narrower options Q1 leaves open. The
+// which is also the unit Rule-of-Two accounting uses: monotonic bits that never
+// clear within a session (docs/03-detection.md, Layer 1), shipped in shadow
+// mode specifically to measure how fast a session saturates to all three
+// before choosing a narrower scoping. The
 // provenance fingerprint set is M2 work not yet built; r2 is not — see setR2Bits.
 type sessionState struct {
 	mu       sync.Mutex
@@ -54,7 +54,7 @@ type sessionState struct {
 	zoner    *classify.Zoner
 	// r2 accumulates monotonically for the lifetime of this sessionState. Never
 	// cleared by anything short of Collector.Forget (SessionEnd) — not by
-	// PreCompact/PostCompact (Q1: clearing bit A on compaction is unsound,
+	// PreCompact/PostCompact (clearing bit A on compaction is unsound,
 	// since a summary can still carry an injected instruction) and there is no
 	// dedicated hook event for /clear to even consider clearing on. r2.Transition
 	// is deliberately never persisted here: it is meaningful only for the one
@@ -354,7 +354,7 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 	// that was denied (PermissionRequest/PermissionDenied) or that failed
 	// (ToolFail) did not actually read, write, or reach anything, and setting a
 	// bit for an action that never happened would manufacture exactly the kind
-	// of untrustworthy signal Q1's shadow-mode measurement depends on being
+	// of untrustworthy signal the shadow-mode measurement depends on being
 	// real. e.Tool is still built for these kinds above, for investigation.
 	if e.Kind == event.KindToolPre || e.Kind == event.KindToolPost {
 		bits := r2.ClassifyTool(r2.ToolInput{
@@ -439,28 +439,26 @@ func (c *Collector) isTrustedRepoPath(path string) bool {
 
 // session finds or creates the state for p's session_id.
 //
-// This is the concrete answer this codebase gives to half of
-// docs/07-open-questions.md Q1's subagent question, and it costs no extra
-// code: Claude Code gives a subagent the SAME top-level session_id as its
+// This is the concrete answer this codebase gives to the subagent question
+// (docs/03-detection.md, Layer 1), and it costs no extra code: Claude Code gives a subagent the SAME top-level session_id as its
 // parent, distinguished only by agent_id/agent_type (code.claude.com/docs/en/hooks,
 // "the input carries the agent_id and agent_type... that identify the
 // subagent" — no separate parent-session field is documented). Keying
 // sessionState on session_id alone therefore means a subagent's tool calls
 // accumulate into, and read from, the exact same Rule-of-Two bits as its
-// parent — Q1's "default to inheriting (conservative)" recommendation,
-// achieved by construction rather than by a parent-bits-copy this function
+// parent — the conservative default of inheriting, achieved by construction rather than by a parent-bits-copy this function
 // would otherwise need to implement and get wrong.
 //
-// The other half of Q1 — a new session_id — is a genuine reset under this
+// The other half of the question — a new session_id — is a genuine reset under this
 // scheme, for ALL three bits, not just bit A. `/clear` is reported to call
 // regenerateSessionId() without re-firing SessionStart (anthropics/claude-code
-// issue #70606; not primary documentation, see docs/00-sources.md), so the
-// first post-/clear event lands on a fresh, empty sessionState here. Q1 flags
-// exactly this as unsound for bits B and C — the credential already read or
+// issue #70606; a community report, not primary documentation), so the
+// first post-/clear event lands on a fresh, empty sessionState here. That is
+// unsound for bits B and C — the credential already read or
 // the tool already reachable does not actually reset just because the context
 // did — and this implementation does not solve that; it is the behavior
-// shadow mode needs to measure the cost of before Q1 can be answered rather
-// than assumed.
+// shadow mode needs to measure the cost of before the scoping can be chosen
+// rather than assumed.
 func (c *Collector) session(p *hook.Payload) *sessionState {
 	c.mu.Lock()
 	defer c.mu.Unlock()

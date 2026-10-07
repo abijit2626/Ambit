@@ -6,8 +6,8 @@
 // needs to be read. So this scans the text a server advertises, at the moment it
 // advertises it, before any call has been made.
 //
-// What this package is not: a prompt-injection classifier. docs/06-prior-art.md
-// non-goal 4 rules that out as a primary defense, and nothing here is a boundary
+// What this package is not: a prompt-injection classifier. That is an explicit
+// non-goal as a primary defense (see the README), and nothing here is a boundary
 // — a finding is an alert, never a block. The patterns are a **first draft** whose
 // false-positive rate is measured in M1 against the cohort's real servers, which
 // is why every rule carries a stable id: a rule that fires on a legitimate
@@ -17,7 +17,7 @@
 // references, sensitive actions — follows lasso-security/mcp-gateway's
 // ToolAnalyzer (MIT), which sorts patterns this way and scans parameter
 // descriptions as well as the tool description. See
-// docs/08-mcp-interpose-decision.md on what was taken and what was not. The
+// docs/05-mcp-interpose-decision.md on what was taken and what was not. The
 // patterns themselves are ours and are deliberately narrower.
 package toolscan
 

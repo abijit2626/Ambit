@@ -24,7 +24,7 @@
 # HONEST LIMITATIONS, repeated from the Unix policy and docs/02: SCA regex-matches file
 # TEXT. It is not a JSON-aware assertion. Treat it as a tripwire on a known-good file.
 #
-# NOT VERIFIED ON A LIVE WINDOWS AGENT (docs/00-sources.md):
+# NOT VERIFIED ON A LIVE WINDOWS AGENT (see "Windows agents" in deploy/wazuh/README.md):
 #   - the f: rule syntax with a drive-letter path containing spaces;
 #   - that c: rules run powershell.exe on Windows the way Wazuh's own Windows policies
 #     assume. The process check uses c: rather than p: because the SCA documentation does

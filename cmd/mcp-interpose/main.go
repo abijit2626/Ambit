@@ -16,7 +16,7 @@
 // still sees one MCP server per real server under its real name, so tool identity
 // stays mcp__<server>__<tool>: per-tool permission rules in managed settings keep
 // working, hook matchers keep working, and ambitd's own parsing keeps working. The
-// aggregating gateways evaluated in docs/08-mcp-interpose-decision.md all broke
+// aggregating gateways evaluated in docs/05-mcp-interpose-decision.md all broke
 // that, which is most of why this exists.
 //
 // What it does: hashes each tool's name, description and input schema and compares
@@ -25,7 +25,7 @@
 // event stream as inputs to policy that may only make it stricter. What it does
 // not do: decide anything. Every frame is forwarded before it is parsed, no
 // response is ever altered, and there is no path by which a finding can block a
-// tool call. Enforcement starts at M3, per docs/05-build-plan.md.
+// tool call. Enforcement starts at M3 (see the Roadmap in README.md).
 //
 // Operator workflow:
 //
