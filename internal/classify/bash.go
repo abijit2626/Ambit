@@ -1,6 +1,7 @@
 package classify
 
 import (
+	"regexp"
 	"strings"
 )
 
@@ -25,6 +26,10 @@ var networkTools = map[string]bool{
 	"dig": true, "nslookup": true, "host": true, "ping": true, "traceroute": true,
 	"aws": true, "gcloud": true, "az": true, "kubectl": true, "gh": true, "glab": true,
 	"doctl": true, "heroku": true, "flyctl": true, "vercel": true, "netlify": true,
+	// Windows. Most of the Windows network surface is PowerShell cmdlets, which can
+	// appear anywhere in a pipeline or inside a string passed to another process;
+	// powershellNetwork covers those. These are the plain executables.
+	"plink": true, "pscp": true, "psftp": true, "bitsadmin": true,
 }
 
 // publishSubcommands map a tool to the subcommands that publish artifacts.
@@ -60,6 +65,12 @@ var networkSubcommands = map[string][]string{
 	"apt-get":  {"install", "update", "upgrade"},
 	"docker":   {"pull", "build", "run"},
 	"git":      {"clone", "fetch", "pull", "remote", "ls-remote", "submodule"},
+	// Windows package managers.
+	"winget": {"install", "upgrade", "download", "import", "source"},
+	"choco":  {"install", "upgrade", "download", "outdated"},
+	"scoop":  {"install", "update", "bucket", "download"},
+	"nuget":  {"install", "restore", "update"},
+	"dotnet": {"restore", "add", "tool"},
 }
 
 // vcsWriteSubcommands are the git subcommands that write to a remote.
@@ -70,6 +81,16 @@ var filesystemTools = map[string]bool{
 	"rm": true, "mv": true, "cp": true, "mkdir": true, "rmdir": true,
 	"touch": true, "ln": true, "chmod": true, "chown": true, "truncate": true,
 	"dd": true, "tee": true, "install": true, "shred": true,
+	// cmd.exe and PowerShell, with the aliases an agent is likely to use.
+	"del": true, "erase": true, "rd": true, "md": true, "move": true, "copy": true,
+	"ren": true, "rename": true, "xcopy": true, "robocopy": true, "mklink": true,
+	"attrib": true, "icacls": true, "takeown": true,
+	"remove-item": true, "ri": true, "move-item": true, "mi": true,
+	"copy-item": true, "cpi": true, "new-item": true, "ni": true,
+	"rename-item": true, "rni": true, "set-content": true, "add-content": true, "ac": true,
+	"clear-content": true, "out-file": true, "set-itemproperty": true,
+	"new-itemproperty": true, "remove-itemproperty": true, "set-acl": true,
+	"expand-archive": true, "compress-archive": true,
 }
 
 // readOnlyTools only inspect. Kept deliberately small: the cost of wrongly
@@ -83,7 +104,41 @@ var readOnlyTools = map[string]bool{
 	"sort": true, "uniq": true, "cut": true, "tr": true, "diff": true,
 	"jq": true, "yq": true, "date": true, "env": true, "printenv": true,
 	"ps": true, "top": true, "uname": true, "whoami": true, "id": true,
+	// cmd.exe and PowerShell.
+	"dir": true, "findstr": true, "where": true, "hostname": true, "ver": true,
+	"tree": true, "more": true, "tasklist": true, "systeminfo": true, "ipconfig": true,
+	"get-content": true, "gc": true, "get-childitem": true, "gci": true,
+	"get-item": true, "gi": true, "get-itemproperty": true, "get-location": true, "gl": true,
+	"get-process": true, "gps": true, "get-service": true, "get-command": true, "gcm": true,
+	"get-date": true, "get-help": true, "get-filehash": true, "get-computerinfo": true,
+	"select-string": true, "sls": true, "test-path": true, "resolve-path": true,
+	"split-path": true, "join-path": true, "write-output": true, "write-host": true,
+	"measure-object": true, "select-object": true, "where-object": true,
+	"sort-object": true, "format-table": true, "format-list": true, "out-string": true,
+	"convertfrom-json": true, "convertto-json": true,
 }
+
+// powershellNetwork matches PowerShell and .NET spellings that reach the network.
+//
+// It scans the whole command rather than the first token of each segment, because
+// PowerShell reaches the network from inside expressions — `iex (iwr $u)`,
+// `(New-Object Net.WebClient).DownloadString($u)`, `powershell -c "irm $u"` — where
+// the cmdlet is never in command position. Like the rest of this file it errs toward
+// the more severe class. The short aliases (iwr, irm, icm, tnc) are only matched as
+// whole words so they do not fire inside other identifiers.
+var powershellNetwork = regexp.MustCompile(`(?i)(?:` +
+	`invoke-webrequest|invoke-restmethod|start-bitstransfer|test-netconnection|` +
+	`resolve-dnsname|enter-pssession|new-pssession|invoke-command|send-mailmessage|` +
+	`install-module|install-script|install-package|install-psresource|update-module|` +
+	`save-module|save-script|find-module|` +
+	`net\.webclient|system\.net\.(?:http|webclient|sockets|webrequest)|` +
+	`\.download(?:string|file|data)\b|\.upload(?:string|file|data)\b|` +
+	`certutil\b[^\n]*-urlcache|` +
+	`(?:^|[\s(|;&{"'])(?:iwr|irm|icm|tnc)(?:$|[\s)"'])` +
+	`)`)
+
+// powershellPublish matches the PowerShell and .NET ways to publish an artifact.
+var powershellPublish = regexp.MustCompile(`(?i)(?:publish-module|publish-script|publish-psresource|\bnuget(?:\.exe)?\s+push\b|\bdotnet\s+nuget\s+push\b)`)
 
 // shellOperators split a command line into separately-executed segments.
 var shellOperators = []string{"&&", "||", ";", "|", "\n"}
@@ -124,6 +179,12 @@ func Bash(command string) (argv0, class string) {
 		best = ClassOther
 	}
 
+	if powershellPublish.MatchString(command) {
+		best = ClassPublish
+	} else if severity(ClassNetwork) > severity(best) && powershellNetwork.MatchString(command) {
+		best = ClassNetwork
+	}
+
 	// Output redirection to a file mutates the filesystem even when the tool
 	// itself is read-only.
 	if best == ClassReadOnly && hasWriteRedirect(command) {
@@ -140,7 +201,7 @@ func classifySegment(seg string) string {
 
 	// Skip leading environment assignments (FOO=bar cmd ...) and `sudo`.
 	i := 0
-	for i < len(tokens) && (strings.Contains(tokens[i], "=") && !strings.HasPrefix(tokens[i], "-") || tokens[i] == "sudo" || tokens[i] == "env") {
+	for i < len(tokens) && (strings.Contains(tokens[i], "=") && !strings.HasPrefix(tokens[i], "-") || tokens[i] == "sudo" || tokens[i] == "env" || tokens[i] == "&") {
 		i++
 	}
 	if i >= len(tokens) {
@@ -233,7 +294,7 @@ func tokenize(seg string) []string {
 func firstToken(seg string) string {
 	t := tokenize(seg)
 	i := 0
-	for i < len(t) && (strings.Contains(t[i], "=") && !strings.HasPrefix(t[i], "-") || t[i] == "sudo") {
+	for i < len(t) && (strings.Contains(t[i], "=") && !strings.HasPrefix(t[i], "-") || t[i] == "sudo" || t[i] == "&") {
 		i++
 	}
 	if i >= len(t) {
@@ -260,12 +321,22 @@ func matchesAny(s string, candidates []string) bool {
 	return false
 }
 
+// baseName reduces a command token to the tool's name: no directory, no quotes or
+// grouping punctuation, lower case, and no Windows executable suffix, so that
+// `"C:\Windows\System32\curl.exe"` and `curl` are the same tool.
 func baseName(tok string) string {
+	tok = strings.Trim(tok, "\"'(){}[]")
 	tok = strings.ReplaceAll(tok, `\`, "/")
 	if i := strings.LastIndex(tok, "/"); i >= 0 {
 		tok = tok[i+1:]
 	}
-	return strings.ToLower(tok)
+	tok = strings.ToLower(tok)
+	for _, ext := range []string{".exe", ".cmd", ".bat"} {
+		if strings.HasSuffix(tok, ext) && len(tok) > len(ext) {
+			return tok[:len(tok)-len(ext)]
+		}
+	}
+	return tok
 }
 
 // hasWriteRedirect looks for > or >> outside an fd-duplication like 2>&1.

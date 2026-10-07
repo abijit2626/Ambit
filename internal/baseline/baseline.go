@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/abijit2626/ambit/internal/event"
+	"github.com/abijit2626/ambit/internal/fsperm"
 	"github.com/abijit2626/ambit/internal/mcp"
 )
 
@@ -175,7 +176,7 @@ func Open(dir string) (*Store, error) {
 	if dir == "" {
 		return nil, errors.New("baseline: dir is required")
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsperm.PrivateDir(dir); err != nil {
 		return nil, fmt.Errorf("baseline: create %s: %w", dir, err)
 	}
 	return &Store{dir: dir}, nil

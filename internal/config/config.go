@@ -12,8 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/abijit2626/ambit/internal/fsperm"
 )
 
 // Config is ambitd's full configuration.
@@ -126,8 +129,18 @@ func Default() Config {
 }
 
 func defaultPath(name string) string {
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		return "/usr/local/var/ambit/" + name
+	case "windows":
+		// ProgramData is the machine-wide, non-roaming data location. The directory
+		// is created private (see fsperm), because ProgramData itself is readable by
+		// every local user.
+		base := os.Getenv("ProgramData")
+		if base == "" {
+			base = `C:\ProgramData`
+		}
+		return filepath.Join(base, "ambit", name)
 	}
 	return "/var/lib/ambit/" + name
 }
@@ -221,6 +234,11 @@ func LoadOrCreateFingerprintKey(path string, gen func() ([]byte, error)) ([]byte
 	key, err := gen()
 	if err != nil {
 		return nil, fmt.Errorf("generate fingerprint key: %w", err)
+	}
+	// The key's directory may not exist on first run, and a key written into a
+	// directory every local user can read defeats the keyed digests.
+	if err := fsperm.PrivateDir(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("create fingerprint key dir: %w", err)
 	}
 	if err := os.WriteFile(path, key, 0o600); err != nil {
 		return nil, fmt.Errorf("write fingerprint key: %w", err)

