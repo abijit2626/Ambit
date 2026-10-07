@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -214,7 +215,9 @@ func TestFileModeIsOwnerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := st.Mode().Perm(); perm != 0o600 {
+	// Windows reports 0666 or 0444 whatever was asked for; there, privacy is the
+	// directory ACL, which internal/fsperm tests.
+	if perm := st.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("mode = %o, want 600: events carry redacted but still sensitive metadata", perm)
 	}
 }
@@ -238,5 +241,80 @@ func TestStats(t *testing.T) {
 	w.Close()
 	if got := w.Stats().Written; got != 10 {
 		t.Errorf("Written = %d, want 10", got)
+	}
+}
+
+// A rotation that cannot rename the live file must not strand the writer. On Windows
+// that is routine — a log shipper tailing the file holds it open — and a writer that
+// closed the file and then gave up would drop every later event with nothing but a
+// counter to show for it.
+func TestRotationFailureKeepsWriting(t *testing.T) {
+	old := rotateRetry
+	rotateRetry = 0
+	defer func() { rotateRetry = old }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	// A non-empty directory where the rotated file belongs makes the rename fail on
+	// every platform, without needing a second process to hold the file open.
+	blocker := path + ".1"
+	if err := os.MkdirAll(filepath.Join(blocker, "keep"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := DefaultOptions(path)
+	opts.MaxBytes, opts.MaxFiles = 200, 1
+	w, err := Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = 40
+	for i := 0; i < total; i++ {
+		w.Write(rec{Kind: "tool_pre", N: i})
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := len(readLines(t, path)); got != total {
+		t.Errorf("got %d lines, want %d: a failed rotation must not lose events", got, total)
+	}
+	if w.Stats().WriteErrs == 0 {
+		t.Error("the failed rotation was not counted, so nothing would show it happened")
+	}
+}
+
+// Once whatever blocked the rename goes away, rotation resumes.
+func TestRotationRecoversAfterFailure(t *testing.T) {
+	old := rotateRetry
+	rotateRetry = 0
+	defer func() { rotateRetry = old }()
+
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	blocker := path + ".1"
+	if err := os.MkdirAll(filepath.Join(blocker, "keep"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	opts := DefaultOptions(path)
+	opts.MaxBytes, opts.MaxFiles = 200, 1
+	w, err := Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		w.Write(rec{Kind: "tool_pre", N: i})
+	}
+	time.Sleep(400 * time.Millisecond) // let the drain goroutine reach the failing rotation
+	if err := os.RemoveAll(blocker); err != nil {
+		t.Fatal(err)
+	}
+	for i := 20; i < 40; i++ {
+		w.Write(rec{Kind: "tool_pre", N: i})
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Stat(blocker); err != nil || st.IsDir() {
+		t.Errorf("rotation never resumed after the blocker was removed: %v", err)
 	}
 }

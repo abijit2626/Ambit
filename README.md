@@ -143,7 +143,8 @@ internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
-deploy/wazuh/            localfile, syscheck, SCA policy, logtest fixtures
+internal/fsperm/         private directories: 0700 on Unix, an explicit ACL on Windows
+deploy/wazuh/            localfile, syscheck, SCA policy (Unix and Windows), logtest fixtures
 deploy/wazuh/rules/      all twelve detectors, six files, validated by go test
 deploy/wazuh/runbooks/   one per detector, for an analyst with no access to our source
 deploy/claude-code/      managed-settings bundle (M0: observation only)
@@ -155,9 +156,50 @@ deploy/claude-code/      managed-settings bundle (M0: observation only)
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
-make cross   # static binaries for darwin/linux, arm64/amd64
+make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 ```
+
+### Windows
+
+`ambitd` and `mcp-interpose` run natively on Windows (10, 11, Server), and in WSL2, where
+they behave exactly as on Linux. The setup scripts have PowerShell counterparts that run
+under both the Windows PowerShell 5.1 that ships with the OS and PowerShell 7:
+
+```powershell
+go build -o bin\ambitd.exe .\cmd\ambitd            # Go 1.24 or newer
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1            # install
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Status    # the M0 readout
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Uninstall
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke.ps1                # end-to-end check
+```
+
+What differs from Unix, and why it matters:
+
+- **There is no OS sandbox on native Windows.** Claude Code's sandbox runs on macOS, Linux
+  and WSL2 only; on native Windows it runs commands unsandboxed
+  ([sandboxing](https://code.claude.com/docs/en/sandboxing)). Detection is therefore the
+  only layer there, and the detectors that read sandbox denials (D9's allowlist half) have
+  no source. If you need the preventive layer, run Claude Code and `ambitd` inside WSL2.
+  `deploy/wazuh/sca/ambit_managed_settings_windows.yml` leaves out the two checks that
+  assert sandbox settings, because no configuration could satisfy them.
+- **Privacy is an ACL, not a mode.** `0700` means nothing on Windows, and `%ProgramData%`
+  is readable by every local user. A directory `ambitd` creates gets an explicit ACL
+  (the account that created it, SYSTEM, Administrators), set with `icacls`; the Wazuh agent
+  runs as SYSTEM and needs to read `events.jsonl`. A directory that already exists is never
+  touched. Default data path: `%ProgramData%\ambit`.
+- **Paths are normalized before anything is compared.** Windows drive paths are
+  case-insensitive; Claude Code can report them with backslashes, as `/mnt/c/...` from WSL,
+  or as `/c/...` from Git Bash. All of them reach the same zone label. Claude Code's
+  `PowerShell` tool carries its script in `tool_input.command`, like `Bash`, and goes
+  through the same classifier, which knows the common cmdlets, their aliases and
+  `.exe`/`.cmd` suffixes.
+- **Managed settings** live at `C:\Program Files\ClaudeCode\managed-settings.json`, or in
+  `HKLM\SOFTWARE\Policies\ClaudeCode`. Claude Code does not read the legacy
+  `C:\ProgramData\ClaudeCode`. The SCA policy reads the file, so an endpoint managed only
+  through the registry would report check 10001 as failed.
+- Wazuh agent configuration for Windows is in `deploy/wazuh/*.windows.xml`; see
+  [deploy/wazuh/README.md](deploy/wazuh/README.md) for what is and is not verified.
 
 `mcp-interpose` goes in front of one MCP server, per server, so Claude Code still sees
 that server under its own name and tool identity stays `mcp__<server>__<tool>`:
@@ -253,6 +295,15 @@ team executes a runbook against a sample alert.
 - **MCP coverage is stdio only.** `mcp-interpose` is a stdio wrapper and does not cover
   servers reached over HTTP/SSE. `mcp_list` events usually carry no session id, because
   MCP does not carry one.
+- **Native Windows has no OS sandbox.** Claude Code's sandbox runs on macOS, Linux and
+  WSL2; on native Windows it runs commands unsandboxed, so detection is the only layer
+  there and the detectors that read sandbox denials have no source. The Windows SCA
+  policy omits the two sandbox checks because no configuration could satisfy them. Run
+  inside WSL2 to get the sandbox. See [Windows](#windows).
+- **Wazuh behavior on a Windows agent is unconfirmed.** FIM wildcard expansion, log
+  rotation under `log_format json`, SCA `f:` and `c:` rules and `whodata` have not been
+  tried on a live agent, and each fails silently when wrong. See
+  [deploy/wazuh/README.md](deploy/wazuh/README.md#windows-agents).
 - **Rule-of-Two session scoping is unresolved.** Bits are monotonic per session. A
   session that runs long saturates to all three, and `/clear` is reported to start a new
   session id, which would reset bits B and C that should not reset. Shadow mode exists
@@ -291,3 +342,10 @@ checked against the official documentation at `code.claude.com`. Wazuh specifics
 syntax, JSON decoder constraints, FIM, SCA, agent-disconnect alerting — were checked
 against the Wazuh 4.x documentation source and shipped ruleset. Anything not confirmed
 is marked *unverified* in the rules, runbooks and docs where it matters.
+
+The Go packages, both PowerShell scripts and the interposer's end-to-end behavior are
+exercised on a real Windows host by the `windows` job in
+`.github/workflows/check.yml`, under Windows PowerShell 5.1 and PowerShell 7. That covers
+`ambitd`, `mcp-interpose` and the installer; it does not cover a Wazuh agent on Windows,
+and Claude Code's own hook payloads on Windows were read from its documentation rather
+than captured.

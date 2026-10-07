@@ -24,6 +24,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Lets a branch be checked by hand before it has a pull request.
+  workflow_dispatch:
 
 # Read-only: nothing here publishes, comments, or pushes.
 permissions:
@@ -59,8 +61,60 @@ jobs:
       - name: make smoke
         run: make smoke
 
-      # ambitd and mcp-interpose ship as static binaries to macOS, Linux and WSL2
-      # endpoints. Nobody developing on Linux would notice a darwin build break, and the
-      # first person to find out would be whoever is deploying to a cohort.
+      # ambitd and mcp-interpose ship as static binaries to macOS, Linux, WSL2 and native
+      # Windows endpoints. Nobody developing on Linux would notice a darwin or windows
+      # build break, and the first person to find out would be whoever is deploying to a
+      # cohort.
       - name: make cross
         run: make cross
+
+      # `make cross` compiles the binaries but not the tests. Vetting for Windows compiles
+      # the Windows-only files and every test file there, so a stray Unix-only call in
+      # either fails here in seconds rather than on the Windows job below.
+      - name: go vet (windows)
+        run: GOOS=windows go vet ./...
+
+  # Native Windows. Everything the Linux job proves about the pipeline is also proved
+  # here on a real Windows host, plus what only Windows can show: directory ACLs, the
+  # interposer's process handling, and the PowerShell scripts under both the Windows
+  # PowerShell 5.1 that ships with the OS and PowerShell 7.
+  #
+  # No -race: the race detector needs a C toolchain, and the Linux job already runs it
+  # over the same code.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: build
+        run: |
+          go build -o bin/ambitd.exe ./cmd/ambitd
+          go build -o bin/mcp-interpose.exe ./cmd/mcp-interpose
+
+      - name: smoke (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\scripts\smoke.ps1 -Bin .\bin\ambitd.exe -Port 17999
+
+      - name: smoke (PowerShell 7)
+        shell: pwsh
+        run: .\scripts\smoke.ps1 -Bin .\bin\ambitd.exe -Port 17998
+
+      - name: dev-local.ps1 round trip (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\scripts\dev-local-test.ps1 -Binary .\bin\ambitd.exe -HookPort 17777 -OtlpPort 14318
+
+      - name: dev-local.ps1 round trip (PowerShell 7)
+        shell: pwsh
+        run: .\scripts\dev-local-test.ps1 -Binary .\bin\ambitd.exe -HookPort 17778 -OtlpPort 14319

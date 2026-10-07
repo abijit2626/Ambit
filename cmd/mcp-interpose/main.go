@@ -178,7 +178,7 @@ func run() (int, error) {
 	go func() {
 		<-ctx.Done()
 		if cmd.Process != nil {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
+			terminate(cmd.Process)
 		}
 	}()
 
