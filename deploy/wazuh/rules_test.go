@@ -78,7 +78,7 @@ var allocated = map[string][][2]int{
 // alerts and SCA results. A rule chaining from one of these is reading an event our
 // fixtures cannot contain, so it must declare groupWazuhSourced.
 //
-// These values are UNVERIFIED against the shipped ruleset (docs/00-sources.md) and are
+// These values are UNVERIFIED against the shipped ruleset and are
 // listed here so the set is at least explicit: a wrong parent SID does not error, the
 // rule simply never fires.
 var externalParents = map[int]string{
@@ -251,7 +251,7 @@ func schemaFields() (all map[string]bool, arrays map[string]bool) {
 		"sca.policy_id", "sca.check.id", "sca.check.title", "sca.check.result",
 		// syscheck (FIM) alert fields. "file" is the path in a syscheck alert;
 		// syscheck.audit.* comes from whodata, which is what answers "which process
-		// wrote this". All UNVERIFIED at the field-name level (docs/00-sources.md).
+		// wrote this". All UNVERIFIED at the field-name level.
 		"file", "syscheck.path", "syscheck.audit.process.name", "syscheck.uname_after",
 		"full_log", "decoder.name",
 	} {
@@ -389,7 +389,7 @@ func TestDescriptionInterpolationsExist(t *testing.T) {
 // assumption from becoming a silent failure.
 //
 // How a <field> regex matches a multi-valued field — against each value, or against
-// one joined string — was not verified during research (docs/00-sources.md). An
+// one joined string — was not verified against a live manager. An
 // unanchored literal matches under either behavior; an anchored one matches under at
 // most one. So rules on array fields must stay unanchored, and this test enforces it
 // rather than trusting a comment.

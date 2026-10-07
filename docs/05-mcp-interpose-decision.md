@@ -1,9 +1,8 @@
-# 08 — Q2 decided: build `mcp-interpose`, adopt neither gateway
+# 05 — Decision: build `mcp-interpose`, adopt neither gateway
 
-[07](07-open-questions.md) Q2 asked whether to write `mcp-interpose`, fork an
-existing MCP gateway, or write a plugin for one, and said the question needed
-"an owner and a decision, not a default." This is that decision, with the
-evidence it rests on.
+The question was whether to write `mcp-interpose`, fork an existing MCP gateway,
+or write a plugin for one. This records the decision and the evidence it rests
+on.
 
 **Decision: write a minimal purpose-built interposer, in Go, in this repo. Adopt
 neither candidate, and do not write a plugin for either.** Take two things from
@@ -15,7 +14,7 @@ The short version: **neither gateway does the one thing that is our contribution
 repo hashes tool metadata at all), and **both destroy a property M0 already
 depends on** (the `mcp__<server>__<tool>` tool identity that
 `internal/hook/payload.go:157` parses and that managed-settings permission rules
-match). The cost of adopting is not neutral-to-positive as the question assumed;
+match). The cost of adopting is not neutral-to-positive, as one might assume;
 it is negative before the first line of our own code.
 
 ## What was evaluated
@@ -31,10 +30,9 @@ it is negative before the first line of our own code.
 | Extension surface | `Plugin` ABC: guardrail + tracing types, `--plugin <name>` | provider plugins (guardrail / auth / telemetry / sandbox) loaded by dotted class path |
 | External service | GitHub / npm / Smithery at scan time | `api.enkryptai.com` for guardrails, config, registry |
 
-The other two names in [06](06-prior-art.md) — reaatech/mcp-gateway and Bifrost —
-were not evaluated; Q2 named these two, and the conclusion below is
-architectural rather than implementation-specific, so it is unlikely a third
-gateway changes it. If one is proposed later, run it against the same eight
+Two other gateways, reaatech/mcp-gateway and Bifrost, were not evaluated; the
+conclusion below is architectural rather than implementation-specific, so it is
+unlikely a third gateway changes it. If one is proposed later, run it against the same eight
 tests.
 
 ## The requirements, as tests
@@ -49,7 +47,7 @@ operational constraints the rest of the design already commits to:
 | R3 | Record tool results as provenance ingest carrying the server's trust label | [02](02-architecture.md) |
 | R4 | Carry MCP annotations into the event stream, **stricter-only**, never as authority | [02](02-architecture.md) |
 | R5 | Preserve tool identity as Claude Code names it: `mcp__<server>__<tool>` | `internal/hook/payload.go:157`, `deploy/claude-code/managed-settings.m0.json` |
-| R6 | No enforcement before M3, and no developer-visible behavior change at M0 | [05](05-build-plan.md) |
+| R6 | No enforcement before M3, and no developer-visible behavior change at M0 | Observe-before-enforce sequencing (README, Roadmap) |
 | R7 | No new language runtime and no new outbound dependency on the endpoint | `Makefile` (static binaries), managed-settings OTLP comment (zero-dependency daemon) |
 | R8 | Emit in our flattened schema to the local sink | [04](04-data-model.md) |
 
@@ -76,8 +74,8 @@ written and tested; R6 is the M0 exit criterion; R7 is the stated reason
 `first-seen` and `approved` across the repository returns nothing. There is no
 metadata hash, no persisted baseline, and therefore no rug-pull detection: the
 scanner renders a fresh verdict from regexes at every startup. That is the
-static-scanner shape [06](06-prior-art.md) lists as **non-goal 5**, not the
-runtime baseline diffing we need.
+static-scanner shape this project lists as an explicit non-goal (see the
+README), not the runtime baseline diffing we need.
 
 **The plugin surface cannot host R1, R2 or R4.** `PluginContext`
 (`mcp_gateway/plugins/base.py`) carries exactly `server_name`,
@@ -143,9 +141,9 @@ either way.
 uvicorn, redis, aiohttp, cryptography, pyjwt, an OAuth implementation with PKCE
 and token management, a session pool, a cache service with an optional external
 KeyDB, a REST admin API with a 256-character `admin_apikey`, a config watcher,
-and a 2,781-line discovery service. This is the exact failure mode Q2 named —
-"a half-built gateway that needs auth, multi-tenancy, and transport handling we
-did not plan for" — arriving fully built and needing to be operated. Every one
+and a 2,781-line discovery service. This is the failure mode of adopting a gateway: a
+component that needs auth, multi-tenancy, and transport handling we did not
+plan for, arriving fully built and needing to be operated. Every one
 of those components is new attack surface and new patch burden inside the trust
 boundary of the tool whose job is watching supply chains.
 
@@ -157,8 +155,7 @@ mode the gateway pulls the server list and policies from Enkrypt at request time
 on a 5-minute TTL. Local-only operation is possible — local apikey auth, local
 config, our own provider — so this is a configuration we could avoid rather than
 a hard blocker. But it inverts the default: [04](04-data-model.md) keeps content
-on the endpoint and ships digests, and Q3 is still open on how much content
-leaves at all. Adopting a component whose out-of-the-box behavior is to POST
+on the endpoint and ships digests. Adopting a component whose out-of-the-box behavior is to POST
 tool arguments and results to a vendor means the data-handling posture is now one
 config key away from being violated, on every endpoint, forever.
 
@@ -203,9 +200,8 @@ under its real name.
 
 ## Why not a plugin, then
 
-Q2's recommendation was "a plugin is the right shape if either has a plugin
-surface." Both have one; the shape is still wrong, for reasons the plugin
-surface cannot fix:
+A plugin is the natural shape when a gateway has a plugin surface. Both do;
+the shape is still wrong, for reasons the plugin surface cannot fix:
 
 - A plugin cannot un-aggregate the gateway. R5 is broken by the host's
   architecture, not by a gap in its extension points.
@@ -243,8 +239,8 @@ Most of what it needs already exists and is tested:
 
 The genuinely new code is: stdio framing and passthrough, the `tools/list`
 metadata hash, the baseline store with an explicit operator approval step, and
-the D5 text scan. That is a small, bounded program — and it is the program Q2
-called "our unique need is narrow."
+the D5 text scan. That is a small, bounded program, which matches how narrow the
+need is.
 
 **What it must not become**, restated so nobody adds it by accident: not an
 auth layer, not multi-tenant, not a rate limiter, not an aggregator, not a
@@ -288,12 +284,12 @@ Both are additive and neither puts a dependency on the endpoint.
 - **No community maintenance.** Nobody else patches our interposer. Bounded by
   keeping it small.
 - **We will reimplement things gateways do better**, if scope creeps. Mitigated
-  by the "must not become" list above and by non-goals 1-3 and 5 in
-  [06](06-prior-art.md).
+  by the "must not become" list above and by the project's non-goals (no
+  sandbox, egress proxy, credential vault or static MCP scanner; see the README).
 
 ## What would reverse this
 
-Any one of these, and Q2 is worth reopening:
+Any one of these, and the decision is worth reopening:
 
 - A gateway that proxies **per server, preserving `mcp__<server>__<tool>`**, with
   a hook at `tools/list` that carries description, schema and annotations.

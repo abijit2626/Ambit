@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -124,7 +125,9 @@ func TestLoadOrCreateFingerprintKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := st.Mode().Perm(); perm != 0o600 {
+	// Windows reports 0666 or 0444 whatever was asked for; there, privacy is the
+	// directory ACL, which internal/fsperm tests.
+	if perm := st.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("key file mode = %o, want 600", perm)
 	}
 

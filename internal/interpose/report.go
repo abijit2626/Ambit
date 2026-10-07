@@ -7,7 +7,7 @@
 // **It is a passthrough.** Frames are forwarded before they are parsed, byte for
 // byte, and nothing the analyzer concludes can change what the client or the
 // server receives. There is no verdict, no rewriting and no blocking — M1 observes
-// and M3 is where enforcement starts, per docs/05-build-plan.md.
+// and M3 is where enforcement starts (see the Roadmap in README.md).
 //
 // **Every failure degrades to passthrough.** An unreachable ambitd, an unwritable
 // baseline store, a hostile frame, a parse error: each is counted and reported, and
@@ -69,7 +69,7 @@ type Report struct {
 	// Server is the logical server name, which must match the key in .mcp.json.
 	// It is what makes tool identity survive interposition: ambitd reconstructs
 	// mcp__<server>__<tool>, so per-server rules and per-tool permission rules
-	// keep working. See docs/08-mcp-interpose-decision.md on why the gateways
+	// keep working. See docs/05-mcp-interpose-decision.md on why the gateways
 	// failed here.
 	Server  string `json:"server"`
 	Trigger string `json:"trigger"`

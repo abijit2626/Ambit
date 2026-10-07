@@ -110,3 +110,101 @@ func TestHighestZone(t *testing.T) {
 		}
 	}
 }
+
+// The Windows cases run on every host: normalize turns the path into one form before
+// anything is compared, so a Linux CI run exercises exactly what a Windows endpoint
+// will see.
+func TestZoneWindowsPaths(t *testing.T) {
+	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
+	cases := []struct {
+		path string
+		want string
+		why  string
+	}{
+		// Credential.
+		{`C:\Users\dev\.ssh\id_ed25519`, event.ZoneCredential, "ssh private key"},
+		{`C:\Users\dev\.aws\credentials`, event.ZoneCredential, "aws credentials"},
+		{`c:\users\DEV\.AWS\Credentials`, event.ZoneCredential, "case does not matter on Windows"},
+		{`C:\Users\dev\src\myrepo\.env`, event.ZoneCredential, "dotenv in the working directory"},
+		{`C:\Users\dev\AppData\Roaming\gcloud\credentials.db`, event.ZoneCredential, "gcloud lives under AppData on Windows"},
+		{`C:\Users\dev\AppData\Roaming\GitHub CLI\hosts.yml`, event.ZoneCredential, "gh token file"},
+		{`C:\Users\dev\AppData\Roaming\Microsoft\Credentials\ABCDEF`, event.ZoneCredential, "DPAPI credential blob"},
+		{`C:\Users\dev\AppData\Roaming\Microsoft\Protect\S-1-5-21-1\key`, event.ZoneCredential, "DPAPI master key"},
+		{`C:\Windows\System32\config\SAM`, event.ZoneCredential, "credential outranks system"},
+		{`C:\Users\dev\src\myrepo\node_modules\evil\.env`, event.ZoneCredential, "credential outranks untrusted"},
+		{`\\?\C:\Users\dev\.ssh\id_rsa`, event.ZoneCredential, "extended-length prefix names the same file"},
+		{`C:\Users\dev\src\myrepo\..\..\.ssh\id_rsa`, event.ZoneCredential, "backslash traversal is cleaned, not evaluated as written"},
+
+		// Not credentials.
+		{`C:\Users\dev\.ssh\id_ed25519.pub`, event.ZoneHome, "public key"},
+		{`C:\Users\dev\.ssh\config`, event.ZoneHome, "ssh config"},
+
+		// System.
+		{`C:\Windows\System32\drivers\etc\hosts`, event.ZoneSystem, "windows tree"},
+		{`C:\Program Files\Git\bin\git.exe`, event.ZoneSystem, "program files"},
+		{`C:\Program Files (x86)\Foo\foo.dll`, event.ZoneSystem, "program files (x86)"},
+		{`d:\windows\notepad.exe`, event.ZoneSystem, "any drive letter"},
+
+		// Untrusted, workdir, home.
+		{`C:\Users\dev\src\myrepo\node_modules\pkg\index.js`, event.ZoneUntrusted, "dependency tree"},
+		{`C:\Users\dev\Downloads\setup.exe`, event.ZoneUntrusted, "downloads"},
+		{`C:\Users\dev\src\myrepo\main.go`, event.ZoneWorkdir, "inside the working directory"},
+		{`C:\USERS\DEV\SRC\MYREPO\main.go`, event.ZoneWorkdir, "working directory, different case"},
+		{`C:\Users\dev\notes.txt`, event.ZoneHome, "inside home"},
+		{`C:\Users\devx\notes.txt`, event.ZoneUnknown, "devx is not under dev: segments are compared, not prefixes"},
+		{`C:\ProgramData\ambit\events.jsonl`, event.ZoneUnknown, "ProgramData is data, not system"},
+		{`C:\Users\dev\src\windows\main.go`, event.ZoneHome, "a project directory called windows is not the OS"},
+	}
+	for _, c := range cases {
+		if got := z.Zone(c.path); got != c.want {
+			t.Errorf("Zone(%q) = %q, want %q (%s)", c.path, got, c.want, c.why)
+		}
+	}
+}
+
+// WSL and Git Bash spell the same Windows paths differently. Claude Code can report
+// either, and the zone must not depend on which shell the developer happened to use.
+func TestZoneWindowsPathsFromWSLAndGitBash(t *testing.T) {
+	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/mnt/c/Users/dev/.ssh/id_rsa", event.ZoneCredential},
+		{"/mnt/c/Windows/System32/cmd.exe", event.ZoneSystem},
+		{"/mnt/c/Users/dev/src/myrepo/main.go", event.ZoneWorkdir},
+		{"/c/Users/dev/.aws/credentials", event.ZoneCredential},
+		{"/c/Users/dev/src/myrepo/main.go", event.ZoneWorkdir},
+		{"/C/Program Files/Git/bin/git.exe", event.ZoneSystem},
+		// A single-letter directory that is not a Windows root is not a drive.
+		{"/c/projects/x.go", event.ZoneUnknown},
+		// The UNC form is kept distinct from a plain rooted path.
+		{`\\fileserver\share\.ssh\id_rsa`, event.ZoneCredential},
+	}
+	for _, c := range cases {
+		if got := z.Zone(c.path); got != c.want {
+			t.Errorf("Zone(%q) = %q, want %q", c.path, got, c.want)
+		}
+	}
+}
+
+func TestNormalize(t *testing.T) {
+	cases := map[string]string{
+		"":                     "",
+		"/home/dev/a/../b":     "/home/dev/b",
+		`C:\Users\dev\a\..\b`:  "C:/Users/dev/b",
+		`\\?\C:\Users\dev`:     "C:/Users/dev",
+		`\\fileserver\share\x`: "//fileserver/share/x",
+		"/mnt/c/Users/dev":     "C:/Users/dev",
+		"/mnt/d":               "D:/",
+		"/c/Users/dev":         "C:/Users/dev",
+		"/c/projects":          "/c/projects",
+		"/mnt/cache/x":         "/mnt/cache/x",
+		`C:\`:                  "C:/",
+	}
+	for in, want := range cases {
+		if got := normalize(in); got != want {
+			t.Errorf("normalize(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

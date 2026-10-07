@@ -1,0 +1,8 @@
+# Everything in this repository is LF, on every platform.
+#
+# Several files here are read byte-for-byte by something that does not tolerate CRLF: the
+# shell scripts (bash will not run a script whose shebang line ends in \r), the Wazuh
+# fixtures (one JSON object per line, which log_format json is documented for), and the
+# SCA policy. A Windows checkout with core.autocrlf=true would otherwise convert them
+# silently, and the failure would look like a bug in the thing reading them.
+* text=auto eol=lf
