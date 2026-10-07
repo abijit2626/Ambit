@@ -44,6 +44,8 @@ func TestBash(t *testing.T) {
 
 		// Unrecognized.
 		{"./my-script.sh", "my-script.sh", ClassOther, "unknown tool is not assumed safe"},
+		{"[ -f x ]", "[", ClassOther, "the test builtin keeps its name rather than trimming to nothing"},
+		{"[[ -f x ]] && curl https://x", "[[", ClassNetwork, "double-bracket test, then a network call"},
 		{"", "", ClassOther, "empty"},
 	}
 
