@@ -254,18 +254,34 @@ if (-not (Test-Path $AmbitDir)) {
 
 Write-Bold 'Building ambitd'
 # A running ambitd.exe is locked and cannot be overwritten, so stop it before the build.
-Get-AmbitProcess | Stop-Process -Force -ErrorAction SilentlyContinue
+# Stop-Process returns when termination has been requested, not when Windows has released
+# the executable, so wait for the exit and then retry the copy: without both, re-running
+# this script while ambitd is up fails with "being used by another process".
+$old = @(Get-AmbitProcess)
+$old | Stop-Process -Force -ErrorAction SilentlyContinue
+foreach ($p in $old) { [void]$p.WaitForExit(10000) }
 if ($Binary) {
     if (-not (Test-Path $Binary)) { throw "-Binary $Binary does not exist" }
-    Copy-Item -Force $Binary $Bin
+    for ($try = 1; ; $try++) {
+        try { Copy-Item -Force $Binary $Bin -ErrorAction Stop; break }
+        catch {
+            if ($try -ge 25) { throw }
+            Start-Sleep -Milliseconds 200
+        }
+    }
 } else {
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
         throw 'Go was not found on PATH. Install Go 1.24 or newer from https://go.dev/dl/, or pass -Binary with a prebuilt ambitd.exe.'
     }
     Push-Location $Root
     try {
-        & go build -ldflags '-X main.version=dev-local' -o $Bin ./cmd/ambitd
-        if ($LASTEXITCODE -ne 0) { throw "go build failed (exit $LASTEXITCODE)" }
+        for ($try = 1; ; $try++) {
+            & go build -ldflags '-X main.version=dev-local' -o $Bin ./cmd/ambitd
+            if ($LASTEXITCODE -eq 0) { break }
+            # The previous ambitd.exe may still be locked for a moment after it exits.
+            if ($try -ge 5) { throw "go build failed (exit $LASTEXITCODE)" }
+            Start-Sleep -Milliseconds 500
+        }
     } finally {
         Pop-Location
     }
@@ -325,8 +341,11 @@ $settings = ConvertTo-Plain ($raw | ConvertFrom-Json)
 if ($null -eq $settings) { $settings = [ordered]@{} }
 
 # Events with no matcher support take a bare hooks list.
+#
+# This list is $hookEvents, not $events: PowerShell variable names are case-insensitive,
+# so $events would silently overwrite $Events, the path of the Wazuh-bound sink.
 $noMatcher = @('UserPromptSubmit')
-$events = @(
+$hookEvents = @(
     'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
     'PermissionRequest', 'PermissionDenied',
     'SessionStart', 'SessionEnd', 'UserPromptSubmit',
@@ -336,7 +355,7 @@ $events = @(
 
 if (-not $settings.Contains('hooks') -or $null -eq $settings['hooks']) { $settings['hooks'] = [ordered]@{} }
 $hooks = $settings['hooks']
-foreach ($ev in $events) {
+foreach ($ev in $hookEvents) {
     $existing = New-Object System.Collections.ArrayList
     if ($hooks.Contains($ev) -and $null -ne $hooks[$ev]) {
         foreach ($e in @($hooks[$ev])) { [void]$existing.Add($e) }
@@ -373,7 +392,7 @@ $envBlock['OTEL_EXPORTER_OTLP_PROTOCOL'] = 'http/json'
 $envBlock['OTEL_EXPORTER_OTLP_ENDPOINT'] = "http://127.0.0.1:$OtlpPort"
 
 Write-TextNoBom $ClaudeSettings ((ConvertTo-Json -InputObject $settings -Depth 20) + "`n")
-Write-Host "  added $($events.Count) hook events + OTel env"
+Write-Host "  added $($hookEvents.Count) hook events + OTel env"
 
 Write-Bold 'Starting ambitd'
 $logOut = Join-Path $AmbitDir 'ambitd.out.log'
