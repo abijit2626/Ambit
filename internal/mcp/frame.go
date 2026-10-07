@@ -8,7 +8,7 @@
 // developer's MCP server, so a parse failure, an oversized frame or an unknown
 // method must forward the bytes unchanged and report the problem out of band.
 // Anything else turns an observability tool into an outage. See
-// docs/08-mcp-interpose-decision.md on what this must never become.
+// docs/05-mcp-interpose-decision.md on what this must never become.
 //
 // It reads bytes it does not trust. Everything arriving from the server is
 // adversarial input by assumption — that is the whole premise of D4 and D5 — so

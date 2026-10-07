@@ -165,7 +165,7 @@ monitoring does not function.
 Every one of these is a policy control enforced through Wazuh RBAC, agent groups, and
 index-level restrictions — and Wazuh's multi-tenancy is thin. The controls are only as
 good as the tenancy model, which is unresolved and needs an owner
-([07](07-open-questions.md) Q11). Until it is settled, treating these as *enforced*
+([02](02-architecture.md#tenancy-for-third-party-monitoring)). Until it is settled, treating these as *enforced*
 rather than *intended* would be overclaiming.
 
 ### Still true
@@ -227,5 +227,5 @@ Being honest about residual risk:
 - **Anything the tenancy model is supposed to enforce but does not.** The MSSP
   restrictions in this document are policy controls resting on Wazuh RBAC, agent
   groups, and index restrictions. Wazuh's multi-tenancy is thin
-  ([07](07-open-questions.md) Q11); until that is settled these are intentions, not
+  ([02](02-architecture.md#tenancy-for-third-party-monitoring)); until that is settled these are intentions, not
   guarantees.

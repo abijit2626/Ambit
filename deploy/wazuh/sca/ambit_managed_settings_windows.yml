@@ -1,0 +1,143 @@
+# M1, Windows. SCA policy asserting the Claude Code managed-settings bundle is present and
+# correct, and that ambitd is running. This is detector D12 on a native Windows endpoint.
+#
+# The counterpart of ambit_managed_settings.yml. It deliberately declares the SAME policy
+# id and the SAME check ids: the manager rules (ambit_integrity_rules.xml 100270/100271
+# and ambit_telemetry_rules.xml) match sca.policy_id ^ambit_managed_settings$ and
+# sca.check.id, and those fields do not carry the operating system. A different id would
+# make this policy run and never alert. Policy ids need only be unique per agent.
+#
+# WHAT IS MISSING, AND WHY. The Unix policy has two checks that are not here:
+#
+#   10003  sandbox enabled and fails closed
+#   10004  egress allowlist locked to managed domains
+#
+# Claude Code's sandbox runs on macOS, Linux and WSL2. On native Windows it runs shell
+# commands unsandboxed (https://code.claude.com/docs/en/sandboxing), so these two keys have
+# no effect there and a check for them could never be satisfied by any configuration. A
+# check that always fails would teach analysts to ignore D12, which is worse than not having
+# it. The consequence is not a gap in this file but in the endpoint: on native Windows,
+# ambit's detection is the only layer between an agent and the filesystem, and detectors
+# that read sandbox denials (D9's allowlist half) have no source. To get the sandbox, run
+# Claude Code inside WSL2 and use the Linux policy there.
+#
+# HONEST LIMITATIONS, repeated from the Unix policy and docs/02: SCA regex-matches file
+# TEXT. It is not a JSON-aware assertion. Treat it as a tripwire on a known-good file.
+#
+# NOT VERIFIED ON A LIVE WINDOWS AGENT (see "Windows agents" in deploy/wazuh/README.md):
+#   - the f: rule syntax with a drive-letter path containing spaces;
+#   - that c: rules run powershell.exe on Windows the way Wazuh's own Windows policies
+#     assume. The process check uses c: rather than p: because the SCA documentation does
+#     not say how p: matches a name on Windows (ambitd.exe vs ambitd), and a check that
+#     passes or fails for the wrong reason is the failure this file exists to prevent.
+#   - managed settings delivered through the HKLM registry
+#     (HKLM\SOFTWARE\Policies\ClaudeCode, value Settings) rather than as a file. This
+#     policy reads the file, so an endpoint managed that way reports 10001 as failed.
+#     That is a deployment choice to make once: deliver the file, or write a registry
+#     policy (r: rules) for those endpoints.
+
+policy:
+  id: "ambit_managed_settings"
+  file: "ambit_managed_settings_windows.yml"
+  name: "ambit: Claude Code managed settings assertions (Windows)"
+  description: "Asserts the managed-settings bundle and ambitd are present and correct on Windows."
+  references:
+    - https://code.claude.com/docs/en/managed-settings
+    - https://code.claude.com/docs/en/sandboxing
+  regex_type: "pcre2"
+
+requirements:
+  title: "Claude Code is installed on this endpoint"
+  description: "Skip the whole policy where Claude Code is not deployed, so unrelated endpoints do not report a wall of failures."
+  condition: any
+  rules:
+    - 'd:C:\Program Files\ClaudeCode'
+    - 'c:powershell.exe -NoProfile -Command "if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Output claude-found }" -> r:claude-found'
+
+checks:
+  - id: 10001
+    title: "Managed settings bundle is present"
+    description: "Managed settings sit at the highest precedence: no other level, including command-line arguments, overrides a managed permission rule. On Windows Claude Code reads C:\\Program Files\\ClaudeCode\\managed-settings.json and does not read the legacy C:\\ProgramData location."
+    rationale: "Without the bundle, every control below is unenforced and user or project settings decide policy."
+    remediation: "Redeploy the managed-settings bundle via Intune, Group Policy or another device-management tool."
+    compliance:
+      - ambit: ["anchor"]
+    condition: any
+    rules:
+      - 'f:C:\Program Files\ClaudeCode\managed-settings.json'
+
+  - id: 10002
+    title: "bypassPermissions mode is disabled"
+    description: "permissions.disableBypassPermissionsMode must be \"disable\"."
+    rationale: "bypassPermissions is the invocation mode the s1ngularity malware pattern used: --dangerously-skip-permissions on an agent the developer already authenticated. This is the single most direct counter to adversary A1."
+    remediation: "Set permissions.disableBypassPermissionsMode to \"disable\" in managed settings."
+    compliance:
+      - ambit: ["A1", "D3"]
+      - mitre_technique: ["T1562.001"]
+    condition: any
+    rules:
+      - 'f:C:\Program Files\ClaudeCode\managed-settings.json -> r:"disableBypassPermissionsMode"\s*:\s*"disable"'
+
+  - id: 10005
+    title: "The PreToolUse hook points at ambitd on loopback"
+    description: "A managed PreToolUse hook must target 127.0.0.1, which is where ambitd listens."
+    rationale: "If the hook is absent, ambitd sees nothing and the event stream silently stops while the endpoint still heartbeats. If it points anywhere but loopback, tool-call decisions have left the machine."
+    remediation: "Restore the managed hooks block."
+    compliance:
+      - ambit: ["D7"]
+    condition: any
+    rules:
+      - 'f:C:\Program Files\ClaudeCode\managed-settings.json -> r:"url"\s*:\s*"http://127\.0\.0\.1:\d+/hook"'
+
+  - id: 10006
+    title: "OpenTelemetry destination is pinned to loopback on the OTLP/HTTP port"
+    description: "OTEL_EXPORTER_OTLP_ENDPOINT must point at 127.0.0.1:4318."
+    rationale: >
+      Set in managed settings, developer-set telemetry variables are removed, which
+      is what makes OTel a tamper-resistant second stream independent of the hook
+      path. The port matters: 4318 is OTLP/HTTP and 4317 is gRPC, and an endpoint
+      on the wrong port exports into nothing while still looking configured.
+    remediation: "Set the OTEL_* env block in managed settings with endpoint http://127.0.0.1:4318."
+    compliance:
+      - ambit: ["D7"]
+    condition: any
+    rules:
+      - 'f:C:\Program Files\ClaudeCode\managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1:4318'
+
+  - id: 10008
+    title: "OTLP protocol is http/json"
+    description: "OTEL_EXPORTER_OTLP_PROTOCOL must be http/json."
+    rationale: >
+      ambitd's receiver decodes OTLP/JSON only. A grpc or http/protobuf setting
+      means Claude Code exports in an encoding ambitd cannot read, so the second
+      stream is silently absent. ambitd answers 415 and reports degraded health,
+      but this check catches the misconfiguration before it reaches an endpoint.
+    remediation: "Set OTEL_EXPORTER_OTLP_PROTOCOL to http/json in managed settings."
+    compliance:
+      - ambit: ["D7"]
+    condition: any
+    rules:
+      - 'f:C:\Program Files\ClaudeCode\managed-settings.json -> r:"OTEL_EXPORTER_OTLP_PROTOCOL"\s*:\s*"http/json"'
+
+  - id: 10007
+    title: "ambitd process is running"
+    description: "The endpoint daemon must be alive."
+    rationale: >
+      This check runs on the WAZUH AGENT's schedule, in a different process from
+      the one it is watching, which is the whole point when the adversary can kill
+      processes. It is deliberately weak on its own: it confirms a process by name
+      and says nothing about whether it is functioning, so a wedged ambitd passes.
+      The companion signal is a stale ambitd_health heartbeat with this check
+      passing. See docs/03-detection.md on D7's two halves.
+
+      The name is matched exactly by Get-Process -Name ambitd, which is the
+      ambiguity the Unix policy avoids by naming the daemon ambitd rather than
+      agentd: Wazuh ships wazuh-agent.exe on every monitored endpoint, and a
+      substring match on "agent" would pass whether or not our daemon is alive.
+    remediation: "Start the ambitd service or scheduled task and investigate why it stopped."
+    compliance:
+      - ambit: ["D7", "D11"]
+      - mitre_technique: ["T1562.001"]
+    condition: all
+    rules:
+      - 'c:powershell.exe -NoProfile -Command "if (Get-Process -Name ambitd -ErrorAction SilentlyContinue) { Write-Output ambitd-running } else { Write-Output ambitd-missing }" -> r:^ambitd-running'

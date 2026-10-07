@@ -21,7 +21,7 @@
 // precedence. The store lives under the ambit directory so Wazuh FIM can watch it
 // (deploy/wazuh/ossec-syscheck.xml), which turns a silent rewrite into a D6 event.
 // A stronger answer — approval held off the endpoint — is an M3 question tied to
-// docs/07-open-questions.md Q8 on bundle signing.
+// policy bundle signing (docs/02-architecture.md).
 package baseline
 
 import (
@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/abijit2626/ambit/internal/event"
+	"github.com/abijit2626/ambit/internal/fsperm"
 	"github.com/abijit2626/ambit/internal/mcp"
 )
 
@@ -175,7 +176,7 @@ func Open(dir string) (*Store, error) {
 	if dir == "" {
 		return nil, errors.New("baseline: dir is required")
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := fsperm.PrivateDir(dir); err != nil {
 		return nil, fmt.Errorf("baseline: create %s: %w", dir, err)
 	}
 	return &Store{dir: dir}, nil

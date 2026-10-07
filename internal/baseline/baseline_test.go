@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -339,7 +340,9 @@ func TestFileModeIsOwnerOnly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Info: %v", err)
 		}
-		if perm := info.Mode().Perm(); perm != 0o600 {
+		// Windows reports 0666 or 0444 whatever was asked for; there, privacy is the
+		// directory ACL, which internal/fsperm tests.
+		if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 			t.Errorf("%s has mode %o, want 600: the store holds third-party metadata and the record of what was approved", e.Name(), perm)
 		}
 	}

@@ -1,0 +1,106 @@
+<!--
+  M0, Windows. FIM on agent configuration. Covers most of detector D6 (config tamper).
+
+  The counterpart of ossec-syscheck.xml. Merge into the agent's ossec.conf inside
+  <ossec_config> (C:\Program Files (x86)\ossec-agent\ossec.conf).
+
+  The same two constraints apply:
+
+  1. Real time only works with directories, not individual files, so each entry watches
+     a DIRECTORY and narrows with restrict.
+  2. whodata reports WHICH USER AND PROCESS modified the file. On Windows it works
+     through the Windows audit subsystem: the agent sets a system access control list
+     on each watched directory and reads the security event log. That needs the agent
+     to run as SYSTEM and the "Audit object access" policy to be available; the agent
+     configures the policy itself where it can. If whodata cannot start, the agent logs
+     it and falls back to realtime, which loses the "which process" answer. Check
+     the agent log for "whodata" before assuming D6 attributes writers.
+
+  NOT VERIFIED ON A LIVE WINDOWS AGENT, and each fails silently rather than loudly:
+
+  - Whether `C:\Users\*\.claude` expands the wildcard. The Unix file relies on
+    /home/*/ and this follows it, but a pattern that matches nothing raises no error.
+    Confirm by editing a settings.json and looking for the alert. If it does not
+    fire, list the users explicitly.
+  - Whether restrict regular expressions are matched case-insensitively against a
+    path that Windows reports in lower case. The patterns below are written in lower
+    case, which is safe under either behavior.
+  - The syscheck parent SIDs the manager rules chain from, and the field names
+    `file` and `syscheck.audit.process.name`. Those are the same unconfirmed items as
+    on Unix (see rules/ambit_integrity_rules.xml).
+
+  What this does NOT cover, per docs/02-architecture.md: in-session config changes that
+  never touch disk, a settings path passed as a command-line flag, and managed settings
+  delivered through the HKLM registry rather than as a file. Claude Code's ConfigChange
+  hook covers the first two and reaches Wazuh through ambitd. The registry value
+  (HKLM\SOFTWARE\Policies\ClaudeCode, value Settings) is not watched here: Wazuh's
+  <windows_registry> entry could cover it, but it is a different mechanism with its own
+  rules, and no ambit rule reads it yet.
+-->
+<ossec_config>
+  <syscheck>
+
+    <!-- User-scope Claude Code settings and hooks. ~/.claude is %USERPROFILE%\.claude. -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 restrict="settings\.json$|settings\.local\.json$|hooks\.json$"
+                 tags="ambit,d6,claude-settings">C:\Users\*\.claude</directories>
+
+    <!--
+      Managed settings: the anchor everything else rests on. Claude Code reads
+      C:\Program Files\ClaudeCode\managed-settings.json and does not read the legacy
+      C:\ProgramData location, so a file dropped there is inert and need not be watched.
+    -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 restrict="managed-settings\.json$"
+                 tags="ambit,d6,managed-settings">C:\Program Files\ClaudeCode</directories>
+
+    <!--
+      MCP server configuration. recursion_level is bounded because these are developer
+      source trees. Windows has no single convention for where they live, so this lists
+      the common ones; edit it for your endpoints.
+    -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 recursion_level="4" restrict="\.mcp\.json$"
+                 tags="ambit,d6,mcp-config">C:\Users\*\src</directories>
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 recursion_level="4" restrict="\.mcp\.json$"
+                 tags="ambit,d6,mcp-config">C:\Users\*\source\repos</directories>
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 recursion_level="4" restrict="\.mcp\.json$"
+                 tags="ambit,d6,mcp-config">C:\Users\*\Documents\GitHub</directories>
+
+    <!--
+      ambitd's own configuration and its HMAC key. report_changes is off for this entry
+      deliberately: a diff of the key file would put key material in an alert. restrict
+      keeps the sinks out of it; they change constantly by design.
+    -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="no"
+                 restrict="config\.json$|fingerprint\.key$"
+                 tags="ambit,d6,ambitd-config">C:\ProgramData\ambit</directories>
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="no"
+                 restrict="config\.json$|fingerprint\.key$"
+                 tags="ambit,d6,ambitd-config">C:\Users\*\.ambit</directories>
+
+    <!--
+      mcp-interpose's approved baselines, one file per MCP server (D4). See
+      ossec-syscheck.xml for why this watch exists. report_changes is ON: the diff shows
+      which tool's hash or approval flag moved.
+    -->
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 tags="ambit,d4,d6,mcp-baselines">C:\ProgramData\ambit\baselines</directories>
+    <directories realtime="yes" whodata="yes" check_all="yes" report_changes="yes"
+                 tags="ambit,d4,d6,mcp-baselines">C:\Users\*\.ambit\baselines</directories>
+
+    <!--
+      Atomic-rename temp files from a baseline write are not a baseline change, and the
+      sinks (and their rotated copies) change constantly by design. The sink patterns
+      are anchored on the directory name rather than the drive so they cover both
+      locations. They use only the pattern features the Unix file already relies on
+      (alternation, .*, \d): Wazuh's regex dialect has no character classes or groups.
+    -->
+    <ignore type="sregex">\\\.baseline-.*$</ignore>
+    <ignore type="sregex">ambit\\.*\.jsonl$</ignore>
+    <ignore type="sregex">ambit\\.*\.jsonl\.\d+$</ignore>
+
+  </syscheck>
+</ossec_config>
