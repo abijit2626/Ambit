@@ -94,6 +94,17 @@ function ConvertTo-Plain($o) {
     return $o
 }
 
+# ambitd holds the spool and the sink open for writing while it runs. Windows refuses to
+# open a file for reading unless the reader tolerates the existing writer, and
+# [System.IO.File]::ReadLines and Select-String-style defaults do not (FileShare.Read
+# denies other writers), so -Status would fail exactly when ambitd is running, which is
+# when anyone runs it. This opens with ReadWrite and Delete sharing.
+function Open-SharedReader($path) {
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    $fs = New-Object System.IO.FileStream($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    return New-Object System.IO.StreamReader($fs)
+}
+
 function Get-AmbitProcess {
     Get-Process -Name 'ambitd' -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $Bin }
 }
@@ -131,25 +142,38 @@ function Show-Status {
     $toolTotal = 0
     $reKind = [regex]'"kind":"([^"]*)"'
     $reSource = [regex]'"source":"([^"]*)"'
-    foreach ($line in [System.IO.File]::ReadLines($Trajectory)) {
-        if ($line.Length -eq 0) { continue }
-        $total++
-        $k = $reKind.Match($line); $s = $reSource.Match($line)
-        $kind = if ($k.Success) { $k.Groups[1].Value } else { '?' }
-        $src = if ($s.Success) { $s.Groups[1].Value } else { '?' }
-        if ($kinds.ContainsKey($kind)) { $kinds[$kind]++ } else { $kinds[$kind] = 1 }
-        if ($sources.ContainsKey($src)) { $sources[$src]++ } else { $sources[$src] = 1 }
-        # Only HOOK-sourced tool events count toward the fraction. OTel records also map
-        # to tool kinds, and counting them would inflate the denominator with the same
-        # tool calls observed a second time by the corroborating stream.
-        if (($kind -eq 'tool_pre' -or $kind -eq 'tool_post') -and $src -eq 'hook') { $toolTotal++ }
+    $reader = Open-SharedReader $Trajectory
+    try {
+        while ($null -ne ($line = $reader.ReadLine())) {
+            if ($line.Length -eq 0) { continue }
+            $total++
+            $k = $reKind.Match($line); $s = $reSource.Match($line)
+            $kind = if ($k.Success) { $k.Groups[1].Value } else { '?' }
+            $src = if ($s.Success) { $s.Groups[1].Value } else { '?' }
+            if ($kinds.ContainsKey($kind)) { $kinds[$kind]++ } else { $kinds[$kind] = 1 }
+            if ($sources.ContainsKey($src)) { $sources[$src]++ } else { $sources[$src] = 1 }
+            # Only HOOK-sourced tool events count toward the fraction. OTel records also
+            # map to tool kinds, and counting them would inflate the denominator with the
+            # same tool calls observed a second time by the corroborating stream.
+            if (($kind -eq 'tool_pre' -or $kind -eq 'tool_post') -and $src -eq 'hook') { $toolTotal++ }
+        }
+    } finally {
+        $reader.Dispose()
     }
 
     $crossed = 0
     $toolCrossed = 0
     $reasons = @{}
+    $eventsText = ''
     if (Test-Path $Events) {
-        foreach ($line in [System.IO.File]::ReadLines($Events)) {
+        $reader = Open-SharedReader $Events
+        try {
+            $eventsText = $reader.ReadToEnd()
+        } finally {
+            $reader.Dispose()
+        }
+        foreach ($line in ($eventsText -split "`n")) {
+            $line = $line.TrimEnd("`r")
             if ($line.Length -eq 0) { continue }
             $crossed++
             try { $d = $line | ConvertFrom-Json } catch { continue }
@@ -209,7 +233,7 @@ function Show-Status {
     $profilePath = $env:USERPROFILE
     $needles = @($profilePath, $profilePath.Replace('\', '\\'), $profilePath.Replace('\', '/'), '.ssh', '.aws', 'AppData')
     foreach ($n in $needles) {
-        if ((Test-Path $Events) -and (Select-String -Path $Events -SimpleMatch -Pattern $n -Quiet)) {
+        if ($eventsText.Contains($n)) {
             Write-Warn "    LEAKED: $n"
         } else {
             Write-Host "    clean:  $n"
