@@ -13,6 +13,7 @@ package sink
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +21,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/abijit2626/ambit/internal/fsperm"
 )
+
+// rotateRetry is how long to wait before trying again after a rotation failed. A
+// variable so the test does not have to wait.
+var rotateRetry = 30 * time.Second
 
 // Stats reports writer health. ambitd emits these as ambitd_health events, which
 // is what D11 keys on.
@@ -76,6 +83,9 @@ type Writer struct {
 	f    *os.File
 	bw   *bufio.Writer
 	size int64
+	// rotateAfter holds off the next rotation attempt after one failed, so a file
+	// that cannot be renamed is not closed and reopened on every single write.
+	rotateAfter time.Time
 
 	written   atomic.Int64
 	dropped   atomic.Int64
@@ -95,7 +105,7 @@ func Open(opts Options) (*Writer, error) {
 	if opts.FlushInterval <= 0 {
 		opts.FlushInterval = 250 * time.Millisecond
 	}
-	if err := os.MkdirAll(filepath.Dir(opts.Path), 0o700); err != nil {
+	if err := fsperm.PrivateDir(filepath.Dir(opts.Path)); err != nil {
 		return nil, fmt.Errorf("create sink dir: %w", err)
 	}
 	w := &Writer{
@@ -221,7 +231,7 @@ func (w *Writer) writeLine(line []byte) {
 	w.size += int64(n) + 1
 	w.written.Add(1)
 
-	if w.opts.MaxBytes > 0 && w.size >= w.opts.MaxBytes {
+	if w.opts.MaxBytes > 0 && w.size >= w.opts.MaxBytes && !time.Now().Before(w.rotateAfter) {
 		if err := w.rotateLocked(); err != nil {
 			w.writeErrs.Add(1)
 		}
@@ -239,18 +249,26 @@ func (w *Writer) flush() {
 }
 
 func (w *Writer) openFile() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.openLocked()
+}
+
+// openLocked must be called with w.mu held. On failure the writer is left with no
+// file, which writeLine reports as a write error rather than writing to a closed one.
+func (w *Writer) openLocked() error {
 	f, err := os.OpenFile(w.opts.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, w.opts.FileMode)
 	if err != nil {
+		w.f, w.bw = nil, nil
 		return fmt.Errorf("open sink %s: %w", w.opts.Path, err)
 	}
 	st, err := f.Stat()
 	if err != nil {
 		f.Close()
+		w.f, w.bw = nil, nil
 		return fmt.Errorf("stat sink %s: %w", w.opts.Path, err)
 	}
-	w.mu.Lock()
 	w.f, w.bw, w.size = f, bufio.NewWriterSize(f, 64<<10), st.Size()
-	w.mu.Unlock()
 	return nil
 }
 
@@ -276,15 +294,21 @@ func (w *Writer) rotateLocked() error {
 		os.Rename(newer, older)
 	}
 	if err := os.Rename(w.opts.Path, w.opts.Path+".1"); err != nil && !os.IsNotExist(err) {
+		// The live file could not be moved aside. On Windows that is what happens
+		// when another process — a log shipper tailing it, a virus scanner — holds it
+		// open without sharing delete access; on Unix it is a full or read-only
+		// directory. Either way the file just closed above must be reopened: giving up
+		// here would leave the writer holding a closed file and drop every later event,
+		// which is detection loss with no error at the detector. The size cap is soft
+		// until a rotation succeeds, and the failure is counted by the caller.
+		w.rotateAfter = time.Now().Add(rotateRetry)
+		if oerr := w.openLocked(); oerr != nil {
+			return errors.Join(err, oerr)
+		}
 		return err
 	}
-	f, err := os.OpenFile(w.opts.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, w.opts.FileMode)
-	if err != nil {
-		w.f, w.bw = nil, nil
-		return err
-	}
-	w.f, w.bw, w.size = f, bufio.NewWriterSize(f, 64<<10), 0
-	return nil
+	w.rotateAfter = time.Time{}
+	return w.openLocked()
 }
 
 // Stats returns a snapshot.

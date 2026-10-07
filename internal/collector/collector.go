@@ -423,9 +423,14 @@ func (c *Collector) fillConfig(e *event.Event, p *hook.Payload, st *sessionState
 // isTrustedRepoPath reports whether an instruction file came from a trusted
 // location. An untrusted one is a D8 candidate: a poisoned CLAUDE.md in a cloned
 // repository, which InstructionsLoaded is the only event that reports.
+//
+// The comparison is by path segment, after normalization. A string-prefix test treats
+// /src/myrepo-evil/CLAUDE.md as inside a trusted /src/myrepo, which would let a
+// poisoned repository with a similar name slip past D8; and on Windows it would miss
+// C:\Users\Dev\src\myrepo against a configured c:/users/dev/src/myrepo.
 func (c *Collector) isTrustedRepoPath(path string) bool {
-	for _, prefix := range c.cfg.TrustedRepoPaths {
-		if prefix != "" && len(path) >= len(prefix) && path[:len(prefix)] == prefix {
+	for _, trusted := range c.cfg.TrustedRepoPaths {
+		if classify.PathWithin(path, trusted) {
 			return true
 		}
 	}

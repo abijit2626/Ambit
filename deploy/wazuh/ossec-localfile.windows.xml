@@ -1,0 +1,51 @@
+<!--
+  M0, Windows. Wazuh agent config: tail ambitd's Wazuh-bound sink.
+
+  The counterpart of ossec-localfile.xml, for an endpoint running ambitd natively on
+  Windows. Merge into the agent's ossec.conf inside <ossec_config>
+  (C:\Program Files (x86)\ossec-agent\ossec.conf), then Restart-Service WazuhSvc.
+
+  Same rules as the Unix file, and they matter more here:
+
+  - Only events.jsonl is tailed. trajectory.jsonl is the local spool and holds prompt
+    text; tailing it would send that to Wazuh and, with an external firm monitoring,
+    out of our control.
+  - The agent ignores a localfile whose location does not exist, so keeping several
+    entries is safe: one config can serve endpoints installed either way.
+
+  WHO CAN READ THE FILE. The Wazuh agent service runs as SYSTEM. ambitd creates its
+  data directory with an ACL granting the current user, SYSTEM and Administrators, so
+  the agent can read it and other local users cannot. If you point events_path at a
+  directory you created yourself, SYSTEM needs read access to it.
+
+  NOT VERIFIED ON A LIVE WINDOWS AGENT (see "Windows agents" in README.md): that log_format json
+  tails a file ambitd rotates by rename without losing lines. ambitd survives a rename
+  that fails because the agent holds the file open (it keeps writing and retries), but
+  whether the agent releases a rotated file promptly is the agent's behavior, not ours.
+  Watch for a growing events.jsonl that never rotates, and for gaps after a rotation.
+-->
+<ossec_config>
+
+  <!-- Machine-wide install: ambitd's default on Windows (%ProgramData%\ambit). -->
+  <localfile>
+    <log_format>json</log_format>
+    <location>C:\ProgramData\ambit\events.jsonl</location>
+    <label key="ambit.stream">ambitd</label>
+    <label key="ambit.schema_v">2</label>
+  </localfile>
+
+  <!--
+    Per-user install via scripts\dev-local.ps1, which writes under the user's profile.
+    Wazuh does not expand a user profile for a service running as SYSTEM, so name the
+    account explicitly. Uncomment and edit; one entry per developer endpoint account.
+  -->
+  <!--
+  <localfile>
+    <log_format>json</log_format>
+    <location>C:\Users\YOURNAME\.ambit\events.jsonl</location>
+    <label key="ambit.stream">ambitd</label>
+    <label key="ambit.schema_v">2</label>
+  </localfile>
+  -->
+
+</ossec_config>
