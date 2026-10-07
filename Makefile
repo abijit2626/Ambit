@@ -3,13 +3,17 @@ BIN2    := mcp-interpose
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
-.PHONY: all build test race vet fmt check clean cross smoke fixtures
+# Go does not add .exe when -o names a file, and Windows will not run an executable
+# without one, so do it here when building on Windows (GNU make sets OS=Windows_NT).
+EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
+
+.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures
 
 all: check build
 
 build:
-	go build $(LDFLAGS) -o bin/$(BIN) ./cmd/ambitd
-	go build $(LDFLAGS) -o bin/$(BIN2) ./cmd/mcp-interpose
+	go build $(LDFLAGS) -o bin/$(BIN)$(EXE) ./cmd/ambitd
+	go build $(LDFLAGS) -o bin/$(BIN2)$(EXE) ./cmd/mcp-interpose
 
 test:
 	go test ./...
@@ -28,8 +32,8 @@ fmt:
 check: vet race
 	@gofmt -l . | grep . && { echo "gofmt needed (see above)"; exit 1; } || echo "gofmt clean"
 
-# ambitd ships to developer endpoints on macOS, Linux and WSL2. Static binaries
-# mean no runtime to install and nothing to keep in sync with a system Python.
+# ambitd ships to developer endpoints on macOS, Linux, WSL2 and native Windows. Static
+# binaries mean no runtime to install and nothing to keep in sync with a system Python.
 cross:
 	GOOS=darwin  GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN)-darwin-arm64 ./cmd/ambitd
 	GOOS=darwin  GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN)-darwin-amd64 ./cmd/ambitd
@@ -39,10 +43,19 @@ cross:
 	GOOS=darwin  GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN2)-darwin-amd64 ./cmd/mcp-interpose
 	GOOS=linux   GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN2)-linux-arm64  ./cmd/mcp-interpose
 	GOOS=linux   GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN2)-linux-amd64  ./cmd/mcp-interpose
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN)-windows-amd64.exe  ./cmd/ambitd
+	GOOS=windows GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN)-windows-arm64.exe  ./cmd/ambitd
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BIN2)-windows-amd64.exe ./cmd/mcp-interpose
+	GOOS=windows GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BIN2)-windows-arm64.exe ./cmd/mcp-interpose
 
 smoke: build
 	./scripts/smoke.sh
 	./scripts/interpose-smoke.sh
+
+# The Windows form of smoke.sh. The interposer's end-to-end checks are Go tests
+# (cmd/mcp-interpose/e2e_test.go), so `go test ./...` covers them on every platform.
+smoke-windows: build
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1 -Bin bin/$(BIN)$(EXE)
 
 # Wazuh rule fixtures are generated from the real pipeline, never hand-edited: a
 # fixture that has drifted from the schema tests nothing while looking like it tests
