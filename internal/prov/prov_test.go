@@ -340,3 +340,16 @@ func TestConcurrentUseIsSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestIBANMatchesAtURLConfidenceAndOutranksAnEmail(t *testing.T) {
+	s := New(Options{})
+	f := &event.Features{IBANs: []string{"hmac:iban"}, Emails: []string{"hmac:mail"}}
+	s.Ingest("ev1", f, nil)
+	edges := s.Match(f)
+	if len(edges) != 2 || edges[0].MatchClass != ClassIBAN || edges[0].Confidence != confIBAN {
+		t.Fatalf("edges = %+v, want the iban edge first at %v", edges, confIBAN)
+	}
+	if confIBAN != confURL {
+		t.Errorf("a validated IBAN should be as specific as a full URL")
+	}
+}

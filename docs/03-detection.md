@@ -171,8 +171,8 @@ should not either:
   back at the host it came from draws no *domain* edge, though a spelled-out URL still draws
   a *URL* edge. A value the user typed *after* it was ingested is not retroactively
   excluded.
-- **Confidence is by class:** URL 0.95; email and high-entropy token 0.90; IP and domain
-  0.80; shingle 0.30 (advisory, and off unless `EnableShingles`). A domain the operator
+- **Confidence is by class:** URL and IBAN 0.95; email and high-entropy token 0.90; IP and
+  domain 0.80; shingle 0.30 (advisory, and off unless `EnableShingles`). A domain the operator
   lists in `trusted_content_domains` is **down-weighted to 0.40, not dropped** — a trusted
   code host is also an exfiltration sink, and s1ngularity wrote to public repositories on
   one.
@@ -693,9 +693,22 @@ What the first runs found, recorded because they are the reason a harness is wor
   - **The misses have four causes, and only one is a fixable gap.** (1) *Account numbers.*
     AgentDojo's attacker IBAN `US133000000121212121212` has entropy 2.23, below the 3.2
     high-entropy floor, so it is never fingerprinted. A real-format German IBAN (`DE89…`, 2.94)
-    misses too, so whether an IBAN is caught depends on its digits. That is 403 of the 483
-    GPT-4o banking misses, and the case for a structured-identifier class (IBANs, account and
-    card numbers) with its own rules. (2) *Short or common values*, such as a new password of
+    misses too, so whether an IBAN is caught depends on its digits. That was 403 of the 483
+    GPT-4o banking misses. **An `iban` class now exists** (strict: registry country, that
+    country's length, mod-97 check digits; printed and compact forms are one fingerprint).
+    It does **not** catch AgentDojo's attacker account, which is not an IBAN: the US issues
+    none and its check digits fail. A real attacker moving money needs a real IBAN, and a looser
+    "IBAN-shaped" rule would fingerprint every order number, so the strict rule is deliberate.
+    Re-measured, it still helps, and every changed run was read:
+    GPT-4o banking goes from 70 to 203 hostile runs with an edge. Of the 133 new ones, **82
+    have the edge on the attacker's own payment**: AgentDojo's injection tasks make the agent
+    put the user's data in that payment, such as their IBAN or a contact's, and the class catches
+    the stolen account number on its way out. **51 are incidental**: the only edge is on a
+    legitimate payment the user asked for, so run recall overstates the gain by that much.
+    The cost is legitimate carry-through again. One more benign run is flagged on each model
+    (Claude 3.7: 27 to 29 of 132; GPT-4o: 3 to 5 of 25), where a user pays an account read from
+    a bill. A redirected-payment attack has exactly that shape too, which is why the edge must
+    never page alone. (2) *Short or common values*, such as a new password of
     `new_password` or `delete_file(13)`, have no class at all, and should not. (3) *Attacks on the
     agent's answer.* The travel injections that only change what the agent says produce no
     action, so an action monitor cannot see them. (4) Paraphrase, as above, which the hand-written

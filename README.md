@@ -391,8 +391,9 @@ team executes a runbook against a sample alert.
   a path and no content. The set is bounded; `prov_truncated` and `prov_evicted` in the
   shutdown log say when it was incomplete. Measured against AgentDojo's published runs, the
   edge cannot tell an agent legitimately carrying a value between tools from an injected one
-  (a fifth of benign Claude 3.7 runs draw an edge), and it misses account numbers and short
-  values entirely (no Claude 3.7 banking attack was caught). See [docs/03-detection.md](docs/03-detection.md#layer-2--provenance).
+  (a fifth of benign Claude 3.7 runs draw an edge), and it misses short values entirely. It
+  sees checksum-valid IBANs, but not account numbers that are not IBANs, which includes
+  AgentDojo's attacker account (no Claude 3.7 banking attack was caught). See [docs/03-detection.md](docs/03-detection.md#layer-2--provenance).
 - **Rule-of-Two session scoping is unresolved.** Bits are monotonic per session. A
   session that runs long saturates to all three, and `/clear` is reported to start a new
   session id, which would reset bits B and C that should not reset. Shadow mode exists

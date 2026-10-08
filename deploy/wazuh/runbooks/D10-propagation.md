@@ -51,8 +51,10 @@ spend time on an alert:
   was *copied* from there: the user may have supplied it too (a value the user typed in a
   prompt is excluded, but one typed after the ingest is not), and the model may have
   reconstructed it. A paraphrase defeats it entirely, so a quiet 100283 means little.
-  `prov_edge_confidence` ranks the match: 0.95 a full URL, 0.90 an email or opaque token, 0.80 a
-  bare domain, 0.40 a domain the operator trusts for content. Only the strongest edge and the
+  `prov_edge_confidence` ranks the match: 0.95 a full URL or a checksum-valid IBAN
+  (`prov_edge_class` = `iban`: an account number from the earlier content appears in this action,
+  which is either a payment to it or the account itself being sent somewhere), 0.90 an email or
+  opaque token, 0.80 a bare domain, 0.40 a domain the operator trusts for content. Only the strongest edge and the
   count cross; the edges and the ingest event they point at are in the local spool, resolvable
   on request via `prov_edge_from`.
 
