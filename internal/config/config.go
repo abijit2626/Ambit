@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/abijit2626/ambit/internal/fsperm"
@@ -50,9 +51,13 @@ type Config struct {
 	TrajectoryMaxFiles int   `json:"trajectory_max_files"`
 
 	// BaselineDir holds mcp-interpose's per-server metadata baselines, one file
-	// per server. It sits under the ambit directory so Wazuh FIM can watch it:
+	// per server. It sits under an ambit directory so Wazuh FIM can watch it:
 	// the store is written by a process running as the developer, so a rewrite has
 	// to be observable rather than prevented. See internal/baseline.
+	//
+	// The default is per user on Windows (see defaultBaselineDir), because the
+	// machine-wide directory ambitd uses is private to its creator, SYSTEM and
+	// Administrators and a developer's mcp-interpose could not write to it.
 	BaselineDir string `json:"baseline_dir"`
 
 	// FingerprintKeyPath holds the per-org HMAC key. The key stays ours and is
@@ -118,7 +123,7 @@ func Default() Config {
 		EventsMaxFiles:     8,
 		TrajectoryMaxBytes: 256 << 20,
 		TrajectoryMaxFiles: 16,
-		BaselineDir:        defaultPath("baselines"),
+		BaselineDir:        defaultBaselineDir(runtime.GOOS, os.UserHomeDir),
 		FingerprintKeyPath: defaultPath("fingerprint.key"),
 		SampleRate:         0.005,
 		DriftThreshold:     0.7,
@@ -143,6 +148,23 @@ func defaultPath(name string) string {
 		return filepath.Join(base, "ambit", name)
 	}
 	return "/var/lib/ambit/" + name
+}
+
+// defaultBaselineDir is where mcp-interpose keeps its baselines when the config does
+// not say. On Unix that is the ambit data directory. On Windows it is
+// %USERPROFILE%\.ambit\baselines: ambitd runs as a service and its data directory under
+// ProgramData is restricted to the account that created it, SYSTEM and Administrators,
+// while mcp-interpose runs as whichever developer started the MCP server. A shared
+// baselines directory there would be unwritable for every developer but the first (or
+// for all of them, if an administrator or ambitd made it), and on a machine with several
+// developers the first would own it. The Wazuh FIM entries watch C:\Users\*\.ambit\baselines.
+func defaultBaselineDir(goos string, userHome func() (string, error)) string {
+	if goos == "windows" {
+		if home, err := userHome(); err == nil && home != "" {
+			return filepath.Join(home, ".ambit", "baselines")
+		}
+	}
+	return defaultPath("baselines")
 }
 
 // Load reads a config file, falling back to defaults for absent fields. A
@@ -190,7 +212,7 @@ func (c *Config) Validate() error {
 	if c.EventsPath == "" || c.TrajectoryPath == "" {
 		return errors.New("config: events_path and trajectory_path are required")
 	}
-	if c.EventsPath == c.TrajectoryPath {
+	if samePath(c.EventsPath, c.TrajectoryPath) {
 		// They carry different representations with different retention and
 		// different audiences: the events sink goes to Wazuh and onward to a
 		// monitoring firm, the spool never leaves.
@@ -244,4 +266,24 @@ func LoadOrCreateFingerprintKey(path string, gen func() ([]byte, error)) ([]byte
 		return nil, fmt.Errorf("write fingerprint key: %w", err)
 	}
 	return key, nil
+}
+
+// caseInsensitiveFS says whether two paths that differ only in case name the same file.
+// True on Windows and, by default, macOS. A variable so a test can exercise it anywhere.
+var caseInsensitiveFS = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+
+// samePath reports whether two configured paths name the same file. Comparing the
+// strings is not enough on Windows, where C:\ProgramData\ambit\events.jsonl and
+// c:/programdata/ambit/Events.jsonl are one file, and not on any host when one path is a
+// link to the other. If the spool aliased the Wazuh-tailed sink, the trajectory events,
+// which carry redacted prompt text, would be shipped to the SIEM and on to the monitoring
+// firm: the thing Validate exists to prevent.
+func samePath(a, b string) bool {
+	ca, cb := filepath.Clean(a), filepath.Clean(b)
+	if ca == cb || (caseInsensitiveFS && strings.EqualFold(ca, cb)) {
+		return true
+	}
+	sa, errA := os.Stat(a)
+	sb, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(sa, sb)
 }
