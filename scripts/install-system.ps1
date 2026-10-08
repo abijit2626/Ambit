@@ -1,57 +1,3 @@
-<#
-.SYNOPSIS
-Install ambitd as a system service on Windows, the way a monitoring agent like Sysmon
-runs: as SYSTEM, from boot, restarted whenever it exits.
-
-.DESCRIPTION
-The Windows counterpart of install-system.sh.
-
-ambitd is a console program, not a Windows service: turning it into one would add a
-dependency to a daemon that ships to every endpoint with none. So it runs as a
-scheduled task instead: at startup, as SYSTEM, with no time limit, restarted a minute
-after it exits. Task Scheduler restarts a task only when it ends in failure, which is
-what a crash or a kill looks like; ambitd never exits cleanly on its own.
-
-What install does, in this order:
-  1. creates C:\ProgramData\ambit private to SYSTEM and Administrators (ambitd refuses
-     a data directory other accounts can read), and copies the binary to
-     C:\Program Files\ambit\ambitd.exe;
-  2. registers and starts the task, and waits for the health endpoint;
-  3. only then installs the observation-only managed-settings bundle to
-     C:\Program Files\ClaudeCode\managed-settings.json, so Claude Code is never pointed
-     at a daemon that is not there.
-
-It refuses to replace managed settings that already exist and differ from the bundle:
-an organization's own policy may be in that file. Merge the bundle's "env" and "hooks"
-blocks into it by hand instead.
-
-Uninstall reverses the order: managed settings first, then the task. The spool and the
-fingerprint key stay unless -Purge is given.
-
-ambitd's output goes to C:\ProgramData\ambit\ambitd.log, which is not rotated.
-
-NOT VERIFIED ON A LIVE WINDOWS MACHINE: the task's restart-on-failure behavior and the
-cmd.exe log redirection. Kill ambitd.exe on a test machine and watch it return.
-
-.PARAMETER Binary
-The ambitd.exe built for this machine's CPU (make cross writes
-bin\ambitd-windows-amd64.exe and bin\ambitd-windows-arm64.exe).
-
-.PARAMETER Status
-Show whether the task is running and the health endpoint answers.
-
-.PARAMETER Uninstall
-Remove managed settings (if they are the M0 bundle), the task and the binary.
-
-.PARAMETER Purge
-With -Uninstall, also remove C:\ProgramData\ambit.
-
-.EXAMPLE
-powershell -ExecutionPolicy Bypass -File .\scripts\install-system.ps1 -Binary .\bin\ambitd-windows-amd64.exe
-
-.EXAMPLE
-powershell -ExecutionPolicy Bypass -File .\scripts\install-system.ps1 -Uninstall
-#>
 [CmdletBinding()]
 param(
     [string]$Binary = '',
@@ -65,8 +11,6 @@ Set-StrictMode -Version 2
 
 $Root = Split-Path -Parent $PSScriptRoot
 
-# A 32-bit PowerShell on 64-bit Windows sees "Program Files (x86)" as ProgramFiles.
-# Claude Code reads managed settings from the 64-bit Program Files only.
 $ProgramFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
 
 $BinDir   = Join-Path $ProgramFiles 'ambit'
@@ -81,7 +25,6 @@ $TaskPath = '\ambit\'
 $Icacls   = Join-Path $env:SystemRoot 'System32\icacls.exe'
 $Cmd      = Join-Path $env:SystemRoot 'System32\cmd.exe'
 
-# SIDs rather than names, which are localized on non-English Windows.
 $SidSystem = 'S-1-5-18'
 $SidAdmins = 'S-1-5-32-544'
 
@@ -95,8 +38,6 @@ function Assert-Admin {
     }
 }
 
-# The binary whose effective configuration says where ambitd listens: the one being
-# installed during an install, the installed one otherwise.
 $script:ProbeBin = $BinPath
 
 function Get-HookUrl {
@@ -128,8 +69,6 @@ function Get-TaskState {
 
 function Test-Running { return (Get-TaskState) -eq 'Running' }
 
-# Wait for the task itself to be running AND the endpoint to answer. The endpoint alone
-# is not proof: another process holding the port answers just as well.
 function Wait-Healthy {
     for ($i = 0; $i -lt 20; $i++) {
         if ((Test-Running) -and (Test-Healthy)) { return $true }
@@ -143,16 +82,11 @@ function Stop-Ambitd {
     if ($null -ne $t) {
         Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
     }
-    # Stopping the task ends cmd.exe; make sure the ambitd.exe it started is gone too,
-    # or the binary cannot be replaced and the port stays held.
     Get-Process -Name ambitd -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -eq $BinPath } |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
-# The data directory must exist before the task starts, because cmd.exe opens the log
-# inside it. ambitd refuses one that other accounts can read or that an account other
-# than itself, SYSTEM or Administrators owns, so set both explicitly.
 function New-DataDir {
     if (Test-Path -LiteralPath $DataDir) { return }
     New-Item -ItemType Directory -Path $DataDir | Out-Null
@@ -167,13 +101,10 @@ function New-DataDir {
 }
 
 function Register-AmbitdTask {
-    # cmd /c ""exe" args >> "log" 2>&1": the outer quotes are stripped by cmd, the inner
-    # ones keep paths with spaces intact.
     $arg = '/d /c ""' + $BinPath + '" -config "' + $Config + '" >> "' + $LogPath + '" 2>&1"'
     $action    = New-ScheduledTaskAction -Execute $Cmd -Argument $arg
     $trigger   = New-ScheduledTaskTrigger -AtStartup
     $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    # ExecutionTimeLimit zero means no limit; the default would kill ambitd after 72 hours.
     $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
         -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
         -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -220,14 +151,11 @@ function Invoke-Install {
     if (-not (Test-Path -LiteralPath $Bundle)) { Die "missing $Bundle; run this from a checkout of the repository" }
     $src = (Resolve-Path -LiteralPath $Binary).Path
 
-    # Running -version proves the binary is for this CPU before anything changes.
     $ver = ''
     try { $ver = (& $src -version 2>$null | Out-String).Trim() } catch { $ver = '' }
     if (-not $ver) { Die "$src does not run here: wrong CPU architecture?" }
     $script:ProbeBin = $src
 
-    # A user-scope ambitd (dev-local.ps1) holds the same port, and the task's ambitd would
-    # fail to bind. Only fail if what answers is not already this task.
     if ((Test-Healthy) -and -not (Test-Running)) {
         Die ("something already answers on $(Get-HookUrl): probably a user-scope ambitd. " +
              'Remove it first with .\scripts\dev-local.ps1 -Uninstall')
