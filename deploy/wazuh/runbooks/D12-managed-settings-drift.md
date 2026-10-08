@@ -13,7 +13,11 @@ turns those from assumptions into checks that run on a schedule.
 | 100270 | 12 | **An ambit managed-settings assertion failed** |
 | 100271 | 13 | The same assertion failing persistently on one endpoint |
 
-The policy asserts, among other things: the bundle is present (check 10001), `bypassPermissions`
+While managed settings are observation-only (M0), endpoints run a subset of the policy that
+asserts only checks 10001 and 10005–10008. Checks 10002–10004 are not asserted then, so their
+absence is not a failure. The full policy, below, runs once the enforcement keys ship.
+
+The full policy asserts, among other things: the bundle is present (check 10001), `bypassPermissions`
 is disabled (10002), the sandbox is enabled and fails closed (10003), the egress allowlist is
 locked (10004), the PreToolUse hook points at ambitd on loopback (10005), the OTel destination
 and protocol are pinned (10006, 10008), and ambitd is running (10007 — that one is D7's).
