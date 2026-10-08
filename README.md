@@ -95,6 +95,7 @@ platform, not a replacement for either.**
 | [03-detection.md](docs/03-detection.md) | Three detection layers, the ambitd/Wazuh split, rule snippets, D1–D12, ATT&CK mappings, runbook requirements |
 | [04-data-model.md](docs/04-data-model.md) | Rich internal schema, flattened SIEM-bound schema, the mapping and what it loses, what crosses to Wazuh, split retention |
 | [05-mcp-interpose-decision.md](docs/05-mcp-interpose-decision.md) | Why `mcp-interpose` is purpose-built rather than adopted, with the evaluation evidence |
+| [06-cohort-checklist.md](docs/06-cohort-checklist.md) | The path to the M0 and M1 exit criteria: blockers to close first, rollout order, how to measure each criterion |
 | [deploy/wazuh/README.md](deploy/wazuh/README.md) | Wazuh rules, SCA policy, FIM and localfile config, install and verification steps |
 | [deploy/wazuh/runbooks/](deploy/wazuh/runbooks/) | One runbook per detector, written for an analyst with no access to our source |
 
@@ -163,6 +164,7 @@ testdata/replay/         starter trajectory corpus: attacks, adapted attacks, be
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
+./scripts/runbook-rehearsal.sh -o <new dir>   # analyst packets and an answer key for the M1 runbook rehearsal
 make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 make replay   # replay testdata/replay through the collector; precision, recall, R2 saturation
@@ -384,6 +386,11 @@ team executes a runbook against a sample alert.
 
 ## Known limitations
 
+- **The SCA policy and the M0 managed-settings bundle disagree.** The policy asserts
+  enforcement keys (bypass mode, sandbox, egress allowlist) that the observation-only M0
+  bundle deliberately omits, so deploying both makes D12 fire on every endpoint. Nothing
+  supervises `ambitd` either: there is no service unit. Both are blockers for a cohort, listed
+  with the rest in [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
   and validates rule fields against a closed schema. See
