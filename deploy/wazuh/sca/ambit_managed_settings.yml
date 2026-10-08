@@ -26,12 +26,12 @@ policy:
 
 requirements:
   title: "Claude Code is installed on this endpoint"
-  description: "Skip the whole policy where Claude Code is not deployed, so unrelated endpoints do not report a wall of failures."
+  description: "Skip the whole policy where Claude Code is not deployed, so unrelated endpoints do not report a wall of failures. The rules must include evidence that does not depend on the managed-settings bundle, or deleting the bundle would make the policy not applicable and 10001 would never fail; a per-user install shows up as a .claude directory in a home directory."
   condition: any
   rules:
     - 'd:/Library/Application Support/ClaudeCode'
     - 'd:/etc/claude-code'
-    - 'c:sh -c "command -v claude" -> r:claude'
+    - 'c:sh -c "command -v claude; ls -d /home/*/.claude /Users/*/.claude /root/.claude 2>/dev/null" -> r:claude'
 
 checks:
   - id: 10001

@@ -11,6 +11,7 @@ package classify
 import (
 	"path"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/abijit2626/ambit/internal/event"
@@ -26,10 +27,17 @@ type Zoner struct {
 }
 
 func NewZoner(home, workdir string, extraUntrusted []string) *Zoner {
+	// Paths are compared with forward slashes, so a fragment an operator wrote with
+	// backslashes (`C:\Users\dev\thirdparty`, `\vendor-code\`) has to be spelled the same
+	// way or it can never match.
+	frags := make([]string, len(extraUntrusted))
+	for i, f := range extraUntrusted {
+		frags[i] = strings.ReplaceAll(f, `\`, "/")
+	}
 	return &Zoner{
 		home:           normalize(home),
 		workdir:        normalize(workdir),
-		extraUntrusted: extraUntrusted,
+		extraUntrusted: frags,
 	}
 }
 
@@ -108,7 +116,9 @@ var untrustedDirs = []string{
 	"/.m2/repository/",
 }
 
-// systemPrefixes are OS-owned trees.
+// systemPrefixes are OS-owned trees. Zone matches them at the start of a path, and, only
+// for a path that is under neither the working directory nor home, anywhere in it (a
+// root file system mounted under another path, a chroot).
 var systemPrefixes = []string{
 	"/etc/", "/usr/", "/bin/", "/sbin/", "/boot/", "/proc/", "/sys/",
 	"/System/", "/Library/", "/private/etc/",
@@ -119,7 +129,8 @@ var systemPrefixes = []string{
 // "windows" as a bare fragment would label a project directory that happens to be
 // called windows as system. ProgramData is left out for the same reason /var is
 // not in systemPrefixes: it is where programs keep data, not where the OS lives.
-var windowsSystem = regexp.MustCompile(`^[a-z]:/(windows|program files|program files \(x86\))(/|$)`)
+// PROGRA~1 and PROGRA~2 are the 8.3 names of the two Program Files directories.
+var windowsSystem = regexp.MustCompile(`^[a-z]:/(windows|program files|program files \(x86\)|progra~[12])(/|$)`)
 
 // windowsDrive recognizes a path that begins with a drive letter, after
 // normalize. Comparison rules for these are case-insensitive.
@@ -152,7 +163,7 @@ func (z *Zoner) Zone(p0 string) string {
 	if isCredential(lower, base) {
 		return event.ZoneCredential
 	}
-	if hasAnyFragment(lower, systemPrefixesAsFragments()) || hasAnyPrefix(p, systemPrefixes) || windowsSystem.MatchString(lower) {
+	if hasAnyPrefix(p, systemPrefixes) || windowsSystem.MatchString(lower) {
 		return event.ZoneSystem
 	}
 	if hasAnyFragment(lower, untrustedDirs) || z.isExtraUntrusted(lower) {
@@ -163,6 +174,14 @@ func (z *Zoner) Zone(p0 string) string {
 	}
 	if z.home != "" && isUnder(p, z.home) {
 		return event.ZoneHome
+	}
+	// A system directory name deeper in a path that is not ours: /mnt/rootfs/etc/hosts.
+	// This comes after workdir and home on purpose. bin/, system/ and Library/ are
+	// ordinary directories inside a project (bin/Debug in every .NET tree, Library/ in a
+	// Unity one) or under a home directory (~/.local/bin, ~/Library on macOS), and
+	// calling those system would cross every build-output read as a severe zone.
+	if hasAnyFragment(lower, systemPrefixes) {
+		return event.ZoneSystem
 	}
 	return event.ZoneUnknown
 }
@@ -210,10 +229,6 @@ func (z *Zoner) isExtraUntrusted(lowerPath string) bool {
 	return false
 }
 
-// systemPrefixesAsFragments lets a system path be detected even when it appears
-// under a container or chroot prefix.
-func systemPrefixesAsFragments() []string { return systemPrefixes }
-
 func hasAnyFragment(lowerPath string, fragments []string) bool {
 	for _, f := range fragments {
 		if strings.Contains(lowerPath, strings.ToLower(f)) {
@@ -249,6 +264,17 @@ func isUnder(p, dir string) bool {
 	return strings.HasPrefix(p, dir)
 }
 
+// hostIsWindows decides how a leading // is read. On Windows it starts a UNC path
+// (//server/share). On Unix it is the root: POSIX leaves it implementation-defined and
+// Linux and macOS treat //home/user as /home/user, so it must reach the same zone as
+// /home/user and not escape the workdir and home checks by being spelled differently.
+// A leading \\ is a UNC path on every host, because only Windows writes it. A variable
+// so a test can exercise both readings.
+var hostIsWindows = runtime.GOOS == "windows"
+
+// nativeDrive is a path that begins with a drive letter, before any conversion.
+var nativeDrive = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
+
 // normalize puts a path in one comparable form: forward slashes, cleaned, with
 // Windows drive paths spelled X:/... whichever way they arrived.
 //
@@ -257,30 +283,90 @@ func isUnder(p, dir string) bool {
 // and a traversal written with backslashes could name a credential path that the
 // zone check never saw. path.Clean works on forward slashes and behaves the same on
 // every host, which is what lets the Windows cases be tested on Linux CI.
+//
+// A drive or UNC root is split off before cleaning. path.Clean knows nothing about
+// either, so left in, `C:` is an ordinary directory that `..` can climb out of, and
+// C:\Users\dev\..\..\..\Windows becomes the relative Windows/... when Windows
+// resolves it to C:\Windows.
+//
+// On Windows paths, the names below the root are also reduced to what Win32 opens:
+// trailing dots and spaces are dropped from each name, and so is an NTFS stream suffix
+// (:stream, ::$DATA). `.npmrc.`, `.npmrc ` and `key.pem::$DATA` are the files `.npmrc`
+// and `key.pem`, and have to zone like them. 8.3 short names (CREDEN~1) cannot be
+// expanded without the file system and are not.
 func normalize(p string) string {
 	if p == "" {
 		return ""
 	}
+	backslashRoot := p[0] == '\\'
 	p = strings.ReplaceAll(p, `\`, "/")
-	// Extended-length (\\?\C:\...) and device (\\.\C:\...) prefixes name the same
-	// file as the plain path.
+
+	unc := false
+	// Extended-length (\\?\C:\...) and device (\\.\C:\...) prefixes name the same file as
+	// the plain path, and \\?\UNC\server\share is the extended-length form of a UNC path.
 	if strings.HasPrefix(p, "//?/") || strings.HasPrefix(p, "//./") {
 		p = p[4:]
+		if len(p) >= 4 && strings.EqualFold(p[:4], "UNC/") {
+			p, unc = "//"+p[4:], true
+		}
+	} else if strings.HasPrefix(p, "//") && (backslashRoot || hostIsWindows) {
+		unc = true
 	}
-	unc := strings.HasPrefix(p, "//")
+
+	switch {
+	case unc:
+		host, after, _ := strings.Cut(strings.TrimLeft(p, "/"), "/")
+		share, rest, _ := strings.Cut(after, "/")
+		root := "//" + host
+		if share != "" {
+			root += "/" + share
+		}
+		return root + cleanBelowRoot(rest)
+	case nativeDrive.MatchString(p):
+		return strings.ToUpper(p[:1]) + ":" + cleanBelowRoot(p[2:]) + driveRootSlash(p[2:])
+	}
+
 	p = path.Clean(p)
-	if unc && !strings.HasPrefix(p, "//") {
-		p = "/" + p // path.Clean collapses the leading pair that marks a UNC share
-	}
 	if m := wslMount.FindStringSubmatch(p); m != nil {
-		p = strings.ToUpper(m[1]) + ":" + p[len(m[0])-len(m[2]):]
+		d := strings.ToUpper(m[1]) + ":"
+		rest := p[len(m[0])-len(m[2]):]
+		return d + cleanBelowRoot(rest) + driveRootSlash(rest)
 	} else if m := bashDrive.FindStringSubmatch(p); m != nil {
-		p = strings.ToUpper(m[1]) + ":" + p[2:]
-	}
-	if len(p) == 2 && p[1] == ':' {
-		p += "/" // path.Clean drops the slash from a drive root; keep it so it still reads as a drive path
+		return strings.ToUpper(m[1]) + ":" + cleanBelowRoot(p[2:])
 	}
 	return p
+}
+
+// driveRootSlash keeps the slash on a bare drive root, so C:/ still reads as a drive
+// path; cleanBelowRoot returns nothing for it.
+func driveRootSlash(rest string) string {
+	if cleanBelowRoot(rest) == "" {
+		return "/"
+	}
+	return ""
+}
+
+// cleanBelowRoot cleans what follows a drive or UNC root. The leading slash makes the
+// root a ceiling that `..` cannot climb above, which is how Windows resolves it. The
+// result is empty, or starts with a slash.
+func cleanBelowRoot(rest string) string {
+	parts := strings.Split(rest, "/")
+	kept := parts[:0]
+	for _, c := range parts {
+		if c != "" && c != "." && c != ".." {
+			if i := strings.IndexByte(c, ':'); i >= 0 {
+				c = c[:i] // NTFS alternate data stream
+			}
+			if c = strings.TrimRight(c, ". "); c == "" {
+				continue
+			}
+		}
+		kept = append(kept, c)
+	}
+	if c := path.Clean("/" + strings.Join(kept, "/")); c != "/" {
+		return c
+	}
+	return ""
 }
 
 // PathWithin reports whether p is inside dir, or is dir itself. Both are normalized

@@ -48,11 +48,11 @@ policy:
 
 requirements:
   title: "Claude Code is installed on this endpoint"
-  description: "Skip the whole policy where Claude Code is not deployed, so unrelated endpoints do not report a wall of failures."
+  description: "Skip the whole policy where Claude Code is not deployed, so unrelated endpoints do not report a wall of failures. Evidence of Claude Code that does NOT depend on the managed-settings bundle must be among the rules: if the only evidence were the bundle's own directory, deleting the bundle would make the policy not applicable and 10001 would never fail, which is the one condition D12 exists to catch. Claude Code is usually installed per user, which the agent (SYSTEM) does not see on its PATH, so the rules also look for what a per-user install leaves in every profile."
   condition: any
   rules:
     - 'd:C:\Program Files\ClaudeCode'
-    - 'c:powershell.exe -NoProfile -Command "if (Get-Command claude -ErrorAction SilentlyContinue) { Write-Output claude-found }" -> r:claude-found'
+    - 'c:powershell.exe -NoProfile -Command "if ((Get-Command claude -ErrorAction SilentlyContinue) -or (Test-Path ''C:\Users\*\.claude'') -or (Test-Path ''C:\Users\*\.local\bin\claude.exe'') -or (Test-Path ''C:\Users\*\AppData\Roaming\npm\claude.cmd'')) { Write-Output claude-found }" -> r:claude-found'
 
 checks:
   - id: 10001
