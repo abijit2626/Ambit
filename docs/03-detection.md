@@ -53,9 +53,10 @@ honest limitation below).
 
 **Implemented, in shadow mode.** `internal/r2` classifies each event against the
 bullets below in isolation; `internal/collector`'s `sessionState` accumulates the
-bits monotonically, keyed on session_id, the simplest scoping there is. This is instrumentation
-only — the gate table further down is not built, `policy_decision` stays empty, and
-nothing about a session's behavior changes. The point is to let a real cohort's
+bits monotonically, keyed on session_id, the simplest scoping there is. The gate table
+further down runs in shadow too (`internal/gate`): its verdict is recorded on every
+`PreToolUse` with `policy_shadow=true` and never returned, so nothing about a session's
+behavior changes. The point is to let a real cohort's
 usage answer how fast a long session saturates to all three bits with data
 instead of argument.
 
@@ -117,6 +118,37 @@ Two things this surfaced, worth stating rather than only in code comments:
 
 Start all of these at `ask` or `allow`+alert and promote to `deny` only with
 baseline data (observe before enforce; see the Roadmap in the README).
+
+**Implementation status: shadow verdicts (`internal/gate`).** The table is evaluated on every
+`PreToolUse` and recorded as `policy.{decision,reason,rule_ids,bundle_version}` with
+`shadow: true`. The hook still answers `{}`. Wazuh rules 100320–100323 surface the verdicts,
+with runbook R2. Three choices the table leaves open are fixed in code and stated here:
+
+- **"After A" means before this action.** A `curl` sets A through its own output, but the row is
+  about acting after untrusted input arrived.
+- **The listed rows fire whenever their precondition holds; "everything else" fires only on the
+  action that completes the trifecta.** Otherwise a long session would alert on every call.
+- **Push and publish outrank the general network row**, so a `git push` after A and B asks
+  rather than denies, as the table says.
+
+The verdict is computed under two scopings side by side: per session, which is the one the
+policy fields carry, and per prompt turn (candidate 3 below), which stays in the spool as
+`policy.alternatives` and in the replay report. That is the comparison the scoping choice
+needs. First results:
+
+- **The hand-written corpus** exercises every row. It shows the cost case the README warns
+  about: a developer who reads a provider's docs and then their own `.env` is denied by
+  `r2.credential_after_a`. It also shows the scoping difference: a `git push` two turns
+  after a credential read is an `ask` under session scoping and nothing under turn scoping.
+- **AgentDojo: the gate never fires.** Across 2,626 published runs (Claude 3.7 Sonnet, all
+  suites; GPT-4o, banking), no verdict under either scoping: all 600 successful attacks are
+  missed, and no benign run is interrupted. No run ever reaches bit B. AgentDojo's sensitive
+  data arrives in tool results, and B has no source for that: "an MCP tool returning data from
+  a system labelled sensitive" is one of the two bit bullets above that `internal/r2` does not
+  implement. Without it, every
+  A-and-B row is unreachable in an MCP-shaped environment, and the gate is reduced to its
+  credential-path row. That makes a sensitivity label for MCP servers the input to build
+  before any row is promoted.
 
 **Honest limitation.** The rule is stated over a session, and "session" is doing
 real work in that sentence. Compaction, `/clear`, subagents, and long-running
