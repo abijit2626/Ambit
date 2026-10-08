@@ -1,20 +1,5 @@
 package wazuh
 
-// The SCA policies and the M0 managed-settings bundle must agree.
-//
-// The full policy asserts enforcement keys (bypass mode, sandbox, egress allowlist) that
-// the observation-only M0 bundle deliberately omits, so deploying both makes rule 100270
-// fire on every endpoint from the first scan. The M0 policies are the subsets that the M0
-// bundle satisfies. These tests keep that true: a subset check cannot drift from the full
-// policy, a check the bundle fails cannot creep into the M0 policy, and a check the bundle
-// passes cannot be dropped from it without anyone noticing.
-//
-// SCA matches a regex against file text, line by line. The tests do the same, so a pattern
-// that only works across lines fails here as it would on an agent. They do not run Wazuh:
-// p: and c: rules, which inspect the live endpoint, are treated as satisfied, and an f:
-// rule with no regex passes if the bundle exists. RE2 stands in for PCRE2, which the
-// patterns used here do not leave the common subset of.
-
 import (
 	"os"
 	"path/filepath"
@@ -32,14 +17,14 @@ const (
 
 type scaCheck struct {
 	id        int
-	raw       string // the check's block, byte for byte
+	raw       string
 	condition string
 	rules     []string
 }
 
 type scaPolicy struct {
 	policyID     string
-	requirements string // the applicability block, byte for byte
+	requirements string
 	checks       map[int]scaCheck
 	order        []int
 }
@@ -49,8 +34,6 @@ var (
 	scaPolicyIDRe   = regexp.MustCompile(`(?m)^policy:\n(?:[^\n]*\n)*?  id: "([^"]+)"`)
 )
 
-// parseSCA reads the little of the policy files these tests need, without a YAML library:
-// the repository has no dependencies and a security tool should not gain one for a test.
 func parseSCA(t *testing.T, path string) scaPolicy {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -120,8 +103,6 @@ func parseSCA(t *testing.T, path string) scaPolicy {
 	return p
 }
 
-// evalBundleRule reports whether one rule is satisfied by the M0 bundle text. ok is false
-// for a rule kind these tests cannot evaluate offline (processes, commands, directories).
 func evalBundleRule(t *testing.T, rule string, bundle []string) (pass, ok bool) {
 	t.Helper()
 	switch {
@@ -130,7 +111,7 @@ func evalBundleRule(t *testing.T, rule string, bundle []string) (pass, ok bool) 
 	case strings.HasPrefix(rule, "f:"):
 		_, pattern, hasRegex := strings.Cut(rule, " -> r:")
 		if !hasRegex {
-			// Existence only. The bundle exists, since it was just read.
+
 			return true, true
 		}
 		re, err := regexp.Compile(pattern)
@@ -148,15 +129,13 @@ func evalBundleRule(t *testing.T, rule string, bundle []string) (pass, ok bool) 
 	return false, false
 }
 
-// satisfied reports whether the bundle satisfies a check.
 func (c scaCheck) satisfied(t *testing.T, bundle []string) bool {
 	t.Helper()
 	var passed, total int
 	for _, r := range c.rules {
 		pass, ok := evalBundleRule(t, r, bundle)
 		if !ok {
-			// A live-endpoint rule: assume it holds, so the verdict rests on the
-			// file-text rules alone.
+
 			continue
 		}
 		total++
@@ -194,7 +173,6 @@ func loadBundle(t *testing.T) []string {
 	return strings.Split(string(raw), "\n")
 }
 
-// scaPairs are the full policy and its M0 subset, per platform.
 var scaPairs = []struct{ name, full, m0 string }{
 	{"unix", "ambit_managed_settings.yml", "ambit_managed_settings_m0.yml"},
 	{"windows", "ambit_managed_settings_windows.yml", "ambit_managed_settings_windows_m0.yml"},
@@ -254,8 +232,6 @@ func TestM0PoliciesPassTheM0BundleAndDropNothingItCouldKeep(t *testing.T) {
 				t.Errorf("the M0 %s policy asserts checks %v that the M0 bundle does not satisfy: D12 would fire on every endpoint", pair.name, failing)
 			}
 
-			// And the other direction: the M0 policy is exactly the full policy minus what the
-			// bundle fails. Dropping a check the bundle passes would silently shrink D12.
 			var want []int
 			failed := map[int]bool{}
 			for _, id := range failingChecks(t, full, bundle) {
@@ -276,8 +252,6 @@ func TestM0PoliciesPassTheM0BundleAndDropNothingItCouldKeep(t *testing.T) {
 	}
 }
 
-// The manager rules key on the policy id and on check 10007 specifically. If either moved,
-// the M0 policy would run and never alert, which looks exactly like a quiet fleet.
 func TestM0PoliciesKeepTheIdentifiersTheManagerRulesMatch(t *testing.T) {
 	var rulesText string
 	paths, _ := filepath.Glob(rulesGlob)

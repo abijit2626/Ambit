@@ -13,22 +13,12 @@ import (
 	"github.com/abijit2626/ambit/internal/features"
 )
 
-// replayKey keys the fingerprint digests. It is a constant on purpose: determinism is
-// worth more than secrecy here, and a replay must never read or create the production
-// key. It is not a secret and protects nothing, which is why the one place digests do
-// surface in a report, the domain digests inside taint labels, is acceptable: they are
-// reproducible by anyone holding the input.
 var replayKey = []byte("ambit-replay-fixed-key-not-a-secret")
 
-// Options configure a run.
 type Options struct {
-	// Config is the base collector configuration. Per-scenario overrides apply on top.
 	Config config.Config
 }
 
-// DefaultConfig is the base configuration for a replay: no filesystem side effects,
-// no sampling, and a fixed home directory so zone classification does not depend on
-// the machine running the replay.
 func DefaultConfig() config.Config {
 	cfg := config.Default()
 	cfg.Home = "/home/dev"
@@ -39,67 +29,60 @@ func DefaultConfig() config.Config {
 	return cfg
 }
 
-// StepResult is what one step produced.
 type StepResult struct {
 	N    int        `json:"n"`
 	Line int        `json:"line"`
 	Kind event.Kind `json:"kind,omitempty"`
-	// Produced is false when the collector modelled no event for this hook, which for
-	// a corpus usually means a misspelled hook_event_name.
+
 	Produced bool `json:"produced"`
-	// Crossed reports whether the event reached the SIEM sink.
+
 	Crossed bool `json:"crossed"`
-	// Edges is the number of provenance edges on the event.
+
 	Edges          int     `json:"edges,omitempty"`
 	EdgeClass      string  `json:"edge_class,omitempty"`
 	EdgeConfidence float64 `json:"edge_confidence,omitempty"`
-	// EdgeFrom is the step the strongest edge points at; 0 if none or unresolved.
+
 	EdgeFrom int `json:"edge_from,omitempty"`
-	// R2 is the session's cumulative Rule-of-Two bits after the event, a subset of "ABC".
+
 	R2    string   `json:"r2"`
 	Taint []string `json:"taint,omitempty"`
-	// Decision and Rule are the gate's session-scoped shadow verdict; TurnDecision is the
-	// same action judged under per-prompt-turn scoping. Empty means no verdict.
+
 	Decision     event.Decision `json:"decision,omitempty"`
 	Rule         string         `json:"rule,omitempty"`
 	TurnDecision event.Decision `json:"turn_decision,omitempty"`
-	// Exfil counts sensitive-data edges; ExfilClass and ExfilFrom describe the strongest.
+
 	Exfil      int    `json:"exfil,omitempty"`
 	ExfilClass string `json:"exfil_class,omitempty"`
 	ExfilFrom  int    `json:"exfil_from,omitempty"`
-	// Hostile is the step's ground truth, if annotated.
+
 	Hostile *bool `json:"hostile,omitempty"`
-	// Failures are assertions that did not hold.
+
 	Failures []string `json:"failures,omitempty"`
 }
 
-// SessionR2 records how deep into a session each Rule-of-Two bit appeared.
 type SessionR2 struct {
 	SessionID string `json:"session_id"`
-	// ToolCalls is how many tool calls the session made in total.
+
 	ToolCalls int `json:"tool_calls"`
-	// First* are the 1-based tool call at which each bit was first set; 0 if never.
+
 	FirstA int `json:"first_a"`
 	FirstB int `json:"first_b"`
 	FirstC int `json:"first_c"`
-	// FirstAll is the call at which all three were set; 0 if never.
+
 	FirstAll int `json:"first_all"`
 
 	seen map[string]bool
 }
 
-// Result is the outcome of replaying one scenario.
 type Result struct {
 	Scenario Header       `json:"scenario"`
 	Path     string       `json:"path"`
 	Steps    []StepResult `json:"steps"`
 	Sessions []SessionR2  `json:"sessions"`
-	// Stats is not serialized: Summary carries the aggregate, and the per-scenario
-	// copy would only make two runs harder to diff.
+
 	Stats collector.Stats `json:"-"`
 }
 
-// Failed reports whether any assertion failed.
 func (r *Result) Failed() bool {
 	for _, s := range r.Steps {
 		if len(s.Failures) > 0 {
@@ -109,20 +92,14 @@ func (r *Result) Failed() bool {
 	return false
 }
 
-// capture is an in-memory sink. Collector sinks take whatever the collector hands
-// them; for the spool that is the rich *event.Event, so no JSON round trip is needed.
 type capture struct{ items []any }
 
 func (c *capture) Write(v any) bool { c.items = append(c.items, v); return true }
 
-// Run replays one scenario through a fresh collector. Fresh, so nothing carries over
-// between scenarios: a session id reused across files must not inherit Rule-of-Two
-// bits or provenance from another file, or one scenario's result would depend on which
-// others ran before it.
 func Run(sc *Scenario, opts Options) *Result {
 	cfg := opts.Config
 	applyOverrides(&cfg, sc.Config)
-	cfg.SampleRate = 0 // a sampled remainder is random; a replay must not be
+	cfg.SampleRate = 0
 
 	events, traj := &capture{}, &capture{}
 	coll := collector.New(collector.Options{
@@ -213,7 +190,7 @@ func fillFromEvent(sr *StepResult, e *event.Event, stepOfEvent map[string]int, s
 	}
 	sr.Edges = len(e.Provenance.Edges)
 	if sr.Edges > 0 {
-		// The collector sorts strongest first, and the flattened event relies on that.
+
 		top := e.Provenance.Edges[0]
 		sr.EdgeClass = top.MatchClass
 		sr.EdgeConfidence = top.Confidence
@@ -246,11 +223,7 @@ func trackSession(m map[string]*SessionR2, order *[]string, e *event.Event) {
 	if e.Kind != event.KindToolPre && e.Kind != event.KindToolPost {
 		return
 	}
-	// A call is counted once, by tool_use_id: its PreToolUse and PostToolUse are one call.
-	// A PostToolUse whose id was never seen at a Pre is its own call, which is how a
-	// hand-written trajectory that records only a result is still counted correctly.
-	// A bit can flip on the Post of a call whose Pre was already counted, so depth is
-	// the number of calls started so far, not events seen.
+
 	callID := ""
 	if e.Tool != nil {
 		callID = e.Tool.UseID
@@ -276,7 +249,6 @@ func trackSession(m map[string]*SessionR2, order *[]string, e *event.Event) {
 	}
 }
 
-// check evaluates a step's assertions and returns the ones that failed.
 func check(st *Step, sr *StepResult) []string {
 	ex := st.Expect
 	if ex == nil {
@@ -286,8 +258,7 @@ func check(st *Step, sr *StepResult) []string {
 	fail := func(format string, a ...any) { f = append(f, fmt.Sprintf(format, a...)) }
 
 	if !sr.Produced {
-		// Every assertion is about an event. Reporting each one as a separate failure
-		// would bury the cause, which is almost always a misspelled hook name.
+
 		return []string{fmt.Sprintf("no event was produced for hook %q, so nothing could be asserted", st.Payload.HookEventName)}
 	}
 	if ex.Edge != nil && *ex.Edge != (sr.Edges > 0) {
@@ -342,8 +313,6 @@ func check(st *Step, sr *StepResult) []string {
 	return f
 }
 
-// decisionName spells the empty decision "none", so an assertion can say "nothing fired"
-// explicitly rather than by leaving the field out, which asserts nothing.
 func decisionName(d event.Decision) string {
 	if d == event.DecisionNone {
 		return "none"
@@ -351,7 +320,6 @@ func decisionName(d event.Decision) string {
 	return string(d)
 }
 
-// sortedKeys returns a map's keys in order, for stable output.
 func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

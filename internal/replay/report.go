@@ -11,15 +11,6 @@ import (
 	"github.com/abijit2626/ambit/internal/event"
 )
 
-// Confusion is the provenance engine's accuracy over PreToolUse steps, against the
-// scenarios' own ground truth.
-//
-// A step is positive when the engine drew an edge at or above the confidence floor, and
-// truly positive when the scenario marked it "hostile": the action is a product of the
-// attack. That is a judgement about the action, not about its lineage, so a benign agent
-// carrying a URL across from an article it was asked to summarize is a false positive,
-// as docs/03 defines it. Unannotated PreToolUse steps are truly negative, so a benign
-// corpus needs no annotation and every edge it draws counts against precision.
 type Confusion struct {
 	TP int `json:"tp"`
 	FP int `json:"fp"`
@@ -27,19 +18,14 @@ type Confusion struct {
 	TN int `json:"tn"`
 }
 
-// Hostile is the number of truly positive steps.
 func (c Confusion) Hostile() int { return c.TP + c.FN }
 
-// Benign is the number of truly negative steps.
 func (c Confusion) Benign() int { return c.FP + c.TN }
 
-// Precision is TP/(TP+FP); ok is false when the engine drew no edge at all.
 func (c Confusion) Precision() (v float64, ok bool) { return ratio(c.TP, c.TP+c.FP) }
 
-// Recall is TP/(TP+FN); ok is false when the corpus holds no hostile step.
 func (c Confusion) Recall() (v float64, ok bool) { return ratio(c.TP, c.TP+c.FN) }
 
-// FPR is FP/(FP+TN); ok is false when the corpus holds no benign step.
 func (c Confusion) FPR() (v float64, ok bool) { return ratio(c.FP, c.FP+c.TN) }
 
 func ratio(n, d int) (float64, bool) {
@@ -49,61 +35,47 @@ func ratio(n, d int) (float64, bool) {
 	return float64(n) / float64(d), true
 }
 
-// ClassCount splits edges by the class of the strongest edge.
 type ClassCount struct {
 	TP int `json:"tp"`
 	FP int `json:"fp"`
 }
 
-// SweepPoint is the confusion matrix if the floor were set at Floor.
 type SweepPoint struct {
 	Floor     float64   `json:"floor"`
 	Confusion Confusion `json:"confusion"`
 }
 
-// SessionSummary measures Rule-of-Two saturation: how deep into a session each bit
-// appears. docs/03 chooses the session scoping "from shadow-mode data rather than
-// argument", and this is that measurement over a corpus.
 type SessionSummary struct {
 	Sessions int `json:"sessions"`
 	A        int `json:"reached_a"`
 	B        int `json:"reached_b"`
 	C        int `json:"reached_c"`
 	All      int `json:"reached_all"`
-	// MedianCallsToAll is the median tool call at which sessions that saturated did so;
-	// 0 if none did.
+
 	MedianCallsToAll int `json:"median_calls_to_all"`
 }
 
-// Summary aggregates a run.
 type Summary struct {
 	Scenarios int `json:"scenarios"`
 	Failed    int `json:"failed"`
 	Steps     int `json:"steps"`
-	// Ignored counts steps the collector produced no event for.
+
 	Ignored int `json:"ignored"`
 
-	// MinConfidence is the floor the headline confusion matrix was computed at.
 	MinConfidence float64               `json:"min_confidence"`
 	Confusion     Confusion             `json:"confusion"`
 	ByClass       map[string]ClassCount `json:"by_class"`
 	Sweep         []SweepPoint          `json:"sweep"`
 
-	// Runs is the confusion matrix over whole trajectories with a run-level label: a run
-	// is positive when any of its actions drew an edge at or above the floor.
 	Runs Confusion `json:"runs"`
-	// RunsUnlabeled counts scenarios with no run-level label; StepsUnlabeled counts
-	// actions left out of the step-level matrix because their scenario labels none.
+
 	RunsUnlabeled  int `json:"runs_unlabeled"`
 	StepsUnlabeled int `json:"steps_unlabeled"`
 
 	Sessions SessionSummary `json:"rule_of_two"`
 
-	// Gate is the shadow Rule-of-Two gate, one entry per session scoping.
 	Gate []GateSummary `json:"gate"`
 
-	// Exfil measures sensitive-data edges the same way Confusion measures provenance
-	// edges: over labeled actions, over labeled runs, and split by the strongest class.
 	Exfil ExfilSummary `json:"exfil"`
 
 	Handled      int64               `json:"handled"`
@@ -112,8 +84,6 @@ type Summary struct {
 	Provenance   collector.ProvStats `json:"provenance"`
 }
 
-// Summarize aggregates results. minConfidence is the floor below which an edge does not
-// count as a detection; 0 counts every edge.
 func Summarize(results []*Result, minConfidence float64) Summary {
 	s := Summary{
 		Scenarios:     len(results),
@@ -210,8 +180,6 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 		s.ByClass[st.EdgeClass] = c
 	}
 
-	// One sweep point per distinct strongest-edge confidence actually observed, plus
-	// zero. Fixed round numbers would hide where this corpus's edges actually sit.
 	floors := map[float64]bool{0: true}
 	for _, st := range evaluated {
 		if st.Edges > 0 {
@@ -229,22 +197,17 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 	return s
 }
 
-// GateSummary measures the shadow gate under one session scoping. A blocking verdict (deny
-// or ask) is the positive: it is what would stop or interrupt a developer once enforced.
-// allow_alert never blocks, so it is counted but is not a positive.
 type GateSummary struct {
 	Scoping    string `json:"scoping"`
 	Deny       int    `json:"deny"`
 	Ask        int    `json:"ask"`
 	AllowAlert int    `json:"allow_alert"`
-	// Steps is over labeled PreToolUse actions: a blocking verdict on a benign action is a
-	// developer interrupted for nothing, the cost enforcement would carry.
+
 	Steps Confusion `json:"steps"`
-	// Runs is over runs with a run-level label: did any blocking verdict fire in the run.
+
 	Runs Confusion `json:"runs"`
 }
 
-// ExfilSummary is the precision check for sensitive-data edges.
 type ExfilSummary struct {
 	Steps   Confusion             `json:"steps"`
 	Runs    Confusion             `json:"runs"`
@@ -361,22 +324,15 @@ func median(xs []int) int {
 	return xs[len(xs)/2]
 }
 
-// Gate is a set of thresholds the run must meet. A nil field is not checked.
 type Gate struct {
 	MinRecall    *float64
 	MinPrecision *float64
 	MaxFPR       *float64
-	// MinRunRecall and MaxRunFPR gate the run-level matrix.
+
 	MinRunRecall *float64
 	MaxRunFPR    *float64
 }
 
-// Check returns the ways s misses the gate.
-//
-// A threshold on a metric the corpus cannot compute is a violation, not a pass. "No
-// hostile steps, so recall is undefined" is what a corpus with its ground-truth
-// annotations stripped looks like, and a gate that waved it through would report green
-// on a run that measured nothing.
 func (g Gate) Check(s Summary) []string {
 	var v []string
 	if s.Failed > 0 {
@@ -438,11 +394,8 @@ func pct(n, d int64) string {
 	return fmt.Sprintf("%.1f%%", 100*float64(n)/float64(d))
 }
 
-// listAllBelow is the corpus size up to which every scenario is listed by default.
 const listAllBelow = 40
 
-// WriteText renders a run for a person. verbose lists every step; otherwise only
-// scenarios with a failure show their steps.
 func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 	fmt.Fprintf(w, "ambit-replay: %d scenarios, %d steps", s.Scenarios, s.Steps)
 	if s.Ignored > 0 {
@@ -456,8 +409,7 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 			width = n
 		}
 	}
-	// A converted benchmark can hold thousands of scenarios. Listing every passing one
-	// buries the failures, so past a small corpus only failures are listed unless -v.
+
 	listAll := verbose || len(results) <= listAllBelow
 	hidden := 0
 	for _, r := range results {
@@ -608,9 +560,7 @@ func edgeSummary(r *Result) string {
 	case hostile > 0:
 		return fmt.Sprintf("%shostile %d, caught %d", run, hostile, caught)
 	case r.Scenario.StepsUnlabeled:
-		// No step carries ground truth, so an edge here is neither right nor wrong at the
-		// step level; calling it a false positive would be the error steps_unlabeled exists
-		// to prevent.
+
 		return fmt.Sprintf("%s%d edge(s) on unlabeled steps", run, edges)
 	case edges > 0:
 		return fmt.Sprintf("%s%d false-positive edge(s)", run, edges)
@@ -651,17 +601,11 @@ func orDash(s string) string {
 	return s
 }
 
-// Report is the machine-readable form of a run. It carries no event ids or timestamps, so
-// two runs over the same corpus and the same code are byte-identical and a diff between
-// commits shows a change in behavior and nothing else. Taint labels do carry domain
-// digests ("web:hmac:..."); they are keyed with the fixed, public replay key, so they are
-// deterministic and conceal nothing the input corpus does not already contain.
 type Report struct {
 	Summary   Summary   `json:"summary"`
 	Scenarios []*Result `json:"scenarios"`
 }
 
-// WriteJSON renders a run as JSON.
 func WriteJSON(w io.Writer, results []*Result, s Summary) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

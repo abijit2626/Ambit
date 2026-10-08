@@ -12,10 +12,6 @@ import (
 	"time"
 )
 
-// fakeServer models a real MCP server: it answers a request only after receiving
-// it. That causality is the point of the test — a pre-canned response stream would
-// let the response reach the analyzer before the request, which is exactly the bug
-// mcp.ObserveFirst exists to prevent and would therefore hide it.
 type fakeServer struct {
 	in       io.Reader
 	out      io.Writer
@@ -45,10 +41,6 @@ func (f *fakeServer) run(done chan<- struct{}, closeOut func()) {
 	}
 }
 
-// requestID pulls the id out of a request so responses carry the matching one, as a
-// real server's would. Getting this wrong in a fake is worth guarding against: a
-// response with a stale id is unmatchable, and the test would report a detection gap
-// that exists only in the fixture.
 var requestID = regexp.MustCompile(`"id"\s*:\s*(\d+)`)
 
 func (f *fakeServer) respond(request []byte) string {
@@ -67,11 +59,6 @@ func (f *fakeServer) respond(request []byte) string {
 	return ""
 }
 
-// TestProxyIsByteExactBothDirections is the inertness guarantee at the process
-// boundary: whatever the client sends reaches the server unchanged, whatever the
-// server answers reaches the client unchanged, and nothing else is ever written to
-// stdout. A stray byte here presents as a mysteriously broken MCP server, and the
-// developer has no way to tell it was us.
 func TestProxyIsByteExactBothDirections(t *testing.T) {
 	f := newFixture(t, true)
 
@@ -91,8 +78,7 @@ func TestProxyIsByteExactBothDirections(t *testing.T) {
 		ToServer:   toServerW,
 		FromServer: fromServerR,
 		ToClient:   &toClient,
-		// Closing the server's stdin is what lets the wrapped process finish, which
-		// is what ends the session.
+
 		CloseServerIn: func() { toServerW.Close() },
 		Analyzer:      f.an,
 		Logger:        quietLogger(),
@@ -114,7 +100,6 @@ func TestProxyIsByteExactBothDirections(t *testing.T) {
 		t.Error("multibyte content did not survive the relay")
 	}
 
-	// And the analysis still happened, off the forwarding path.
 	reports := f.close(t)
 	rep := reportFor(t, reports, TriggerToolsList)
 	if len(rep.Tools) != 2 {
@@ -131,9 +116,6 @@ func TestProxyIsByteExactBothDirections(t *testing.T) {
 	}
 }
 
-// TestProxyMatchesResponsesUnderLoad hammers the ordering guarantee: many
-// request/response pairs answered as fast as the fake server can manage. Every
-// listing must still be recognized, because an unmatched response is silent.
 func TestProxyMatchesResponsesUnderLoad(t *testing.T) {
 	f := newFixture(t, true)
 
@@ -145,8 +127,7 @@ func TestProxyMatchesResponsesUnderLoad(t *testing.T) {
 
 	toServerR, toServerW := io.Pipe()
 	fromServerR, fromServerW := io.Pipe()
-	// Responds immediately to every request, which is the timing that exposes an
-	// observe-after-forward ordering bug.
+
 	server := &fakeServer{in: toServerR, out: fromServerW}
 	serverDone := make(chan struct{})
 	go server.run(serverDone, func() { fromServerW.Close() })
@@ -175,9 +156,7 @@ func TestProxyMatchesResponsesUnderLoad(t *testing.T) {
 		}
 	}
 	st := f.an.Stats()
-	// Frames may legitimately be dropped under flood (the queue is bounded and the
-	// relay must never block), so the assertion is that nothing was silently lost:
-	// every listing either produced a report or was counted as a dropped frame.
+
 	if int64(listings)+st.FramesDropped < rounds {
 		t.Errorf("%d listings reported and %d frames dropped, which does not account for %d requests",
 			listings, st.FramesDropped, rounds)
@@ -187,10 +166,6 @@ func TestProxyMatchesResponsesUnderLoad(t *testing.T) {
 	}
 }
 
-// TestProxySurvivesAHostileServer: garbage, an enormous frame and a batch all go
-// through untouched. The interposer declines to parse them and forwards anyway,
-// because a server the interposer cannot understand is still a server the developer
-// is using.
 func TestProxySurvivesAHostileServer(t *testing.T) {
 	f := newFixture(t, true)
 
@@ -218,14 +193,13 @@ func TestProxySurvivesAHostileServer(t *testing.T) {
 	}
 
 	reports := f.close(t)
-	// The notification still got through the noise.
+
 	reportFor(t, reports, TriggerNotification)
 	if st := f.an.Stats(); st.FramesUnparsed != 2 {
 		t.Errorf("FramesUnparsed = %d, want 2", st.FramesUnparsed)
 	}
 }
 
-// failingWriter stands in for a client that has gone away mid-session.
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errWriteClosed }

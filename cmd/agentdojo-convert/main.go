@@ -1,16 +1,3 @@
-// Command agentdojo-convert turns AgentDojo run logs into ambit replay trajectories.
-//
-//	agentdojo-convert -out converted/ path/to/agentdojo/runs/<model>
-//	ambit-replay converted/
-//
-// It walks each path for *.json run logs, writes one .jsonl trajectory per run into -out
-// (flat, so ambit-replay can read the directory), and prints what it converted by outcome.
-// See internal/agentdojo for the mapping and, more importantly, the ground truth it does
-// and does not claim.
-//
-// Exit status: 0 on success, 1 on any error. An unreadable or malformed run log is an
-// error, not a skip: a converter that quietly drops the files it cannot parse reports a
-// measurement over a corpus nobody chose.
 package main
 
 import (
@@ -49,9 +36,7 @@ func run() int {
 }
 
 func convert(outDir string, paths []string) error {
-	// Refuse a directory that already holds trajectories. Mixing a previous conversion's
-	// files with this one's would replay a corpus that is neither, and nothing downstream
-	// could tell.
+
 	if ents, err := os.ReadDir(outDir); err == nil {
 		for _, e := range ents {
 			if strings.HasSuffix(e.Name(), ".jsonl") {

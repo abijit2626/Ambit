@@ -59,17 +59,13 @@ func TestHandlerRejectsBadInput(t *testing.T) {
 	})
 
 	t.Run("missing server", func(t *testing.T) {
-		// Without a server name the report cannot be turned into an event that
-		// names a tool, so it is refused rather than recorded against nothing.
+
 		if rr := postReport(t, h, `{"schema_v":1,"trigger":"tools_list"}`); rr.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 		}
 	})
 }
 
-// TestHandlerAcceptsASchemaMismatchLoudly: a version skew must not present as a
-// server with nothing to report, so the report is still delivered and the mismatch
-// is logged.
 func TestHandlerAcceptsASchemaMismatchLoudly(t *testing.T) {
 	var logged bytes.Buffer
 	var got *Report
@@ -90,8 +86,7 @@ func TestHandlerAcceptsASchemaMismatchLoudly(t *testing.T) {
 func TestHandlerBoundsTheBody(t *testing.T) {
 	var got *Report
 	h := NewHandler(func(rep *Report) { got = rep }, quietLogger())
-	// A body past the bound is truncated by the limit reader, so it fails to parse
-	// rather than being buffered without limit.
+
 	huge := `{"schema_v":1,"server":"wiki","pad":"` + strings.Repeat("x", maxReportBytes+1024) + `"}`
 	if rr := postReport(t, h, huge); rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)

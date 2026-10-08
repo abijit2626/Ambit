@@ -13,7 +13,6 @@ import (
 
 func tp(b bool) *bool { return &b }
 
-// pre builds a PreToolUse result with the given ground truth and strongest edge.
 func pre(hostile *bool, class string, conf float64) StepResult {
 	st := StepResult{Produced: true, Kind: event.KindToolPre, Hostile: hostile}
 	if class != "" {
@@ -26,12 +25,12 @@ func resultOf(steps ...StepResult) *Result { return &Result{Steps: steps} }
 
 func TestConfusionCountsEachQuadrant(t *testing.T) {
 	r := resultOf(
-		pre(tp(true), "url", 0.95),  // TP
-		pre(tp(true), "", 0),        // FN
-		pre(tp(false), "url", 0.95), // FP
-		pre(tp(false), "", 0),       // TN
-		pre(nil, "", 0),             // unannotated: not hostile, so TN
-		pre(nil, "domain", 0.80),    // unannotated with an edge: FP
+		pre(tp(true), "url", 0.95),
+		pre(tp(true), "", 0),
+		pre(tp(false), "url", 0.95),
+		pre(tp(false), "", 0),
+		pre(nil, "", 0),
+		pre(nil, "domain", 0.80),
 	)
 	c := Summarize([]*Result{r}, 0).Confusion
 	if c != (Confusion{TP: 1, FP: 2, FN: 1, TN: 2}) {
@@ -107,7 +106,7 @@ func TestSweepHasOnePointPerObservedConfidence(t *testing.T) {
 			t.Errorf("floors = %v, want %v", floors, want)
 		}
 	}
-	// Raising the floor can only remove detections, never add them.
+
 	for i := 1; i < len(s.Sweep); i++ {
 		if s.Sweep[i].Confusion.TP+s.Sweep[i].Confusion.FP > s.Sweep[i-1].Confusion.TP+s.Sweep[i-1].Confusion.FP {
 			t.Errorf("a higher floor produced more detections: %+v", s.Sweep)
@@ -203,13 +202,8 @@ func TestGate(t *testing.T) {
 	}
 }
 
-// A threshold on a metric the corpus cannot compute must fail. A corpus with its ground
-// truth stripped has no hostile step, and a gate that waved it through would report green
-// on a run that measured nothing.
 func TestGateFailsWhenTheMetricItGatesIsUndefined(t *testing.T) {
-	// Thresholds a computed zero would SATISFY (recall >= 0, precision >= 0, rate <= 1).
-	// A threshold like 0.5 would not discriminate: an undefined value that leaked through
-	// as 0 would fail it for the wrong reason.
+
 	noHostile := Summarize([]*Result{resultOf(pre(nil, "", 0))}, 0)
 	if v := (Gate{MinRecall: f64(0)}).Check(noHostile); len(v) == 0 {
 		t.Error("-min-recall passed on a corpus with no hostile step")
@@ -286,11 +280,11 @@ func runResult(hostile *bool, unlabeled bool, steps ...StepResult) *Result {
 
 func TestRunLevelConfusion(t *testing.T) {
 	s := Summarize([]*Result{
-		runResult(tp(true), true, pre(nil, "url", 0.9)),     // hostile run with an edge: TP
-		runResult(tp(true), true, pre(nil, "", 0)),          // hostile run, no edge: FN
-		runResult(tp(false), false, pre(nil, "email", 0.9)), // benign run with an edge: FP
-		runResult(tp(false), false, pre(nil, "", 0)),        // benign run, quiet: TN
-		runResult(nil, true, pre(nil, "url", 0.9)),          // no run label: left out
+		runResult(tp(true), true, pre(nil, "url", 0.9)),
+		runResult(tp(true), true, pre(nil, "", 0)),
+		runResult(tp(false), false, pre(nil, "email", 0.9)),
+		runResult(tp(false), false, pre(nil, "", 0)),
+		runResult(nil, true, pre(nil, "url", 0.9)),
 	}, 0)
 	if s.Runs != (Confusion{TP: 1, FN: 1, FP: 1, TN: 1}) {
 		t.Errorf("runs = %+v, want one of each", s.Runs)
@@ -310,8 +304,6 @@ func TestRunLevelRespectsTheConfidenceFloor(t *testing.T) {
 	}
 }
 
-// The reason steps_unlabeled exists: without it, an edge on the attacker's own call in an
-// attack run would be scored as a false positive.
 func TestUnlabeledStepsStayOutOfTheStepMatrix(t *testing.T) {
 	s := Summarize([]*Result{
 		runResult(tp(true), true, pre(nil, "url", 0.95), pre(nil, "", 0)),
@@ -336,7 +328,7 @@ func TestRunGates(t *testing.T) {
 	if v := (Gate{MaxRunFPR: f64(0.5)}).Check(s); len(v) == 0 {
 		t.Error("run FPR 1 passed a 0.5 maximum")
 	}
-	// Undefined must fail even at thresholds a zero would satisfy.
+
 	none := Summarize([]*Result{runResult(nil, false, pre(nil, "", 0))}, 0)
 	if v := (Gate{MinRunRecall: f64(0)}).Check(none); len(v) == 0 {
 		t.Error("-min-run-recall passed with no hostile run")
@@ -375,12 +367,12 @@ func gateStep(hostile *bool, session, turn event.Decision) StepResult {
 func TestGateSummaryPerScoping(t *testing.T) {
 	s := Summarize([]*Result{
 		{Scenario: Header{Hostile: tp(true)}, Steps: []StepResult{
-			gateStep(tp(true), event.DecisionDeny, event.DecisionDeny), // caught by both
-			gateStep(tp(true), event.DecisionNone, event.DecisionNone), // missed by both
+			gateStep(tp(true), event.DecisionDeny, event.DecisionDeny),
+			gateStep(tp(true), event.DecisionNone, event.DecisionNone),
 		}},
 		{Scenario: Header{Hostile: tp(false)}, Steps: []StepResult{
-			gateStep(tp(false), event.DecisionAsk, event.DecisionNone),              // session interrupts, turn does not
-			gateStep(tp(false), event.DecisionAllowAlert, event.DecisionAllowAlert), // alert never blocks
+			gateStep(tp(false), event.DecisionAsk, event.DecisionNone),
+			gateStep(tp(false), event.DecisionAllowAlert, event.DecisionAllowAlert),
 		}},
 	}, 0)
 	if len(s.Gate) != 2 || s.Gate[0].Scoping != event.ScopingSession || s.Gate[1].Scoping != event.ScopingTurn {

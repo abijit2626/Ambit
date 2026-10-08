@@ -1,10 +1,3 @@
-// Package filter decides which events cross to Wazuh.
-//
-// This is load-bearing in both directions. Too permissive and the indexer drowns
-// in ordinary file reads — Wazuh is a SIEM, not an analytics warehouse, and the
-// estimate is ~300k events/day for 63 agents. Too restrictive and detection goes
-// blind. The full trajectory stays in the local spool either way; only the
-// security-relevant slice crosses. See docs/04-data-model.md.
 package filter
 
 import (
@@ -14,15 +7,11 @@ import (
 	"github.com/abijit2626/ambit/internal/event"
 )
 
-// Verdict says whether an event crosses and why. The reason is kept for the M0
-// exit criterion that measures the interesting fraction: without it there is no
-// way to tell which criterion is responsible for the volume.
 type Verdict struct {
 	Cross  bool
 	Reason string
 }
 
-// Reasons for crossing.
 const (
 	ReasonAlwaysKind     = "always_kind"
 	ReasonDecision       = "policy_decision"
@@ -40,37 +29,27 @@ const (
 	ReasonNotInteresting = ""
 )
 
-// alwaysCross are the low-volume kinds that cross unconditionally. Each is
-// either a detector input with no high-volume equivalent or is rare enough that
-// volume is not a concern.
 var alwaysCross = map[event.Kind]bool{
-	event.KindSessionStart:       true, // D1 needs entrypoint and permission_mode
+	event.KindSessionStart:       true,
 	event.KindSessionEnd:         true,
-	event.KindToolFail:           true, // blocked-attempt signal
+	event.KindToolFail:           true,
 	event.KindPermissionRequest:  true,
-	event.KindPermissionDenied:   true, // attack-attempt signal
-	event.KindInstructionsLoaded: true, // D8
-	event.KindConfigChange:       true, // D6
-	event.KindFileChanged:        true, // D6
+	event.KindPermissionDenied:   true,
+	event.KindInstructionsLoaded: true,
+	event.KindConfigChange:       true,
+	event.KindFileChanged:        true,
 	event.KindSubagentStart:      true,
 	event.KindSubagentStop:       true,
-	event.KindCompact:            true, // needed to interpret R2 state
-	event.KindAmbitdHealth:       true, // D7, D11
-	event.KindPromptSubmit:       true, // metadata only; see Sanitize
+	event.KindCompact:            true,
+	event.KindAmbitdHealth:       true,
+	event.KindPromptSubmit:       true,
 }
 
-// Config tunes the filter.
 type Config struct {
-	// SampleRate is the fraction of otherwise-uninteresting tool events that
-	// cross anyway, so the SIEM holds enough ordinary traffic to baseline
-	// against. 0.005 is the documented starting point.
 	SampleRate float64
-	// DriftThreshold is the goal-drift score at or above which a score event
-	// crosses. Below it, scores stay in the spool.
+
 	DriftThreshold float64
-	// TrustedMCPServers are servers whose results do not by themselves make an
-	// event interesting. Only an explicitly classified server qualifies: a
-	// server merely claiming readOnlyHint earns nothing.
+
 	TrustedMCPServers map[string]bool
 }
 
@@ -82,10 +61,9 @@ func DefaultConfig() Config {
 	}
 }
 
-// Filter decides what crosses.
 type Filter struct {
 	cfg Config
-	// sample is injected so tests are deterministic.
+
 	sample func() float64
 }
 
@@ -93,17 +71,14 @@ func New(cfg Config) *Filter {
 	return &Filter{cfg: cfg, sample: rand.Float64}
 }
 
-// NewWithSampler is for tests and for a deployment that wants a deterministic
-// sampler keyed on the event id.
 func NewWithSampler(cfg Config, sample func() float64) *Filter {
 	return &Filter{cfg: cfg, sample: sample}
 }
 
-// Decide returns whether the event crosses to Wazuh.
 func (f *Filter) Decide(e *event.Event) Verdict {
 	switch e.Kind {
 	case event.KindGoalDriftScore:
-		// One score per tool call is the firehose again; only notable ones cross.
+
 		if e.Scores.GoalDrift != nil && *e.Scores.GoalDrift >= f.cfg.DriftThreshold {
 			return Verdict{true, ReasonDriftAbove}
 		}
@@ -117,30 +92,14 @@ func (f *Filter) Decide(e *event.Event) Verdict {
 	if alwaysCross[e.Kind] {
 		return Verdict{true, ReasonAlwaysKind}
 	}
-	// Unknown kinds cross. A new event kind that silently stopped reaching the
-	// SIEM would be a detection gap nobody notices; excess volume is at least
-	// visible.
+
 	return Verdict{true, ReasonAlwaysKind}
 }
 
-// decideMCPList decides which interposer listing events cross.
-//
-// docs/04-data-model.md budgets mcp_list at one event per server per session, and
-// the per-server summary is that event: it always crosses, because the inventory of
-// what the fleet trusts is the point of M1. The per-tool events carry the detail,
-// and only the ones that say something cross — a 60-tool server matching its
-// approved baseline would otherwise spend 60 events per session reporting that
-// nothing happened, which is the firehose docs/04 exists to prevent. Every tool is
-// in the local spool either way, so an investigation loses nothing.
-//
-// Note the direction of the default: anything that is not a quiet, known state
-// crosses. A state this function has never heard of is a new verdict somebody added
-// without updating the filter, and the safe reading of that is "interesting".
 func (f *Filter) decideMCPList(e *event.Event) Verdict {
 	m := mcpBlock(e)
 	if m == nil {
-		// A listing event with no MCP block is malformed. It crosses: a silent
-		// drop here would hide a bug in our own emission path.
+
 		return Verdict{true, ReasonMCPListing}
 	}
 	if m.Tool == "" {
@@ -170,9 +129,7 @@ func (f *Filter) decideTool(e *event.Event) Verdict {
 	if len(e.Provenance.Edges) > 0 {
 		return Verdict{true, ReasonProvEdge}
 	}
-	// Only the transition crosses, not every subsequent event in a session whose
-	// bits are already set — otherwise one untrusted fetch makes the rest of the
-	// session unconditionally interesting.
+
 	if e.R2.Transition {
 		return Verdict{true, ReasonR2Transition}
 	}
@@ -193,20 +150,11 @@ func (f *Filter) decideTool(e *event.Event) Verdict {
 			return Verdict{true, ReasonNetworkCmd}
 		}
 		if m := t.MCP; m != nil {
-			// Inert until M2, and deliberately left in place. Annotations reach us from
-			// tools/list, which only mcp-interpose sees; a hook payload for a tool CALL
-			// carries none, so this is never true on a tool event today. The criterion
-			// stays because the join — ambitd caching the interposer's per-tool
-			// annotations and enriching call events — is M2 work, and because the next
-			// criterion makes those same events cross anyway, so nothing is missed in
-			// the meantime.
+
 			if m.Annotations.DestructiveHint != nil && *m.Annotations.DestructiveHint {
 				return Verdict{true, ReasonMCPRisk}
 			}
-			// A server that has not been explicitly classified as trusted is
-			// interesting. Note the direction: absence of classification makes
-			// an event cross, and a server's own claim about itself never makes
-			// one stop crossing.
+
 			if m.Server != "" && !f.cfg.TrustedMCPServers[m.Server] {
 				return Verdict{true, ReasonMCPRisk}
 			}
@@ -219,15 +167,7 @@ func (f *Filter) decideTool(e *event.Event) Verdict {
 	return Verdict{false, ReasonNotInteresting}
 }
 
-// Sanitize strips fields that must not cross even on an event that does.
-//
-// Currently prompt text: prompt_submit crosses because its presence or absence
-// is D1's core signal, but the text itself is sensitive and no rule needs it.
-// The text stays in the rich event in the local spool.
 func Sanitize(s *event.SIEMEvent) *event.SIEMEvent {
-	// The flattened representation never carries prompt text by construction —
-	// there is no field for it. This function exists as the single place to add
-	// such stripping, and as somewhere the intent is stated, so a future field
-	// addition has an obvious home.
+
 	return s
 }

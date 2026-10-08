@@ -28,15 +28,15 @@ func TestToolLabelsExactGlobAndUnion(t *testing.T) {
 		want ToolLabels
 		ok   bool
 	}{
-		// Exact entry and the get_* glob both match: their labels union.
+
 		{"get_balance", ToolLabels{Sensitive: true, ReadOnly: true, Names: []string{"read_only", "sensitive"}}, true},
 		{"get_iban", ToolLabels{ReadOnly: true, Names: []string{"read_only"}}, true},
-		// Two globs match.
+
 		{"get_history_all", ToolLabels{Untrusted: true, ReadOnly: true, Names: []string{"read_only", "untrusted"}}, true},
 		{"read_file", ToolLabels{Untrusted: true, ReadOnly: true, Names: []string{"read_only", "untrusted"}}, true},
-		// Classified with no labels: acts, carries neither.
+
 		{"send_money", ToolLabels{}, true},
-		// Not classified at all: the caller keeps the server-level default.
+
 		{"delete_account", ToolLabels{}, false},
 	}
 	for _, tc := range cases {
@@ -51,8 +51,6 @@ func TestToolLabelsExactGlobAndUnion(t *testing.T) {
 	}
 }
 
-// The result must not depend on Go's random map order, or a tool's bits could change
-// between runs of the same daemon.
 func TestToolLabelsAreDeterministic(t *testing.T) {
 	c := labelled()
 	first, _ := c.ToolLabels("bank", "get_balance")
@@ -64,8 +62,6 @@ func TestToolLabelsAreDeterministic(t *testing.T) {
 	}
 }
 
-// An unknown label sets no bit and a bad pattern matches nothing. Both would fail open
-// silently, so both are configuration errors.
 func TestValidateRejectsLabelsThatWouldFailOpen(t *testing.T) {
 	for name, m := range map[string]map[string]map[string][]string{
 		"unknown label":     {"bank": {"read_file": {"untrustd"}}},
@@ -86,8 +82,6 @@ func TestValidateRejectsLabelsThatWouldFailOpen(t *testing.T) {
 	}
 }
 
-// The label file the AgentDojo measurement uses must load: a typo in it would fail the
-// measurement script, or worse, measure with a classification nobody intended.
 func TestShippedAgentDojoLabelsLoad(t *testing.T) {
 	c, err := Load(filepath.Join("..", "..", "testdata", "agentdojo", "mcp-tool-labels.json"))
 	if err != nil {

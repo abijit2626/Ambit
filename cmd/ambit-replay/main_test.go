@@ -8,7 +8,6 @@ import (
 
 const corpus = "../../testdata/replay"
 
-// invoke runs the command with the given arguments and returns its exit status.
 func invoke(t *testing.T, args ...string) int {
 	t.Helper()
 	old := os.Args
@@ -43,7 +42,6 @@ func TestExitStatuses(t *testing.T) {
 	}
 }
 
-// A failing assertion must fail the run, or the corpus is decoration.
 func TestAFailingAssertionExitsTwo(t *testing.T) {
 	d := t.TempDir()
 	body := `{"payload":{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/home/dev/r","tool_name":"Read","tool_input":{"file_path":"/home/dev/r/a.go"}},"expect":{"edge":true}}` + "\n"
@@ -55,7 +53,6 @@ func TestAFailingAssertionExitsTwo(t *testing.T) {
 	}
 }
 
-// A gate on a metric the corpus cannot compute must fail, not pass.
 func TestAGateOnAnUndefinedMetricExitsTwo(t *testing.T) {
 	d := t.TempDir()
 	body := `{"hook_event_name":"SessionStart","session_id":"s"}` + "\n"
