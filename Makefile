@@ -1,5 +1,6 @@
 BIN     := ambitd
 BIN2    := mcp-interpose
+BIN3    := ambit-replay
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
@@ -7,13 +8,14 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 # without one, so do it here when building on Windows (GNU make sets OS=Windows_NT).
 EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 
-.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures
+.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures replay
 
 all: check build
 
 build:
 	go build $(LDFLAGS) -o bin/$(BIN)$(EXE) ./cmd/ambitd
 	go build $(LDFLAGS) -o bin/$(BIN2)$(EXE) ./cmd/mcp-interpose
+	go build $(LDFLAGS) -o bin/$(BIN3)$(EXE) ./cmd/ambit-replay
 
 test:
 	go test ./...
@@ -65,3 +67,11 @@ fixtures: build
 
 clean:
 	rm -rf bin
+
+# Replay the trajectory corpus through the real collector and print precision, recall, the
+# confidence-floor sweep and Rule-of-Two saturation. Exits non-zero if any scenario's
+# assertions fail. In-process against in-memory sinks: it never touches a running ambitd,
+# the spool or the Wazuh sink. `go test ./...` runs the same corpus as a regression test.
+# Pass extra flags with ARGS, e.g. `make replay ARGS="-v -min-confidence 0.9"`.
+replay: build
+	./bin/$(BIN3)$(EXE) $(ARGS) testdata/replay
