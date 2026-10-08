@@ -53,7 +53,7 @@ func fullEvent() *Event {
 		R2:     R2{A: true, B: true, C: false, SetBy: "01JA", Transition: true},
 		Policy: Policy{Decision: DecisionDeny, Reason: "r2 third bit", RuleIDs: []string{"r2.egress.deny", "prov.domain.match"}, BundleVersion: "2026-09-20.3", LatencyUS: 1840, Shadow: true},
 		Scores: Scores{GoalDrift: &drift, DriftScorerV: "v1"},
-		Config: &ConfigInfo{Source: "user_settings", PathDigest: "hmac:cfg", Zone: ZoneHome, Trusted: false},
+		Config: &ConfigInfo{Source: "user_settings", LoadReason: "session_start", PathDigest: "hmac:cfg", Zone: ZoneHome, Trusted: false},
 		Health: &Health{Status: "ok", QueueDepth: 3, DroppedEvents: 0},
 	}
 }
@@ -172,6 +172,22 @@ func TestFlattenPicksHighestSeverityPath(t *testing.T) {
 	}
 	if s.PathCount != 3 {
 		t.Errorf("PathCount = %d, want 3: cardinality must survive for D2", s.PathCount)
+	}
+}
+
+// An InstructionsLoaded event carries load_reason and no config_source. D8's description and
+// runbook both rely on the reason being on the SIEM event; it was once dropped here, so the
+// rule printed an empty reason and the runbook described a field that did not exist.
+func TestFlattenCarriesTheInstructionLoadReason(t *testing.T) {
+	e := configEvent()
+	e.Kind = KindInstructionsLoaded
+	e.Config = &ConfigInfo{LoadReason: "file_read", PathDigest: "hmac:i", Zone: ZoneUntrusted}
+	s := Flatten(e)
+	if s.ConfigLoadReason != "file_read" {
+		t.Errorf("ConfigLoadReason = %q, want file_read", s.ConfigLoadReason)
+	}
+	if s.ConfigSource != "" {
+		t.Errorf("ConfigSource = %q: an instructions_loaded event has none, and the reason must not be smuggled into it", s.ConfigSource)
 	}
 }
 

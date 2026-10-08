@@ -23,8 +23,9 @@ the repo-carried injection route, and `InstructionsLoaded` is the only event tha
   something git reports as recently created and untracked. **An untrusted zone overrides a
   trusted repository prefix**: a `CLAUDE.md` inside `node_modules` of an approved repo is
   dependency-carried, and the endpoint classifies it as untrusted for exactly that reason.
-- `config_source` carries the load reason, which distinguishes a file read at session start
-  from one pulled in mid-session.
+- `config_load_reason` carries why the file loaded, which distinguishes a file read at session
+  start (`session_start`) from one pulled in later. Values are passed through as Claude Code
+  reports them, so expect others.
 
 ## What it does not assert
 
