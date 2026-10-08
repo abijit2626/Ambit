@@ -74,6 +74,17 @@ type Header struct {
 	Description string           `json:"description"`
 	Tags        []string         `json:"tags"`
 	Config      *ConfigOverrides `json:"config"`
+	// Hostile is ground truth for the whole trajectory: it contains an attack that
+	// succeeded. It feeds the run-level confusion matrix, where a run is positive if any
+	// action in it drew an edge. Nil means the run carries no run-level label and is left
+	// out of that matrix, which is the right answer for a run whose outcome is ambiguous.
+	Hostile *bool `json:"hostile"`
+	// StepsUnlabeled says the scenario's actions carry no ground truth at all, so they
+	// must not count as benign in the step-level matrix. Without it every action of an
+	// attack run would default to benign, and an edge on the attacker's own exfiltration
+	// call would be scored as a false positive. A corpus converted from a benchmark that
+	// labels runs but not calls sets it on its attack runs.
+	StepsUnlabeled bool `json:"steps_unlabeled"`
 }
 
 // ConfigOverrides adjust the collector configuration for one scenario. A nil slice
@@ -165,6 +176,13 @@ func Parse(r io.Reader, name string) (*Scenario, error) {
 	}
 	if len(sc.Steps) == 0 {
 		return nil, fmt.Errorf("%s: no steps; a scenario with nothing in it would pass every check", name)
+	}
+	if sc.StepsUnlabeled {
+		for _, st := range sc.Steps {
+			if st.Hostile != nil {
+				return nil, fmt.Errorf("%s:%d: the header says steps_unlabeled, but this step is labeled hostile=%v", name, st.Line, *st.Hostile)
+			}
+		}
 	}
 	return sc, nil
 }

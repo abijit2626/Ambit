@@ -34,6 +34,8 @@ func run() int {
 		minRecall    = fs.Float64("min-recall", -1, "fail if recall is below this (needs derived steps in the corpus)")
 		minPrecision = fs.Float64("min-precision", -1, "fail if precision is below this")
 		maxFPR       = fs.Float64("max-fpr", -1, "fail if the false-positive rate is above this")
+		minRunRecall = fs.Float64("min-run-recall", -1, "fail if run-level recall is below this (needs runs labeled hostile)")
+		maxRunFPR    = fs.Float64("max-run-fpr", -1, "fail if the run-level false-positive rate is above this")
 	)
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: ambit-replay [flags] <scenario.jsonl | directory>...")
@@ -85,6 +87,12 @@ func run() int {
 	}
 	if *maxFPR >= 0 {
 		gate.MaxFPR = maxFPR
+	}
+	if *minRunRecall >= 0 {
+		gate.MinRunRecall = minRunRecall
+	}
+	if *maxRunFPR >= 0 {
+		gate.MaxRunFPR = maxRunFPR
 	}
 	violations := gate.Check(sum)
 

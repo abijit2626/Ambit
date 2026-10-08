@@ -3,6 +3,7 @@ package replay
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -276,5 +277,93 @@ func TestWriteJSONIsValidAndCarriesTheSummary(t *testing.T) {
 	}
 	if len(got.Scenarios) != 1 || got.Scenarios[0].Steps[2].EdgeClass != "url" {
 		t.Errorf("scenarios = %+v", got.Scenarios)
+	}
+}
+
+func runResult(hostile *bool, unlabeled bool, steps ...StepResult) *Result {
+	return &Result{Scenario: Header{Hostile: hostile, StepsUnlabeled: unlabeled}, Steps: steps}
+}
+
+func TestRunLevelConfusion(t *testing.T) {
+	s := Summarize([]*Result{
+		runResult(tp(true), true, pre(nil, "url", 0.9)),     // hostile run with an edge: TP
+		runResult(tp(true), true, pre(nil, "", 0)),          // hostile run, no edge: FN
+		runResult(tp(false), false, pre(nil, "email", 0.9)), // benign run with an edge: FP
+		runResult(tp(false), false, pre(nil, "", 0)),        // benign run, quiet: TN
+		runResult(nil, true, pre(nil, "url", 0.9)),          // no run label: left out
+	}, 0)
+	if s.Runs != (Confusion{TP: 1, FN: 1, FP: 1, TN: 1}) {
+		t.Errorf("runs = %+v, want one of each", s.Runs)
+	}
+	if s.RunsUnlabeled != 1 {
+		t.Errorf("RunsUnlabeled = %d, want 1", s.RunsUnlabeled)
+	}
+}
+
+func TestRunLevelRespectsTheConfidenceFloor(t *testing.T) {
+	r := runResult(tp(false), false, pre(nil, "domain", 0.40))
+	if got := Summarize([]*Result{r}, 0).Runs; got.FP != 1 {
+		t.Errorf("at floor 0: %+v, want FP", got)
+	}
+	if got := Summarize([]*Result{r}, 0.5).Runs; got.TN != 1 {
+		t.Errorf("at floor 0.5: %+v, want the low-confidence edge not to make the run positive", got)
+	}
+}
+
+// The reason steps_unlabeled exists: without it, an edge on the attacker's own call in an
+// attack run would be scored as a false positive.
+func TestUnlabeledStepsStayOutOfTheStepMatrix(t *testing.T) {
+	s := Summarize([]*Result{
+		runResult(tp(true), true, pre(nil, "url", 0.95), pre(nil, "", 0)),
+		runResult(tp(false), false, pre(nil, "", 0)),
+	}, 0)
+	if s.Confusion != (Confusion{TN: 1}) {
+		t.Errorf("step confusion = %+v; the attack run's actions must not count as benign", s.Confusion)
+	}
+	if s.StepsUnlabeled != 2 {
+		t.Errorf("StepsUnlabeled = %d, want 2", s.StepsUnlabeled)
+	}
+}
+
+func TestRunGates(t *testing.T) {
+	s := Summarize([]*Result{
+		runResult(tp(true), true, pre(nil, "", 0)),
+		runResult(tp(false), false, pre(nil, "url", 0.9)),
+	}, 0)
+	if v := (Gate{MinRunRecall: f64(0.5)}).Check(s); len(v) == 0 {
+		t.Error("run recall 0 passed a 0.5 minimum")
+	}
+	if v := (Gate{MaxRunFPR: f64(0.5)}).Check(s); len(v) == 0 {
+		t.Error("run FPR 1 passed a 0.5 maximum")
+	}
+	// Undefined must fail even at thresholds a zero would satisfy.
+	none := Summarize([]*Result{runResult(nil, false, pre(nil, "", 0))}, 0)
+	if v := (Gate{MinRunRecall: f64(0)}).Check(none); len(v) == 0 {
+		t.Error("-min-run-recall passed with no hostile run")
+	}
+	if v := (Gate{MaxRunFPR: f64(1)}).Check(none); len(v) == 0 {
+		t.Error("-max-run-fpr passed with no benign run")
+	}
+}
+
+func TestLargeCorporaListOnlyFailuresUnlessVerbose(t *testing.T) {
+	var results []*Result
+	for i := 0; i < listAllBelow+5; i++ {
+		results = append(results, &Result{Scenario: Header{Name: fmt.Sprintf("s%03d", i)}, Steps: []StepResult{{Produced: true}}})
+	}
+	results[7].Steps[0].Failures = []string{"boom"}
+	var b bytes.Buffer
+	WriteText(&b, results, Summarize(results, 0), false)
+	out := b.String()
+	if !strings.Contains(out, "s007") || strings.Contains(out, "s008") {
+		t.Errorf("want only the failing scenario listed:\n%s", out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("(%d passing scenarios not listed", listAllBelow+4)) {
+		t.Errorf("the hidden count is missing:\n%s", out)
+	}
+	b.Reset()
+	WriteText(&b, results, Summarize(results, 0), true)
+	if !strings.Contains(b.String(), "s008") {
+		t.Error("-v must list every scenario")
 	}
 }

@@ -89,6 +89,14 @@ type Summary struct {
 	ByClass       map[string]ClassCount `json:"by_class"`
 	Sweep         []SweepPoint          `json:"sweep"`
 
+	// Runs is the confusion matrix over whole trajectories with a run-level label: a run
+	// is positive when any of its actions drew an edge at or above the floor.
+	Runs Confusion `json:"runs"`
+	// RunsUnlabeled counts scenarios with no run-level label; StepsUnlabeled counts
+	// actions left out of the step-level matrix because their scenario labels none.
+	RunsUnlabeled  int `json:"runs_unlabeled"`
+	StepsUnlabeled int `json:"steps_unlabeled"`
+
 	Sessions SessionSummary `json:"rule_of_two"`
 
 	Handled      int64               `json:"handled"`
@@ -113,13 +121,36 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 		if r.Failed() {
 			s.Failed++
 		}
+		runPositive := false
 		for _, st := range r.Steps {
 			s.Steps++
 			if !st.Produced {
 				s.Ignored++
 			}
-			if st.Produced && st.Kind == event.KindToolPre {
-				evaluated = append(evaluated, st)
+			if !st.Produced || st.Kind != event.KindToolPre {
+				continue
+			}
+			if st.Edges > 0 && st.EdgeConfidence >= minConfidence {
+				runPositive = true
+			}
+			if r.Scenario.StepsUnlabeled {
+				s.StepsUnlabeled++
+				continue
+			}
+			evaluated = append(evaluated, st)
+		}
+		if h := r.Scenario.Hostile; h == nil {
+			s.RunsUnlabeled++
+		} else {
+			switch {
+			case runPositive && *h:
+				s.Runs.TP++
+			case runPositive && !*h:
+				s.Runs.FP++
+			case !runPositive && *h:
+				s.Runs.FN++
+			default:
+				s.Runs.TN++
 			}
 		}
 		for _, se := range r.Sessions {
@@ -218,6 +249,9 @@ type Gate struct {
 	MinRecall    *float64
 	MinPrecision *float64
 	MaxFPR       *float64
+	// MinRunRecall and MaxRunFPR gate the run-level matrix.
+	MinRunRecall *float64
+	MaxRunFPR    *float64
 }
 
 // Check returns the ways s misses the gate.
@@ -249,6 +283,20 @@ func (g Gate) Check(s Summary) []string {
 			v = append(v, fmt.Sprintf("precision %.3f is below the minimum %.3f", p, *g.MinPrecision))
 		}
 	}
+	if g.MinRunRecall != nil {
+		if r, ok := s.Runs.Recall(); !ok {
+			v = append(v, "-min-run-recall set but no run is labeled hostile, so run recall is undefined")
+		} else if r < *g.MinRunRecall {
+			v = append(v, fmt.Sprintf("run recall %.3f is below the minimum %.3f", r, *g.MinRunRecall))
+		}
+	}
+	if g.MaxRunFPR != nil {
+		if f, ok := s.Runs.FPR(); !ok {
+			v = append(v, "-max-run-fpr set but no run is labeled benign, so the run false-positive rate is undefined")
+		} else if f > *g.MaxRunFPR {
+			v = append(v, fmt.Sprintf("run false-positive rate %.3f is above the maximum %.3f", f, *g.MaxRunFPR))
+		}
+	}
 	if g.MaxFPR != nil {
 		if f, ok := c.FPR(); !ok {
 			v = append(v, "-max-fpr set but the corpus has no benign tool call, so the rate is undefined")
@@ -273,6 +321,9 @@ func pct(n, d int64) string {
 	return fmt.Sprintf("%.1f%%", 100*float64(n)/float64(d))
 }
 
+// listAllBelow is the corpus size up to which every scenario is listed by default.
+const listAllBelow = 40
+
 // WriteText renders a run for a person. verbose lists every step; otherwise only
 // scenarios with a failure show their steps.
 func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
@@ -288,7 +339,15 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 			width = n
 		}
 	}
+	// A converted benchmark can hold thousands of scenarios. Listing every passing one
+	// buries the failures, so past a small corpus only failures are listed unless -v.
+	listAll := verbose || len(results) <= listAllBelow
+	hidden := 0
 	for _, r := range results {
+		if !listAll && !r.Failed() {
+			hidden++
+			continue
+		}
 		status := "PASS"
 		if r.Failed() {
 			status = "FAIL"
@@ -298,10 +357,28 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 			writeSteps(w, r, verbose)
 		}
 	}
+	if hidden > 0 {
+		fmt.Fprintf(w, "  (%d passing scenarios not listed; -v lists them)\n", hidden)
+	}
+
+	if rc := s.Runs; rc.Hostile()+rc.Benign() > 0 {
+		fmt.Fprintf(w, "\nruns (a run is positive if any action drew an edge; %d hostile, %d benign, %d unlabeled; floor %.2f)\n",
+			rc.Hostile(), rc.Benign(), s.RunsUnlabeled, s.MinConfidence)
+		fmt.Fprintf(w, "  TP %d  FP %d  FN %d  TN %d\n", rc.TP, rc.FP, rc.FN, rc.TN)
+		rp, rpok := rc.Precision()
+		rr, rrok := rc.Recall()
+		rf, rfok := rc.FPR()
+		fmt.Fprintf(w, "  precision %s   recall %s   false-positive rate %s\n", fmtRatio(rp, rpok), fmtRatio(rr, rrok), fmtRatio(rf, rfok))
+		fmt.Fprint(w, "  note: run recall counts ANY edge in a hostile run, including one on an unrelated action, so read\n")
+		fmt.Fprint(w, "  it against the run false-positive rate, which is how often benign runs draw an edge anyway\n")
+	}
 
 	c := s.Confusion
 	fmt.Fprintf(w, "\nprovenance edges (PreToolUse; ground truth: %d hostile, %d benign; floor %.2f)\n",
 		c.Hostile(), c.Benign(), s.MinConfidence)
+	if s.StepsUnlabeled > 0 {
+		fmt.Fprintf(w, "  %d actions in scenarios with unlabeled steps are left out of this matrix\n", s.StepsUnlabeled)
+	}
 	fmt.Fprintf(w, "  TP %d  FP %d  FN %d  TN %d\n", c.TP, c.FP, c.FN, c.TN)
 	p, pok := c.Precision()
 	r, rok := c.Recall()
@@ -365,13 +442,25 @@ func edgeSummary(r *Result) string {
 			edges++
 		}
 	}
+	run := ""
+	if h := r.Scenario.Hostile; h != nil {
+		run = "benign run, "
+		if *h {
+			run = "hostile run, "
+		}
+	}
 	switch {
 	case hostile > 0:
-		return fmt.Sprintf("hostile %d, caught %d", hostile, caught)
+		return fmt.Sprintf("%shostile %d, caught %d", run, hostile, caught)
+	case r.Scenario.StepsUnlabeled:
+		// No step carries ground truth, so an edge here is neither right nor wrong at the
+		// step level; calling it a false positive would be the error steps_unlabeled exists
+		// to prevent.
+		return fmt.Sprintf("%s%d edge(s) on unlabeled steps", run, edges)
 	case edges > 0:
-		return fmt.Sprintf("%d false-positive edge(s)", edges)
+		return fmt.Sprintf("%s%d false-positive edge(s)", run, edges)
 	}
-	return "no edges"
+	return run + "no edges"
 }
 
 func writeSteps(w io.Writer, r *Result, verbose bool) {
