@@ -12,8 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -82,6 +84,11 @@ type Config struct {
 	// here is treated as untrusted; a server's own annotations never move it
 	// onto this list.
 	TrustedMCPServers []string `json:"trusted_mcp_servers"`
+	// MCPToolLabels classify individual MCP tools: server name, then a tool name or a
+	// path.Match glob ("get_*"), then labels. See ToolLabels for what they mean and
+	// docs/03-detection.md Layer 1 for why the classification is per tool rather than
+	// per server.
+	MCPToolLabels map[string]map[string][]string `json:"mcp_tool_labels"`
 	// TrustedContentDomains are registrable domains (e.g. "example.com", not a
 	// full URL and not a subdomain unless the subdomain IS the registrable
 	// domain) whose WebFetch/WebSearch results do not set Rule-of-Two bit A. A
@@ -200,6 +207,9 @@ func (c *Config) derive() {
 
 // Validate rejects configurations that would break a documented invariant.
 func (c *Config) Validate() error {
+	if err := validateToolLabels(c.MCPToolLabels); err != nil {
+		return err
+	}
 	if c.HookAddr == "" {
 		return errors.New("config: hook_addr is required")
 	}
@@ -286,4 +296,86 @@ func samePath(a, b string) bool {
 	sa, errA := os.Stat(a)
 	sb, errB := os.Stat(b)
 	return errA == nil && errB == nil && os.SameFile(sa, sb)
+}
+
+// Tool labels. A label states what a tool's result or action IS; it is the operator's
+// classification and the one thing allowed to relax the conservative default for an
+// unclassified MCP server (every call untrusted input and an external action), because
+// a server's own annotations never may.
+const (
+	// LabelUntrusted: the tool's result carries content written by someone other than
+	// the user or the operator (email, shared files, web pages, reviews, channel names).
+	// Sets Rule-of-Two bit A and makes the result provenance ingest.
+	LabelUntrusted = "untrusted"
+	// LabelSensitive: the tool reads the user's private data (balances, account numbers,
+	// mailboxes, contacts). Sets bit B.
+	LabelSensitive = "sensitive"
+	// LabelReadOnly: the tool changes nothing and reaches nothing outside. Without it a
+	// classified tool sets bit C.
+	LabelReadOnly = "read_only"
+)
+
+var knownLabels = map[string]bool{LabelUntrusted: true, LabelSensitive: true, LabelReadOnly: true}
+
+// ToolLabels is the classification of one MCP tool.
+type ToolLabels struct {
+	Untrusted, Sensitive, ReadOnly bool
+	// Names are the labels as written, sorted, for the event.
+	Names []string
+}
+
+// ToolLabels returns the labels for server/tool and whether any entry matched. Every
+// matching entry contributes (exact names and globs alike), so the result does not
+// depend on map order. An empty label list is a valid classification: a tool that acts
+// and carries neither untrusted nor sensitive content.
+func (c *Config) ToolLabels(server, tool string) (ToolLabels, bool) {
+	entries, ok := c.MCPToolLabels[server]
+	if !ok {
+		return ToolLabels{}, false
+	}
+	var tl ToolLabels
+	matched := false
+	seen := map[string]bool{}
+	for pattern, labels := range entries {
+		if hit, _ := path.Match(pattern, tool); !hit {
+			continue
+		}
+		matched = true
+		for _, l := range labels {
+			seen[l] = true
+		}
+	}
+	if !matched {
+		return ToolLabels{}, false
+	}
+	tl.Untrusted, tl.Sensitive, tl.ReadOnly = seen[LabelUntrusted], seen[LabelSensitive], seen[LabelReadOnly]
+	for l := range seen {
+		tl.Names = append(tl.Names, l)
+	}
+	sort.Strings(tl.Names)
+	return tl, true
+}
+
+// validateToolLabels rejects a label nobody defined and a pattern path.Match cannot
+// parse. Both would otherwise fail open: an unknown label sets no bit, and a bad pattern
+// matches nothing, so the tool silently keeps or loses classification the operator
+// believes they gave it.
+func validateToolLabels(m map[string]map[string][]string) error {
+	for server, entries := range m {
+		if server == "" {
+			return errors.New("config: mcp_tool_labels has an empty server name")
+		}
+		for pattern, labels := range entries {
+			if _, err := path.Match(pattern, ""); err != nil {
+				return fmt.Errorf("config: mcp_tool_labels[%q]: bad tool pattern %q: %w", server, pattern, err)
+			}
+			for _, l := range labels {
+				if !knownLabels[l] {
+					return fmt.Errorf("config: mcp_tool_labels[%q][%q]: unknown label %q (want %s, %s or %s)",
+						server, pattern, l, LabelUntrusted, LabelSensitive, LabelReadOnly)
+				}
+			}
+		}
+	}
+	return nil
 }

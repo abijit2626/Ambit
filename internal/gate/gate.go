@@ -16,7 +16,7 @@
 //	| git push / package publish                  | A and B               | ask         |
 //	| Any other outbound network from Bash        | A and B               | deny        |
 //	| Write outside the working directory         | A and B               | ask         |
-//	| Call to an MCP server not classified internal| A and B              | ask         |
+//	| MCP call that can act (not read-only)       | A and B               | ask         |
 //	| Any action that completes A, B and C        | not all three         | allow_alert |
 //
 // Two readings of the table in docs/03 are decisions, recorded here so they are not
@@ -68,8 +68,10 @@ type Action struct {
 	WriteOutside bool
 	// BashClass is the Bash command class, empty for any other tool.
 	BashClass string
-	// MCPUnclassified: a call to an MCP server the operator has not classified internal.
-	MCPUnclassified bool
+	// MCPMayAct: an MCP call that can change state or reach the outside. For a tool the
+	// operator labelled, that is any tool not labelled read_only; otherwise any tool on a
+	// server not classified internal, the same conservative default internal/r2 applies.
+	MCPMayAct bool
 }
 
 // ActionFrom describes a tool event for the gate.
@@ -89,8 +91,12 @@ func ActionFrom(t *event.Tool, bits r2.Bits) Action {
 	if t.Bash != nil {
 		a.BashClass = t.Bash.CommandClass
 	}
-	if t.MCP != nil && t.MCP.Trust != "internal" {
-		a.MCPUnclassified = true
+	if m := t.MCP; m != nil {
+		if m.Classified {
+			a.MCPMayAct = !containsLabel(m.Labels, "read_only")
+		} else {
+			a.MCPMayAct = m.Trust != "internal"
+		}
 	}
 	return a
 }
@@ -123,9 +129,9 @@ func Evaluate(prior r2.Bits, a Action) Verdict {
 	case ab && a.WriteOutside:
 		return Verdict{event.DecisionAsk, RuleWriteOutsideAB,
 			"write outside the working directory after untrusted input and sensitive data"}
-	case ab && a.MCPUnclassified:
+	case ab && a.MCPMayAct:
 		return Verdict{event.DecisionAsk, RuleMCPAfterAB,
-			"call to an unclassified MCP server after untrusted input and sensitive data"}
+			"MCP call that can act, after untrusted input and sensitive data"}
 	}
 
 	after := prior.Or(a.Bits)
@@ -137,3 +143,12 @@ func Evaluate(prior r2.Bits, a Action) Verdict {
 }
 
 func all(b r2.Bits) bool { return b.A && b.B && b.C }
+
+func containsLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if l == want {
+			return true
+		}
+	}
+	return false
+}

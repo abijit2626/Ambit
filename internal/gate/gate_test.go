@@ -44,8 +44,8 @@ func TestEachRowFiresOnlyWhenItsPreconditionHolds(t *testing.T) {
 		{"write outside after A only", a, Action{WriteOutside: true, Bits: r2.Bits{C: true}}, event.DecisionNone, ""},
 
 		// Unclassified MCP server: needs A and B.
-		{"mcp call after A and B", ab, Action{MCPUnclassified: true, Bits: ac}, event.DecisionAsk, RuleMCPAfterAB},
-		{"mcp call after A only", a, Action{MCPUnclassified: true, Bits: ac}, event.DecisionNone, ""},
+		{"mcp call after A and B", ab, Action{MCPMayAct: true, Bits: ac}, event.DecisionAsk, RuleMCPAfterAB},
+		{"mcp call after A only", a, Action{MCPMayAct: true, Bits: ac}, event.DecisionNone, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestNoDecisionWithoutPriorBits(t *testing.T) {
 		{CredentialRead: true, Bits: b},
 		{BashClass: classify.ClassNetwork, Bits: ac},
 		{WriteOutside: true, Bits: r2.Bits{C: true}},
-		{MCPUnclassified: true, Bits: ac},
+		{MCPMayAct: true, Bits: ac},
 	} {
 		if v := Evaluate(none, act); v.Fired() {
 			t.Errorf("%+v on a fresh session = %+v, want nothing", act, v)
@@ -116,7 +116,7 @@ func TestActionFromReadsTheEvent(t *testing.T) {
 		MCP:  &event.MCP{Server: "github"},
 	}
 	got := ActionFrom(tool, ac)
-	if !got.CredentialRead || !got.WriteOutside || got.BashClass != classify.ClassNetwork || !got.MCPUnclassified || got.Bits != ac {
+	if !got.CredentialRead || !got.WriteOutside || got.BashClass != classify.ClassNetwork || !got.MCPMayAct || got.Bits != ac {
 		t.Errorf("ActionFrom = %+v", got)
 	}
 
@@ -128,10 +128,36 @@ func TestActionFromReadsTheEvent(t *testing.T) {
 		}
 	}
 	// A server the operator classified internal is not unclassified.
-	if ActionFrom(&event.Tool{MCP: &event.MCP{Server: "wiki", Trust: "internal"}}, none).MCPUnclassified {
+	if ActionFrom(&event.Tool{MCP: &event.MCP{Server: "wiki", Trust: "internal"}}, none).MCPMayAct {
 		t.Error("an internal MCP server counted as unclassified")
 	}
 	if got := ActionFrom(nil, a); got.Bits != a {
 		t.Errorf("ActionFrom(nil) = %+v", got)
+	}
+}
+
+func TestMCPMayActFollowsLabels(t *testing.T) {
+	cases := []struct {
+		name string
+		mcp  *event.MCP
+		want bool
+	}{
+		{"classified read-only", &event.MCP{Classified: true, Labels: []string{"sensitive", "read_only"}}, false},
+		{"classified write", &event.MCP{Classified: true}, true},
+		{"unclassified, untrusted server", &event.MCP{}, true},
+		{"unclassified, internal server", &event.MCP{Trust: "internal"}, false},
+		{"classified write on an internal server", &event.MCP{Trust: "internal", Classified: true}, true},
+	}
+	for _, c := range cases {
+		if got := ActionFrom(&event.Tool{MCP: c.mcp}, none).MCPMayAct; got != c.want {
+			t.Errorf("%s: MCPMayAct = %v, want %v", c.name, got, c.want)
+		}
+	}
+	// The row itself: a read-only call after A and B does not ask; an acting one does.
+	if v := Evaluate(ab, Action{MCPMayAct: false}); v.Fired() {
+		t.Errorf("read-only MCP call after A and B = %+v, want nothing", v)
+	}
+	if v := Evaluate(ab, Action{MCPMayAct: true, Bits: r2.Bits{C: true}}); v.RuleID != RuleMCPAfterAB {
+		t.Errorf("acting MCP call after A and B = %+v, want %s", v, RuleMCPAfterAB)
 	}
 }

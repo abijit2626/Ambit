@@ -221,3 +221,40 @@ func TestBits_Any(t *testing.T) {
 		t.Error("a single set bit should report Any() == true")
 	}
 }
+
+func classified(trust string, labels ...string) *event.MCP {
+	return &event.MCP{Server: "bank", Tool: "t", Trust: trust, Classified: true, Labels: labels}
+}
+
+// A classified tool's bits come from its labels alone.
+func TestClassifiedMCPToolBitsComeFromLabels(t *testing.T) {
+	cases := []struct {
+		name string
+		mcp  *event.MCP
+		want Bits
+	}{
+		{"untrusted read", classified("", "untrusted", "read_only"), Bits{A: true}},
+		{"sensitive read", classified("", "sensitive", "read_only"), Bits{B: true}},
+		{"untrusted sensitive read", classified("", "sensitive", "untrusted", "read_only"), Bits{A: true, B: true}},
+		{"write with no labels", classified(""), Bits{C: true}},
+		{"plain read", classified("", "read_only"), Bits{}},
+		// Labels apply on an internal server too: an HR system the operator trusts can
+		// still hold sensitive data.
+		{"sensitive read on an internal server", classified("internal", "sensitive", "read_only"), Bits{B: true}},
+	}
+	for _, c := range cases {
+		if got := ClassifyTool(ToolInput{ToolName: "mcp__bank__t", MCP: c.mcp}); got != c.want {
+			t.Errorf("%s: bits = %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// Without classification nothing changes: the conservative server-level default stands.
+func TestUnclassifiedMCPToolKeepsTheDefault(t *testing.T) {
+	if got := ClassifyTool(ToolInput{MCP: &event.MCP{Server: "x", Tool: "y"}}); got != (Bits{A: true, C: true}) {
+		t.Errorf("unclassified, untrusted server = %+v, want A and C", got)
+	}
+	if got := ClassifyTool(ToolInput{MCP: &event.MCP{Server: "x", Tool: "y", Trust: "internal"}}); got.Any() {
+		t.Errorf("unclassified, internal server = %+v, want nothing", got)
+	}
+}
