@@ -1,17 +1,4 @@
 #!/usr/bin/env bash
-# Measure ambit against AgentDojo's published run logs.
-#
-#   ./scripts/agentdojo-measure.sh claude-3-7-sonnet-20250219
-#   ./scripts/agentdojo-measure.sh gpt-4o-2024-05-13/banking -min-run-recall 0.5
-#
-# Each argument before the first flag names a directory under AgentDojo's runs/ (a model,
-# or model/suite). The script sparse-fetches only those directories from
-# github.com/ethz-spylab/agentdojo, converts them with agentdojo-convert and replays them
-# with ambit-replay; flags after the names go to ambit-replay. Nothing is executed from
-# the fetched repository: it is read as JSON data only.
-#
-# Pin AGENTDOJO_REF to a commit for a number someone else can reproduce exactly; the
-# default follows the repository's default branch, which can change under you.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

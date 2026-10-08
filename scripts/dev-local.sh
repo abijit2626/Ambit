@@ -1,25 +1,4 @@
 #!/usr/bin/env bash
-# Set up ambitd against your own Claude Code sessions, on your own machine.
-#
-# Why: the M0 exit criterion that blocks everything downstream is the MEASURED
-# INTERESTING FRACTION — what share of real tool calls are security-relevant
-# enough to cross to Wazuh. The design estimates 2-5%; the synthetic test mix
-# gives ~1%. If your real work comes back at 30%, the filter criteria in
-# docs/04-data-model.md tighten before M1, and every rule threshold in
-# docs/03-detection.md gets set from data instead of from a guess.
-#
-# You are the cheapest source of that number, and this needs no Wazuh, no MDM and
-# no cohort.
-#
-# This uses USER-SCOPE settings (~/.claude/settings.json), not managed settings.
-# Nothing here is fleet-wide and nothing needs admin. It is safe because ambitd is
-# inert: every hook response is {}, which means "no opinion", so Claude Code's
-# permission pipeline behaves exactly as it would with no hook installed.
-#
-# Usage:
-#   ./scripts/dev-local.sh            # install
-#   ./scripts/dev-local.sh --status    # what has been collected so far
-#   ./scripts/dev-local.sh --uninstall # remove
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -62,8 +41,6 @@ status() {
     awk -v t="$total" -v c="$crossed" 'BEGIN{printf "  fraction:   %.2f%% of all events crossed\n", (c/t)*100}'
   fi
 
-  # The number that matters is over TOOL events specifically, since that is what
-  # the 2-5% estimate in docs/04-data-model.md is about.
   if command -v python3 >/dev/null 2>&1; then
     python3 - "$TRAJECTORY" "$EVENTS" <<'PY'
 import json, sys, collections
@@ -82,9 +59,6 @@ for line in open(traj, errors="replace"):
     src = d.get("source", "?")
     kinds[k] += 1
     sources[src] += 1
-    # Only HOOK-sourced tool events count toward the fraction. OTel records also
-    # map to tool kinds, and counting them would inflate the denominator with the
-    # same tool calls observed a second time by the corroborating stream.
     if k in tool_kinds and src == "hook":
         tool_total += 1
 
@@ -98,7 +72,6 @@ try:
             continue
         if d.get("kind") in tool_kinds:
             tool_crossed += 1
-            # Infer why, in the same order the filter decides.
             if d.get("policy_decision"):
                 reasons["policy_decision"] += 1
             elif d.get("prov_edge_count"):
@@ -178,13 +151,37 @@ uninstall() {
   echo "  Delete it when you are done:  rm -rf $AMBIT_DIR"
 }
 
+usage() {
+  cat <<'USAGE'
+Set up ambitd against your own Claude Code sessions, on your own machine.
+
+Why: the M0 exit criterion that blocks everything downstream is the MEASURED
+INTERESTING FRACTION — what share of real tool calls are security-relevant
+enough to cross to Wazuh. The design estimates 2-5%; the synthetic test mix
+gives ~1%. If your real work comes back at 30%, the filter criteria in
+docs/04-data-model.md tighten before M1, and every rule threshold in
+docs/03-detection.md gets set from data instead of from a guess.
+
+You are the cheapest source of that number, and this needs no Wazuh, no MDM and
+no cohort.
+
+This uses USER-SCOPE settings (~/.claude/settings.json), not managed settings.
+Nothing here is fleet-wide and nothing needs admin. It is safe because ambitd is
+inert: every hook response is {}, which means "no opinion", so Claude Code's
+permission pipeline behaves exactly as it would with no hook installed.
+
+Usage:
+  ./scripts/dev-local.sh            # install
+  ./scripts/dev-local.sh --status    # what has been collected so far
+  ./scripts/dev-local.sh --uninstall # remove
+USAGE
+}
+
 case "${1:-install}" in
   --status|status) status; exit 0 ;;
   --uninstall|uninstall) uninstall; exit 0 ;;
-  --help|-h) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --help|-h) usage; exit 0 ;;
 esac
-
-# --- install -----------------------------------------------------------------
 
 bold "Building ambitd"
 mkdir -p "$AMBIT_DIR"
@@ -193,15 +190,6 @@ chmod 700 "$AMBIT_DIR"
 echo "  $BIN"
 
 bold "Writing config"
-# home is detected by ambitd; trusted_repo_paths marks which CLAUDE.md files are
-# expected, so an instruction file from anywhere else shows up as a D8 candidate.
-#
-# baseline_dir is under $AMBIT_DIR deliberately. mcp-interpose runs as you, not as a
-# system daemon, so a baseline store under /var/lib would be unwritable and every
-# listing would report as degraded rather than compared. This script does not touch
-# .mcp.json: wrapping a server is a deliberate edit you make yourself, and rewriting
-# the file our own FIM watch is pointed at would be a poor way to introduce ourselves.
-# See the README for the .mcp.json shape.
 cat > "$CONFIG" <<EOF
 {
   "hook_addr": "127.0.0.1:$HOOK_PORT",
@@ -228,9 +216,6 @@ echo "  $CONFIG"
 bold "Merging hooks into $SETTINGS"
 mkdir -p "$(dirname "$SETTINGS")"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-# Never overwrite an existing backup. Re-running this script would otherwise
-# replace the pristine copy with an already-modified one, and uninstall would
-# then "restore" settings that still contain the hooks.
 if [ -f "$SETTINGS.ambit-backup" ]; then
   echo "  backup already exists, keeping it: $SETTINGS.ambit-backup"
 else
@@ -248,7 +233,6 @@ with open(path) as f:
 
 entry = {"type": "http", "url": url}
 
-# Events with no matcher support take a bare hooks list.
 no_matcher = {"UserPromptSubmit"}
 events = [
     "PreToolUse", "PostToolUse", "PostToolUseFailure",
@@ -262,7 +246,6 @@ hooks = settings.setdefault("hooks", {})
 for ev in events:
     block = {"hooks": [entry]} if ev in no_matcher else {"matcher": ".*", "hooks": [entry]}
     existing = hooks.setdefault(ev, [])
-    # Idempotent: do not stack duplicate entries on re-run.
     if not any(
         any(h.get("url") == url for h in e.get("hooks", []))
         for e in existing if isinstance(e, dict)
@@ -274,8 +257,6 @@ env.update({
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
-    # http/json, not grpc or http/protobuf: ambitd's receiver decodes OTLP/JSON
-    # with the standard library. Port 4318 is OTLP/HTTP; 4317 is gRPC.
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
     "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{otlp_port}",
 })

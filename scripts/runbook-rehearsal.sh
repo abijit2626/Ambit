@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
-# Build the packets for a runbook rehearsal: the M1 exit criterion that someone OUTSIDE the
-# team executes a runbook against a sample alert.
-#
-#   ./scripts/runbook-rehearsal.sh -o /tmp/rehearsal              # every runbook
-#   ./scripts/runbook-rehearsal.sh -o /tmp/rehearsal -r D4,D7     # just these
-#
-# Writes two sibling directories under -o:
-#   analyst/      hand this over: a sample alert and the runbook for each detector, plus a
-#                 feedback form. Nothing in it says what the right answer is.
-#   answer-key/   keep this: the rule each alert stands for, the fields the runbook claims
-#                 it asserts, and the runbook's own escalation rules, to score against.
-#
-# The alerts are assembled OFFLINE from the rules and the generated fixtures, in Wazuh's
-# alert shape. They are not what a manager emits. For a rehearsal that is meant to count,
-# regenerate the alert on a manager (docs/06-cohort-checklist.md says how) and swap it in.
-# Runbooks whose rules read Wazuh-internal alerts or correlate over time cannot be built
-# offline; answer-key/00-manifest.md lists them with the reason.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+usage() {
+  cat >&2<<'USAGE'
+Build the packets for a runbook rehearsal: the M1 exit criterion that someone OUTSIDE the
+team executes a runbook against a sample alert.
+
+  ./scripts/runbook-rehearsal.sh -o /tmp/rehearsal              # every runbook
+  ./scripts/runbook-rehearsal.sh -o /tmp/rehearsal -r D4,D7     # just these
+
+Writes two sibling directories under -o:
+  analyst/      hand this over: a sample alert and the runbook for each detector, plus a
+                feedback form. Nothing in it says what the right answer is.
+  answer-key/   keep this: the rule each alert stands for, the fields the runbook claims
+                it asserts, and the runbook's own escalation rules, to score against.
+
+The alerts are assembled OFFLINE from the rules and the generated fixtures, in Wazuh's
+alert shape. They are not what a manager emits. For a rehearsal that is meant to count,
+regenerate the alert on a manager (docs/06-cohort-checklist.md says how) and swap it in.
+Runbooks whose rules read Wazuh-internal alerts or correlate over time cannot be built
+offline; answer-key/00-manifest.md lists them with the reason.
+USAGE
+}
 
 out=""
 only=""
@@ -26,7 +31,7 @@ while getopts "o:r:h" opt; do
   case "$opt" in
     o) out="$OPTARG" ;;
     r) only="$OPTARG" ;;
-    h|*) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+    h|*) usage; exit 2 ;;
   esac
 done
 if [ -z "$out" ]; then
@@ -34,20 +39,14 @@ if [ -z "$out" ]; then
   exit 2
 fi
 
-# The output directory must be absolute: go test runs inside deploy/wazuh, so a relative
-# path would land there instead of where the caller meant.
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
 
-# Refuse a directory that already holds files, so a stale analyst/ from an earlier run
-# cannot be mixed with a fresh answer-key/.
 if [ -d "$out" ] && [ -n "$(ls -A "$out")" ]; then
   echo "refusing $out: it is not empty. Use a new directory." >&2
   exit 1
 fi
 mkdir -p "$out"
 
-# -run is anchored: the generator is one test, and the soundness test is not wanted here.
-# The exit status is checked rather than piped through grep, which would hide a failure.
 if ! log=$(cd "$ROOT" && AMBIT_REHEARSAL_DIR="$out" AMBIT_REHEARSAL_ONLY="$only" \
   go test ./deploy/wazuh -run '^TestWriteRehearsalPackets$' -count=1 -v 2>&1); then
   echo "$log" >&2
