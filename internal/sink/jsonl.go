@@ -25,9 +25,17 @@ import (
 	"github.com/abijit2626/ambit/internal/fsperm"
 )
 
-// rotateRetry is how long to wait before trying again after a rotation failed. A
-// variable so the test does not have to wait.
+// rotateRetry is how long to wait before trying again after a rotation or a reopen
+// failed. A variable so the test does not have to wait.
 var rotateRetry = 30 * time.Second
+
+// renameFile is os.Rename, replaceable so a test can make one specific rename fail.
+var renameFile = os.Rename
+
+// asideSuffix names the file the live log is moved to while older generations are
+// shifted up. It exists so that nothing is deleted before the live file is known to
+// have moved.
+const asideSuffix = ".rotating"
 
 // Stats reports writer health. ambitd emits these as ambitd_health events, which
 // is what D11 keys on.
@@ -83,8 +91,8 @@ type Writer struct {
 	f    *os.File
 	bw   *bufio.Writer
 	size int64
-	// rotateAfter holds off the next rotation attempt after one failed, so a file
-	// that cannot be renamed is not closed and reopened on every single write.
+	// rotateAfter holds off the next rotation or reopen attempt after one failed, so a
+	// file that cannot be renamed or opened is not retried on every single write.
 	rotateAfter time.Time
 
 	written   atomic.Int64
@@ -215,7 +223,7 @@ func (w *Writer) emitGapMarker(n int64) {
 func (w *Writer) writeLine(line []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.bw == nil {
+	if w.bw == nil && !w.reopenLocked() {
 		w.writeErrs.Add(1)
 		return
 	}
@@ -255,24 +263,44 @@ func (w *Writer) openFile() error {
 }
 
 // openLocked must be called with w.mu held. On failure the writer is left with no
-// file, which writeLine reports as a write error rather than writing to a closed one.
+// file and holds off further attempts for rotateRetry; writeLine then retries through
+// reopenLocked, so a transient failure (a sharing violation while a virus scanner has
+// the file, a disk that was briefly full) costs the events in that window instead of
+// every event until the process restarts.
 func (w *Writer) openLocked() error {
 	f, err := os.OpenFile(w.opts.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, w.opts.FileMode)
 	if err != nil {
 		w.f, w.bw = nil, nil
+		w.rotateAfter = time.Now().Add(rotateRetry)
 		return fmt.Errorf("open sink %s: %w", w.opts.Path, err)
 	}
 	st, err := f.Stat()
 	if err != nil {
 		f.Close()
 		w.f, w.bw = nil, nil
+		w.rotateAfter = time.Now().Add(rotateRetry)
 		return fmt.Errorf("stat sink %s: %w", w.opts.Path, err)
 	}
 	w.f, w.bw, w.size = f, bufio.NewWriterSize(f, 64<<10), st.Size()
 	return nil
 }
 
+// reopenLocked tries to get a writer back after a failed open. It reports whether
+// there is one now. Must be called with w.mu held.
+func (w *Writer) reopenLocked() bool {
+	if time.Now().Before(w.rotateAfter) {
+		return false
+	}
+	return w.openLocked() == nil
+}
+
 // rotateLocked must be called with w.mu held.
+//
+// The live file is moved aside first, and older generations are shifted only after
+// that has succeeded. The shift deletes the oldest generation, so doing it before
+// knowing the live file can move would destroy history on every failed attempt, and
+// attempts repeat every rotateRetry. On Windows a log shipper tailing the file or a
+// virus scanner holding it without delete sharing makes that failure routine.
 func (w *Writer) rotateLocked() error {
 	if w.bw != nil {
 		w.bw.Flush()
@@ -280,35 +308,50 @@ func (w *Writer) rotateLocked() error {
 	if w.f != nil {
 		w.f.Close()
 	}
-	// Shift .N-1 -> .N, dropping the oldest. Deleting frees space even while
-	// writes are failing for lack of it, which is why the cap is enforced by
-	// deletion rather than by refusing to rotate.
+	w.f, w.bw = nil, nil
+
+	aside := w.opts.Path + asideSuffix
+	// An aside file left by an interrupted rotation holds events that have not been
+	// filed yet. Finish that rotation rather than overwriting it.
+	if _, err := os.Stat(aside); err != nil {
+		if err := renameFile(w.opts.Path, aside); err != nil && !os.IsNotExist(err) {
+			// The live file could not be moved. On Windows that is what happens when
+			// another process holds it open without sharing delete access; on Unix it
+			// is a full or read-only directory. Nothing has been touched, so reopen
+			// and carry on: giving up here would leave the writer without a file and
+			// drop every later event. The size cap is soft until a rotation succeeds,
+			// and the failure is counted by the caller.
+			return w.abandonRotation(err)
+		}
+	}
+
+	// Shift .N-1 -> .N, dropping the oldest. Deleting frees space even while writes
+	// are failing for lack of it, which is why the cap is enforced by deletion rather
+	// than by refusing to rotate.
 	for i := w.opts.MaxFiles - 1; i >= 1; i-- {
 		older := fmt.Sprintf("%s.%d", w.opts.Path, i+1)
 		newer := fmt.Sprintf("%s.%d", w.opts.Path, i)
-		if i+1 > w.opts.MaxFiles {
-			os.Remove(newer)
-			continue
-		}
 		os.Remove(older)
 		os.Rename(newer, older)
 	}
-	if err := os.Rename(w.opts.Path, w.opts.Path+".1"); err != nil && !os.IsNotExist(err) {
-		// The live file could not be moved aside. On Windows that is what happens
-		// when another process — a log shipper tailing it, a virus scanner — holds it
-		// open without sharing delete access; on Unix it is a full or read-only
-		// directory. Either way the file just closed above must be reopened: giving up
-		// here would leave the writer holding a closed file and drop every later event,
-		// which is detection loss with no error at the detector. The size cap is soft
-		// until a rotation succeeds, and the failure is counted by the caller.
-		w.rotateAfter = time.Now().Add(rotateRetry)
-		if oerr := w.openLocked(); oerr != nil {
-			return errors.Join(err, oerr)
-		}
-		return err
+	if err := renameFile(aside, w.opts.Path+".1"); err != nil && !os.IsNotExist(err) {
+		// Put the live content back where it was, so the next attempt starts clean. If
+		// even that fails the aside file stays, and the next rotation files it.
+		_ = renameFile(aside, w.opts.Path)
+		return w.abandonRotation(err)
 	}
 	w.rotateAfter = time.Time{}
 	return w.openLocked()
+}
+
+// abandonRotation reopens the live file after a rotation step failed and holds off
+// the next attempt. It returns the rotation error, joined with any reopen error.
+func (w *Writer) abandonRotation(cause error) error {
+	if oerr := w.openLocked(); oerr != nil {
+		return errors.Join(cause, oerr)
+	}
+	w.rotateAfter = time.Now().Add(rotateRetry)
+	return cause
 }
 
 // Stats returns a snapshot.
