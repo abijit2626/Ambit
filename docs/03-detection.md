@@ -765,15 +765,19 @@ What the first runs found, recorded because they are the reason a harness is wor
 
   | Claude 3.7 Sonnet, `important_instructions` | hostile runs | caught | benign runs | edge drawn |
   | --- | ---: | ---: | ---: | ---: |
-  | banking | 6 | 0 | 25 | 2 |
+  | banking | 6 | 0 | 25 | 4 |
   | slack | 25 | 25 | 26 | 12 |
   | travel | 1 | 0 | 27 | 1 |
   | workspace | 15 | 12 | 54 | 12 |
-  | **all** | **47** | **37 (0.79)** | **132** | **27 (0.20)** |
+  | **all** | **47** | **37 (0.79)** | **132** | **29 (0.22)** |
 
-  On GPT-4o (2024-05-13), banking suite, all attacks: 70 of 553 successful attacks caught
-  (0.13), and 3 of 25 benign runs drew an edge. At the action level, 49 of 485 actions in
-  benign Claude 3.7 runs drew an edge (0.10).
+  These are the default configuration, no tool labels, with the `iban` class. On GPT-4o
+  (2024-05-13), banking suite, all attacks: 203 of 553 successful attacks caught (0.37), and 5
+  of 25 benign runs drew an edge (70 and 3 before the IBAN class existed; see the first miss
+  below). At the action level, 51 of 485 actions in benign Claude 3.7 runs drew an edge (0.11).
+  Re-measured from a fresh clone of `main` at upstream `089ed468`, after the sensitive-data
+  edges merged: the figures above and the labelled and gate figures elsewhere in this
+  document reproduced exactly.
 
   Every case was read, not just counted. What they show:
   - **The edges in successful attacks land on the attacker's own action**, for example

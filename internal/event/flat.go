@@ -104,7 +104,11 @@ type SIEMEvent struct {
 	// ConfigZone and ConfigPathDigest carry config_change, file_changed and
 	// instructions_loaded detail. Kept flat rather than in a nested object so
 	// D6 and D8 rules address them directly.
-	ConfigSource     string `json:"config_source,omitempty"`
+	ConfigSource string `json:"config_source,omitempty"`
+	// ConfigLoadReason is why an instruction file loaded (session_start, file_read, ...).
+	// An InstructionsLoaded event carries load_reason and no config_source, so without
+	// this field the reason never reaches a rule or an analyst.
+	ConfigLoadReason string `json:"config_load_reason,omitempty"`
 	ConfigPathDigest string `json:"config_path_digest,omitempty"`
 	ConfigZone       string `json:"config_zone,omitempty"`
 	ConfigTrusted    *bool  `json:"config_trusted,omitempty"`
@@ -260,6 +264,7 @@ func Flatten(e *Event) *SIEMEvent {
 
 	if c := e.Config; c != nil {
 		s.ConfigSource = c.Source
+		s.ConfigLoadReason = c.LoadReason
 		s.ConfigPathDigest = c.PathDigest
 		s.ConfigZone = c.Zone
 		trusted := c.Trusted
