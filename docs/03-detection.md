@@ -176,8 +176,8 @@ needs. First results:
   worth stating: GPT-4o banking edges fall from 203 to 124, because 79 of the old catches were
   the user's own IBAN, read from `get_iban` or `get_user_info`, sent in the attacker's payment.
   Those tools are sensitive, not untrusted, so their results are no longer ingest. That
-  lineage is data exfiltration rather than injection; an edge class for sensitive data flowing
-  into an acting call would recover it, and is not built.
+  lineage is data exfiltration rather than injection, and the sensitive-data edge (2d, below)
+  recovers it.
 
 **Honest limitation.** The rule is stated over a session, and "session" is doing
 real work in that sentence. Compaction, `/clear`, subagents, and long-running
@@ -287,6 +287,39 @@ Failure modes, both directions:
   page and write the summary legitimately carries content across. Domain and
   high-entropy matches are far more specific than n-gram matches; weight
   accordingly and treat n-gram matches as advisory.
+
+### 2d — Sensitive-data edges (unsound, specific; spool only)
+
+The same fingerprinting, pointed the other way. Edges answer "did untrusted content steer
+this action". A sensitive-data edge answers "is private data leaving in it": a result that set
+bit B (a credential read, a tool labelled `sensitive`) registers its fingerprints in a second
+set, and an action that can act or reach outside (bit C) is matched against it. The novelty
+rule carries over, so a value the user typed is theirs to send and never matches. The edge is
+recorded as `provenance.exfil` on the rich event only. It has no flattened field and no rule
+until its precision is established.
+
+**Payload only, not addressing.** The match reads an acting call's payload and skips its
+addressing fields (`recipient`, `to`, `participants`, `url`, `channel`, `file_path` and the
+like, by name). That choice was measured. Matching the whole input on AgentDojo (labelled
+tools) mostly found the user addressing someone known: a participant read from a calendar
+event and then emailed, a payee read from scheduled transactions and then paid. That pattern
+was as common in benign runs as in hostile ones. Restricted to the payload:
+
+| | edge on the attacker's own call | incidental only | benign runs flagged |
+| --- | --- | --- | --- |
+| GPT-4o banking, whole input | 136 / 553 | 67 | 4 / 25 |
+| GPT-4o banking, payload only | 136 / 553 | 0 | 1 / 25 |
+| Claude 3.7, whole input | 11 / 47 | 6 | 21 / 132 |
+| Claude 3.7, payload only | 2 / 47 | 7 | 14 / 132 |
+
+On GPT-4o banking the payload rule keeps every catch on the attacker's payment (the user's
+own IBAN sent in its subject) and drops every incidental one. On Claude 3.7 the nine catches it
+loses were all the attacker's own address in a recipient field, which arrived through a tool
+labelled both untrusted and sensitive. Every one of those runs is still caught by a provenance
+edge, so nothing is lost overall; the whole-input match was counting provenance twice. What the
+class misses is a short value leaving in a body (a six-digit security code), which no
+fingerprint class covers. Matching by field name is a convention, not a schema, and a tool that
+puts its payload in a field called `recipient` hides it.
 
 ### 2c — Causal ordering
 
