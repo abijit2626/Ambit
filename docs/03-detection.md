@@ -311,6 +311,7 @@ was as common in benign runs as in hostile ones. Restricted to the payload:
 | GPT-4o banking, payload only | 136 / 553 | 0 | 1 / 25 |
 | Claude 3.7, whole input | 11 / 47 | 6 | 21 / 132 |
 | Claude 3.7, payload only | 2 / 47 | 7 | 14 / 132 |
+| Claude 3.7, payload only, hostnames left out | 0 / 47 | 3 | 8 / 132 |
 
 On GPT-4o banking the payload rule keeps every catch on the attacker's payment (the user's
 own IBAN sent in its subject) and drops every incidental one. On Claude 3.7 the nine catches it
@@ -320,6 +321,41 @@ edge, so nothing is lost overall; the whole-input match was counting provenance 
 class misses is a short value leaving in a body (a six-digit security code), which no
 fingerprint class covers. Matching by field name is a convention, not a schema, and a tool that
 puts its payload in a field called `recipient` hides it.
+
+**Hostnames are left out of the set.** After payload-only matching, the benign flags that remained
+on Claude 3.7 were mostly one class. Of the 14 benign runs flagged, 12 had a `domain` match, and
+the typical case is a channel summary that names the sites people had shared: a hostname in a
+sensitive tool's result is public information, not private data. The sensitive-data set no longer
+registers or matches domains (the untrusted-content set still does, since a host a page names is
+what a redirected action looks like). Measured on the same runs, with the hostile and the two
+benign labels kept apart this time:
+
+| | hostile runs with an edge | no-attack runs flagged | user-requested-goal runs flagged |
+| --- | --- | --- | --- |
+| Claude 3.7, before | 9 / 47 | 7 / 97 | 7 / 35 |
+| Claude 3.7, after | 3 / 47 | 3 / 97 | 5 / 35 |
+| GPT-4o banking, before and after | 136 / 553 | 0 / 16 | 1 / 9 |
+
+The cost is real and worth stating. The two Claude 3.7 runs where the attacker posted the channel
+messages to its own site were caught only by a hostname that happened to sit in the messages, not
+by the secret itself (a short key no class covers), so they are no longer caught here. Provenance
+catches both runs. GPT-4o, where the useful matches are IBANs and high-entropy tokens, is
+unchanged. So on Claude 3.7 this class now has no catch on the attacker's own call that
+provenance does not already have, and what remains is a weaker signal than the one it replaced.
+
+**Read the remaining flags with the labels in mind.** A `user-requested-goal` run is AgentDojo's
+attack task given to the agent as the user's own request, and the adapter labels it benign. Five of
+the eight remaining benign flags are those: the agent sends account numbers, personal details, files
+or an email's contents on, because it was asked to. That is the attack's shape with the user's consent,
+and no matching rule can tell the two apart; the novelty rule only covers values the user typed.
+Counting them as false positives overstates the problem, and counting them as detections would
+overstate the recall, so both labels are reported.
+
+**Verbatim-copy matching was tried and rejected.** Shingles (five-word runs) would catch a posted
+dump of messages directly. Enabling them for the sensitive set on Claude 3.7 raised hostile runs
+with an edge from 9 to 12 and benign runs flagged from 14 to 23, because a summary reuses
+phrases from what it summarizes. On GPT-4o it moved 136 to 142. Not worth the noise, and shingles
+stay off.
 
 ### 2c — Causal ordering
 

@@ -106,6 +106,11 @@ type Options struct {
 	// dropped; see confCommonDomain. Digests, not names: this package holds no
 	// key, and the caller already computes them for its own trusted-domain check.
 	CommonDomains map[string]bool
+	// Exclude names fingerprint classes this Set neither registers nor matches. The
+	// sensitive-data set excludes ClassDomain: a hostname is not private data, and a
+	// sensitive tool's result is full of public ones, so a domain match there measured as
+	// noise (docs/03-detection.md, 2d).
+	Exclude map[string]bool
 }
 
 type key struct {
@@ -199,13 +204,28 @@ func candidates(f *event.Features) []key {
 	return out
 }
 
+// keys is candidates with this Set's excluded classes removed.
+func (s *Set) keys(f *event.Features) []key {
+	ks := candidates(f)
+	if len(s.opts.Exclude) == 0 {
+		return ks
+	}
+	kept := ks[:0:0]
+	for _, k := range ks {
+		if !s.opts.Exclude[k.class] {
+			kept = append(kept, k)
+		}
+	}
+	return kept
+}
+
 // Declare records fingerprints the user themselves wrote, so a later ingest that
 // merely repeats them does not register as having introduced them. It affects
 // future Ingest calls only: a value already ingested stays ingested, because the
 // user typing it afterwards is a fact about the future, not about where the
 // agent first met it.
 func (s *Set) Declare(f *event.Features) {
-	ks := candidates(f)
+	ks := s.keys(f)
 	if len(ks) == 0 {
 		return
 	}
@@ -244,12 +264,12 @@ type IngestResult struct {
 // Fingerprints already ingested keep their original event as the source.
 func (s *Set) Ingest(eventID string, result, own *event.Features) IngestResult {
 	var res IngestResult
-	ks := candidates(result)
+	ks := s.keys(result)
 	if len(ks) == 0 || eventID == "" {
 		return res
 	}
 	ownSet := map[key]bool{}
-	for _, k := range candidates(own) {
+	for _, k := range s.keys(own) {
 		ownSet[k] = true
 	}
 
@@ -316,7 +336,7 @@ func (s *Set) evictLocked() int {
 // yields byte-identical output: the flattened event takes the first edge as the
 // strongest, and a test pins that.
 func (s *Set) Match(action *event.Features) []event.Edge {
-	ks := candidates(action)
+	ks := s.keys(action)
 	if len(ks) == 0 {
 		return nil
 	}

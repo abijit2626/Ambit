@@ -731,7 +731,9 @@ func (c *Collector) session(p *hook.Payload) *sessionState {
 			model:    p.Model,
 			permMode: p.PermissionMode,
 			prov:     prov.New(prov.Options{CommonDomains: c.webDomainTrust}),
-			sens:     prov.New(prov.Options{CommonDomains: c.webDomainTrust}),
+			// A hostname is not private data. Domain matches made up most of the benign
+			// sensitive-data edges and none of the useful ones; see docs/03-detection.md, 2d.
+			sens: prov.New(prov.Options{CommonDomains: c.webDomainTrust, Exclude: map[string]bool{prov.ClassDomain: true}}),
 		}
 		c.sessions[p.SessionID] = st
 	}
