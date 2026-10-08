@@ -72,8 +72,14 @@ type Config struct {
 	UserID     string `json:"user_id"`
 	OrgID      string `json:"org_id"`
 
-	// Home overrides the detected home directory, for testing.
+	// Home overrides the detected home directory, for testing. Left unset, ambitd uses
+	// each session's own home, read from the transcript path Claude Code reports, and
+	// falls back to the home of the account ambitd runs as. That fallback is wrong for a
+	// system service, whose account is root or SYSTEM rather than the developer.
 	Home string `json:"home"`
+	// detectedHome is what derive filled Home with, so HomeIsDetected can tell a
+	// detected home from one an operator or a test set.
+	detectedHome string
 	// ExtraUntrustedPaths are operator-configured path fragments treated as
 	// untrusted content.
 	ExtraUntrustedPaths []string `json:"extra_untrusted_paths"`
@@ -202,7 +208,14 @@ func (c *Config) derive() {
 	c.LatencyBudget = time.Duration(c.LatencyBudgetMS) * time.Millisecond
 	if c.Home == "" {
 		c.Home, _ = os.UserHomeDir()
+		c.detectedHome = c.Home
 	}
+}
+
+// HomeIsDetected reports whether Home is the running account's home rather than one the
+// configuration set. Only then may a session's own home replace it.
+func (c Config) HomeIsDetected() bool {
+	return c.Home == "" || (c.detectedHome != "" && c.Home == c.detectedHome)
 }
 
 // Validate rejects configurations that would break a documented invariant.

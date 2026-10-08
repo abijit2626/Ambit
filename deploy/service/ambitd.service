@@ -1,0 +1,34 @@
+# systemd unit for ambitd as a system service on Linux. Installed by
+# scripts/install-system.sh to /etc/systemd/system/ambitd.service.
+#
+# It starts at boot, before anyone logs in, and restarts whenever the process exits,
+# so a crash or a kill leaves at most RestartSec unobserved. A developer with sudo can
+# still stop it; that is what SCA check 10007 (D7) and the stale ambitd_health
+# heartbeat exist to notice.
+#
+# The config file is optional: ambitd applies its defaults when it is absent, so this
+# unit does not need changing when an operator adds one. Data (the spool, events.jsonl
+# for the Wazuh agent, the fingerprint key) goes to /var/lib/ambit, which ambitd creates
+# private to root. Logs go to the journal: journalctl -u ambitd.
+
+[Unit]
+Description=ambit endpoint daemon (observe-only)
+Documentation=https://github.com/abijit2626/Ambit
+After=network.target
+# Never give up restarting. The default start limit would stop retrying after a burst
+# of failures and leave the endpoint silently unmonitored.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ambitd -config /etc/ambit/config.json
+Restart=always
+RestartSec=5
+# Hardening that ambitd's behavior allows: it writes only under /var/lib/ambit and
+# never needs to gain privileges.
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
