@@ -191,7 +191,16 @@ means FIM is running on `realtime` alone, which loses "which process wrote this"
 **What differs from the Unix files**
 
 - Paths: `C:\ProgramData\ambit` replaces `/var/lib/ambit`, and
-  `C:\Program Files\ClaudeCode` replaces `/etc/claude-code`.
+  `C:\Program Files\ClaudeCode` replaces `/etc/claude-code`. The interposer's baselines
+  are the exception: `mcp-interpose` runs as the developer and `C:\ProgramData\ambit` is
+  private to SYSTEM, Administrators and whoever created it, so they default to
+  `C:\Users\<user>\.ambit\baselines`, which `ossec-syscheck.windows.xml` already watches.
+- Pre-create `C:\ProgramData\ambit` only with a restricted ACL. `ambitd` refuses a
+  directory that `Users`, `Everyone` or `Authenticated Users` can read, because it would
+  put prompt text and the fingerprint key there; the error prints the `icacls` command.
+- The SCA policy's applicability check looks for Claude Code in every user profile as well
+  as for the managed-settings directory. If only the directory counted, deleting the bundle
+  would make the policy not applicable and D12 would stay silent.
 - The SCA policy omits checks 10003 and 10004. Claude Code's sandbox does not run on native
   Windows, so those keys do nothing there and the checks could never pass; a check that
   always fails teaches analysts to ignore D12. The process check (10007) uses a `c:`
