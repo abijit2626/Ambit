@@ -130,6 +130,7 @@ cmd/mcp-interpose/       the MCP interposer: one per server, in front of it
 internal/event/          rich internal schema + flattened SIEM-bound schema
 internal/classify/       path zone and bash command classification
 internal/r2/             Rule-of-Two bit classification (shadow mode; see docs/03-detection.md)
+internal/prov/           provenance engine: per-session untrusted-ingest fingerprints, edges (alert-only)
 internal/features/       keyed fingerprint extraction
 internal/redact/         secret detection and stripping at the edge
 internal/filter/         what crosses to Wazuh
@@ -267,7 +268,7 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 | --- | --- | --- |
 | **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Not yet deployed to a cohort. |
 | **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policy. | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. |
-| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`): it records bits, with no gate, no alert and no change to session behavior. The provenance engine, shadow verdicts and replay harness are not built. |
+| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`): it records bits, with no gate, no alert and no change to session behavior. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. Shadow verdicts and the replay harness are not built, so edge precision is unmeasured on real traffic. |
 | **M3 Enforce** | Policy engine, signed policy bundles, split fail policy, containment-only active response. | Design only. |
 | **M4 Goal drift** | Async scoring of actions against the stated objective. | Design only. |
 | **M5 Fleet correlation** | Cross-session fingerprint set intersection; session-shape analysis. | Design only. |
@@ -311,6 +312,15 @@ team executes a runbook against a sample alert.
   rotation under `log_format json`, SCA `f:` and `c:` rules and `whodata` have not been
   tried on a live agent, and each fails silently when wrong. See
   [deploy/wazuh/README.md](deploy/wazuh/README.md#windows-agents).
+- **Provenance edges are evidence, not proof.** The intersection is an unsound approximation
+  (CaMeL's dataflow tracking needs the interpreter, and Claude Code is a black box): the user
+  may have supplied the value, the model may have reconstructed it, and a paraphrase defeats it
+  entirely, so a missing edge means little. A value the ingest did not introduce (typed by the
+  user, or passed in the same call) is excluded, which trades some recall for precision.
+  Instruction files taint the session but contribute no fingerprints, because the hook carries
+  a path and no content. The set is bounded; `prov_truncated` and `prov_evicted` in the
+  shutdown log say when it was incomplete. Precision is unmeasured until the replay harness
+  exists. See [docs/03-detection.md](docs/03-detection.md#layer-2--provenance).
 - **Rule-of-Two session scoping is unresolved.** Bits are monotonic per session. A
   session that runs long saturates to all three, and `/clear` is reported to start a new
   session id, which would reset bits B and C that should not reset. Shadow mode exists
