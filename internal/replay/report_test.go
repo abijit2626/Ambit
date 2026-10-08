@@ -413,3 +413,29 @@ func TestGateSummaryLeavesUnlabeledStepsOut(t *testing.T) {
 		t.Errorf("steps = %+v; an unlabeled action is neither hostile nor benign", g.Steps)
 	}
 }
+
+func exfilStep(hostile *bool, class string) StepResult {
+	st := StepResult{Produced: true, Kind: event.KindToolPre, Hostile: hostile}
+	if class != "" {
+		st.Exfil, st.ExfilClass = 1, class
+	}
+	return st
+}
+
+func TestExfilSummary(t *testing.T) {
+	s := Summarize([]*Result{
+		{Scenario: Header{Hostile: tp(true)}, Steps: []StepResult{exfilStep(tp(true), "iban"), exfilStep(tp(true), "")}},
+		{Scenario: Header{Hostile: tp(false)}, Steps: []StepResult{exfilStep(tp(false), "email"), exfilStep(tp(false), "")}},
+		{Scenario: Header{Hostile: tp(true), StepsUnlabeled: true}, Steps: []StepResult{exfilStep(nil, "iban")}},
+	}, 0)
+	x := s.Exfil
+	if x.Steps != (Confusion{TP: 1, FN: 1, FP: 1, TN: 1}) {
+		t.Errorf("steps = %+v; unlabeled steps must stay out", x.Steps)
+	}
+	if x.Runs != (Confusion{TP: 2, FP: 1}) {
+		t.Errorf("runs = %+v", x.Runs)
+	}
+	if x.ByClass["iban"] != (ClassCount{TP: 1}) || x.ByClass["email"] != (ClassCount{FP: 1}) {
+		t.Errorf("by class = %+v", x.ByClass)
+	}
+}
