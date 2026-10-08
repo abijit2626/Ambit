@@ -110,7 +110,7 @@
     <decoded_as>json</decoded_as>
     <field name="kind">^instructions_loaded$</field>
     <field name="config_trusted">^false$</field>
-    <description>ambit D8: instruction file loaded from an untrusted path - zone $(config_zone), reason $(config_source) on $(endpoint_id)</description>
+    <description>ambit D8: instruction file loaded from an untrusted path - zone $(config_zone), reason $(config_load_reason) on $(endpoint_id)</description>
     <mitre>
       <id>T1195.002</id>
       <id>T1546</id>
