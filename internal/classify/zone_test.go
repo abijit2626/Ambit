@@ -208,3 +208,152 @@ func TestNormalize(t *testing.T) {
 		}
 	}
 }
+
+// Win32 opens `.npmrc.`, `.npmrc ` and `key.pem::$DATA` as `.npmrc` and `key.pem`. A
+// zone check that compares the spelling it was given would let an injected agent read
+// credentials through a spelling the file system accepts and the check does not know.
+func TestZoneWindowsNameCanonicalization(t *testing.T) {
+	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
+	for _, p := range []string{
+		`C:\Users\dev\src\myrepo\.npmrc.`,
+		`C:\Users\dev\src\myrepo\.npmrc `,
+		`C:\Users\dev\src\myrepo\.npmrc...`,
+		`C:\Users\dev\src\myrepo\key.pem.`,
+		`C:\Users\dev\src\myrepo\key.pem::$DATA`,
+		`C:\Users\dev\src\myrepo\.npmrc::$DATA`,
+		`C:\Users\dev\.aws\credentials:Zone.Identifier`,
+		`C:\Users\dev\.aws.\credentials`,
+		`C:\Users\dev\.ssh\id_rsa.`,
+		`C:\Users\dev\src\myrepo\.netrc.`,
+		`C:\Users\dev\src\myrepo\cert.pfx::$DATA`,
+		`/mnt/c/Users/dev/src/myrepo/.npmrc.`,
+	} {
+		if got := z.Zone(p); got != event.ZoneCredential {
+			t.Errorf("Zone(%q) = %q, want credential", p, got)
+		}
+	}
+	// Canonicalizing must not invent credentials.
+	for _, p := range []string{
+		`C:\Users\dev\src\myrepo\main.go.`,
+		`C:\Users\dev\src\myrepo\notes.txt:stream`,
+	} {
+		if got := z.Zone(p); got != event.ZoneWorkdir {
+			t.Errorf("Zone(%q) = %q, want workdir", p, got)
+		}
+	}
+}
+
+// path.Clean treats `C:` as an ordinary directory, so extra `..` used to climb out of
+// the drive and leave a relative path that zoned as unknown.
+func TestZoneWindowsDriveRootIsACeiling(t *testing.T) {
+	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
+	cases := []struct {
+		path string
+		want string
+	}{
+		{`C:\Users\dev\..\..\..\Windows\win.ini`, event.ZoneSystem},
+		{`C:\..\Windows\System32\config\SAM`, event.ZoneCredential},
+		{`C:\Users\dev\src\myrepo\..\..\..\..\..\ProgramData\x`, event.ZoneUnknown},
+		{`C:\Users\dev\src\myrepo\..\..\.ssh\id_rsa`, event.ZoneCredential},
+	}
+	for _, c := range cases {
+		if got := z.Zone(c.path); got != c.want {
+			t.Errorf("Zone(%q) = %q, want %q", c.path, got, c.want)
+		}
+	}
+	for in, want := range map[string]string{
+		`C:\Users\dev\..\..\..\Windows\win.ini`: "C:/Windows/win.ini",
+		`C:\..\..`:                              "C:/",
+		`\\?\UNC\server\share\x`:                "//server/share/x",
+		`\\?\UNC\server\share\..\..\x`:          "//server/share/x",
+		`\\server\share\a\..\b`:                 "//server/share/b",
+		`\\.\C:\Users\dev`:                      "C:/Users/dev",
+		`C:\Users\dev\src\myrepo\..\..\..\..\..\..\ProgramData\x`: "C:/ProgramData/x",
+	} {
+		if got := normalize(in); got != want {
+			t.Errorf("normalize(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A leading // is a UNC root on Windows and the root directory on Unix. Reading it as
+// UNC on Unix meant //home/dev/notes.txt fell out of the home and workdir zones, which
+// is a free pass past the outside-workdir accounting for anything that writes it.
+func TestZoneLeadingDoubleSlash(t *testing.T) {
+	old := hostIsWindows
+	defer func() { hostIsWindows = old }()
+
+	hostIsWindows = false
+	z := NewZoner("/home/dev", "/home/dev/src/myrepo", nil)
+	for p, want := range map[string]string{
+		"//home/dev/notes.txt":           event.ZoneHome,
+		"//home/dev/src/myrepo/main.go":  event.ZoneWorkdir,
+		"//home/dev/.ssh/id_rsa":         event.ZoneCredential,
+		"///home/dev/notes.txt":          event.ZoneHome,
+		"//etc/passwd":                   event.ZoneSystem,
+		`\\fileserver\share\.ssh\id_rsa`: event.ZoneCredential, // backslashes are UNC on every host
+	} {
+		if got := z.Zone(p); got != want {
+			t.Errorf("unix host: Zone(%q) = %q, want %q", p, got, want)
+		}
+	}
+	if got := normalize("//home/dev/x"); got != "/home/dev/x" {
+		t.Errorf("unix host: normalize(//home/dev/x) = %q, want /home/dev/x", got)
+	}
+	if got := normalize(`\\server\share\x`); got != "//server/share/x" {
+		t.Errorf("unix host: normalize of a backslash UNC path = %q, want it kept as UNC", got)
+	}
+
+	hostIsWindows = true
+	if got := normalize("//server/share/x"); got != "//server/share/x" {
+		t.Errorf("windows host: normalize(//server/share/x) = %q, want it kept as UNC", got)
+	}
+}
+
+// bin/, system/ and Library/ are ordinary directories inside a project and under a home
+// directory. Only the start of a path, or a path that is neither ours nor home, names
+// the OS.
+func TestZoneSystemFragmentsDoNotSwallowProjectDirectories(t *testing.T) {
+	z := NewZoner("/Users/dev", "/Users/dev/src/myrepo", nil)
+	for p, want := range map[string]string{
+		"/Users/dev/src/myrepo/bin/Debug/net8.0/app.dll": event.ZoneWorkdir,
+		"/Users/dev/src/myrepo/system/a.go":              event.ZoneWorkdir,
+		"/Users/dev/src/myrepo/Library/Bee/x":            event.ZoneWorkdir,
+		"/Users/dev/Library/Application Support/x":       event.ZoneHome,
+		"/Users/dev/.local/bin/tool":                     event.ZoneHome,
+		"/Users/dev/src/myrepo/node_modules/x/bin/y.js":  event.ZoneUntrusted,
+		"/usr/local/bin/tool":                            event.ZoneSystem,
+		"/Library/Preferences/x.plist":                   event.ZoneSystem,
+		"/mnt/rootfs/etc/hosts":                          event.ZoneSystem,
+	} {
+		if got := z.Zone(p); got != want {
+			t.Errorf("Zone(%q) = %q, want %q", p, got, want)
+		}
+	}
+
+	w := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
+	for p, want := range map[string]string{
+		`C:\Users\dev\src\myrepo\bin\Debug\app.dll`: event.ZoneWorkdir,
+		`C:\Users\dev\src\myrepo\system\a.go`:       event.ZoneWorkdir,
+		`C:\PROGRA~1\Git\bin\git.exe`:               event.ZoneSystem,
+	} {
+		if got := w.Zone(p); got != want {
+			t.Errorf("Zone(%q) = %q, want %q", p, got, want)
+		}
+	}
+}
+
+// Operator-supplied untrusted fragments are compared with forward slashes, so one
+// written with backslashes has to be converted or it never matches.
+func TestZoneExtraUntrustedAcceptsBackslashes(t *testing.T) {
+	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, []string{`C:\Users\dev\thirdparty`, `\vendor-code\`})
+	for _, p := range []string{
+		`C:\Users\dev\thirdparty\lib\a.go`,
+		`C:\Users\dev\src\myrepo\vendor-code\x.go`,
+		`C:/Users/dev/thirdparty/lib/a.go`,
+	} {
+		if got := z.Zone(p); got != event.ZoneUntrusted {
+			t.Errorf("Zone(%q) = %q, want untrusted", p, got)
+		}
+	}
+}

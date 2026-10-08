@@ -76,6 +76,14 @@ var fileExtensions = map[string]bool{
 	"png": true, "jpg": true, "svg": true, "gif": true, "pdf": true,
 	"zip": true, "tar": true, "gz": true, "so": true, "dylib": true, "dll": true,
 	"map": true, "bak": true, "tmp": true,
+	// Windows. A directory listing or a build log is full of these, and each would
+	// otherwise be fingerprinted as a domain: setup.exe, web.config, install.cmd.
+	// None is a delegated top-level domain.
+	"exe": true, "cmd": true, "bat": true, "msi": true, "msix": true, "appx": true,
+	"lnk": true, "config": true, "vbs": true, "sys": true, "ocx": true, "cab": true,
+	"pdb": true, "resx": true, "csproj": true, "vbproj": true, "fsproj": true,
+	"sln": true, "nupkg": true, "props": true, "targets": true, "manifest": true,
+	"reg": true, "inf": true, "ico": true,
 }
 
 // Deliberately absent from fileExtensions: "test", "spec" and "min". Those
