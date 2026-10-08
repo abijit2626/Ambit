@@ -283,6 +283,12 @@ type Provenance struct {
 	Taint      []string `json:"taint,omitempty"`
 	IngestRefs []string `json:"ingest_refs,omitempty"`
 	Edges      []Edge   `json:"edges,omitempty"`
+	// Exfil are sensitive-data edges: this action can act or reach outside (Rule-of-Two
+	// bit C) and its input carries a value that an earlier result of a sensitive read
+	// (bit B) returned. Edges answer "did untrusted content steer this action"; Exfil
+	// answers "is private data leaving in it". Rich event only until its precision is
+	// established: there is no flattened field and no rule (docs/03, Layer 2).
+	Exfil []Edge `json:"exfil,omitempty"`
 	// FPNotable is the single high-specificity fingerprint selected for the
 	// scalar Wazuh tripwire that stands in for D10; see docs/03.
 	FPNotable string `json:"fp_notable,omitempty"`

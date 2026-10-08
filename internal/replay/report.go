@@ -102,6 +102,10 @@ type Summary struct {
 	// Gate is the shadow Rule-of-Two gate, one entry per session scoping.
 	Gate []GateSummary `json:"gate"`
 
+	// Exfil measures sensitive-data edges the same way Confusion measures provenance
+	// edges: over labeled actions, over labeled runs, and split by the strongest class.
+	Exfil ExfilSummary `json:"exfil"`
+
 	Handled      int64               `json:"handled"`
 	Crossed      int64               `json:"crossed"`
 	CrossReasons map[string]int64    `json:"cross_reasons"`
@@ -186,6 +190,7 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 		s.Provenance.EdgeEvents += p.EdgeEvents
 	}
 	s.Sessions.MedianCallsToAll = median(callsToAll)
+	s.Exfil = summarizeExfil(results)
 	s.Gate = []GateSummary{
 		summarizeGate(results, event.ScopingSession, func(st StepResult) event.Decision { return st.Decision }),
 		summarizeGate(results, event.ScopingTurn, func(st StepResult) event.Decision { return st.TurnDecision }),
@@ -237,6 +242,46 @@ type GateSummary struct {
 	Steps Confusion `json:"steps"`
 	// Runs is over runs with a run-level label: did any blocking verdict fire in the run.
 	Runs Confusion `json:"runs"`
+}
+
+// ExfilSummary is the precision check for sensitive-data edges.
+type ExfilSummary struct {
+	Steps   Confusion             `json:"steps"`
+	Runs    Confusion             `json:"runs"`
+	ByClass map[string]ClassCount `json:"by_class"`
+}
+
+func summarizeExfil(results []*Result) ExfilSummary {
+	x := ExfilSummary{ByClass: map[string]ClassCount{}}
+	for _, r := range results {
+		fired := false
+		for _, st := range r.Steps {
+			if !st.Produced || st.Kind != event.KindToolPre {
+				continue
+			}
+			if st.Exfil > 0 {
+				fired = true
+			}
+			if r.Scenario.StepsUnlabeled {
+				continue
+			}
+			hostile := st.Hostile != nil && *st.Hostile
+			tally(&x.Steps, st.Exfil > 0, hostile)
+			if st.Exfil > 0 {
+				c := x.ByClass[st.ExfilClass]
+				if hostile {
+					c.TP++
+				} else {
+					c.FP++
+				}
+				x.ByClass[st.ExfilClass] = c
+			}
+		}
+		if h := r.Scenario.Hostile; h != nil {
+			tally(&x.Runs, fired, *h)
+		}
+	}
+	return x
 }
 
 func blocking(d event.Decision) bool {
@@ -475,6 +520,7 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 	}
 
 	writeGate(w, s.Gate)
+	writeExfil(w, s.Exfil)
 
 	ss := s.Sessions
 	fmt.Fprintf(w, "\nRule of Two (%d sessions)\n", ss.Sessions)
@@ -497,6 +543,25 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 		pv.Ingests, pv.Registered, pv.Skipped, pv.Truncated, pv.Evicted, pv.EdgeEvents)
 	if pv.Truncated > 0 || pv.Evicted > 0 {
 		fmt.Fprint(w, "  note: a fingerprint set was truncated or evicted, so some absent edges are weaker evidence than they look\n")
+	}
+}
+
+func writeExfil(w io.Writer, x ExfilSummary) {
+	if x.Steps.TP+x.Steps.FP+x.Runs.TP+x.Runs.FP == 0 && x.Steps.Hostile()+x.Steps.Benign() == 0 {
+		return
+	}
+	fmt.Fprint(w, "\nsensitive-data edges (acting calls carrying a value a sensitive read returned; spool only)\n")
+	p, pok := x.Steps.Precision()
+	f, fok := x.Steps.FPR()
+	fmt.Fprintf(w, "  actions: TP %d  FP %d  FN %d  TN %d  precision %s  false-positive rate %s\n",
+		x.Steps.TP, x.Steps.FP, x.Steps.FN, x.Steps.TN, fmtRatio(p, pok), fmtRatio(f, fok))
+	fmt.Fprintf(w, "  runs:    TP %d  FP %d  FN %d  TN %d\n", x.Runs.TP, x.Runs.FP, x.Runs.FN, x.Runs.TN)
+	if len(x.ByClass) > 0 {
+		var parts []string
+		for _, k := range sortedKeys(x.ByClass) {
+			parts = append(parts, fmt.Sprintf("%s TP %d FP %d", k, x.ByClass[k].TP, x.ByClass[k].FP))
+		}
+		fmt.Fprintf(w, "  by strongest class: %s\n", strings.Join(parts, " | "))
 	}
 }
 

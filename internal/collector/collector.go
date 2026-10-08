@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,6 +78,10 @@ type sessionState struct {
 	// read or write scalar fields, and holding it across a set intersection would
 	// serialize unrelated requests for the same session for no benefit.
 	prov *prov.Set
+	// sens is a second fingerprint set, of values that sensitive reads (bit B) returned.
+	// It feeds the exfil edges on acting calls. Same engine, same bounds and novelty rule
+	// as prov: a value the user typed is theirs to send and is never registered.
+	sens *prov.Set
 }
 
 // priorBits is what each scoping held before an event's own bits were applied: the
@@ -161,6 +166,8 @@ type Collector struct {
 	provTruncated  atomic.Int64
 	provEvicted    atomic.Int64
 	provEdgeEvents atomic.Int64
+	// provExfilEvents counts acting calls that carried a value a sensitive read returned.
+	provExfilEvents atomic.Int64
 	// shadowDeny, shadowAsk and shadowAlert count the gate's session-scoped shadow
 	// verdicts: what enforcement would have done, had it been on.
 	shadowDeny    atomic.Int64
@@ -348,7 +355,9 @@ func (c *Collector) fillPrompt(e *event.Event, p *hook.Payload, st *sessionState
 	// it is declared to the provenance engine. Extracted from the redacted text, for
 	// the same reason tool input is: a secret must not become a fingerprint. The
 	// features themselves are not kept on the event; only the engine holds them.
-	st.prov.Declare(c.ext.Extract(clean))
+	declared := c.ext.Extract(clean)
+	st.prov.Declare(declared)
+	st.sens.Declare(declared)
 	e.Prompt = &event.PromptInfo{
 		Text:       clean,
 		TextDigest: c.ext.Digest(p.UserInput),
@@ -401,6 +410,14 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 	t.InputFeatures = c.ext.Extract(cleanInput)
 	t.InputFeatures.SecretHits = toSecretHits(inputHits)
 
+	// The payload of an acting call, without its addressing fields, is what the exfil
+	// match reads. Computed only for PreToolUse, the one place it is used.
+	var payloadFeatures *event.Features
+	if e.Kind == event.KindToolPre {
+		cleanPayload, _ := c.red.Redact(renderPayload(p))
+		payloadFeatures = c.ext.Extract(cleanPayload)
+	}
+
 	// resultFeatures is nil unless the payload carries a result. It is declared out
 	// here because the provenance ingest below, which needs the R2 bits, runs after
 	// the block that computes it.
@@ -437,7 +454,7 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 		})
 		var prior priorBits
 		e.R2, prior = st.setR2Bits(bits, e.EventID, e.Session.PromptID)
-		c.fillProvenance(e, t, st, bits, resultFeatures)
+		c.fillProvenance(e, t, st, bits, resultFeatures, payloadFeatures)
 		if e.Kind == event.KindToolPre {
 			c.shadowGate(e, t, bits, prior)
 		}
@@ -494,7 +511,7 @@ func (c *Collector) countVerdict(d event.Decision) {
 // the same call also produces a PostToolUse (and, if it is prompted, a
 // PermissionRequest) carrying the very same input: matching on all of them would
 // report one action as two or three edges, and rule 100283 would page for each.
-func (c *Collector) fillProvenance(e *event.Event, t *event.Tool, st *sessionState, bits r2.Bits, result *event.Features) {
+func (c *Collector) fillProvenance(e *event.Event, t *event.Tool, st *sessionState, bits r2.Bits, result, payload *event.Features) {
 	if bits.A {
 		// Layer 2a, session taint: bit A as a label. A label rides on the event that
 		// first introduces it and not on every later one, the same transition
@@ -513,6 +530,14 @@ func (c *Collector) fillProvenance(e *event.Event, t *event.Tool, st *sessionSta
 			e.Provenance.IngestRefs = prov.Refs(edges)
 			c.provEdgeEvents.Add(1)
 		}
+		// Only an action that can act or reach outside can carry data out, so only
+		// those are matched against what sensitive reads returned.
+		if bits.C {
+			if exfil := st.sens.Match(payload); len(exfil) > 0 {
+				e.Provenance.Exfil = exfil
+				c.provExfilEvents.Add(1)
+			}
+		}
 	case event.KindToolPost:
 		// Only untrusted ingest registers. bit A is the same predicate Rule-of-Two
 		// uses for "untrusted input", so the two layers cannot disagree about what
@@ -525,6 +550,13 @@ func (c *Collector) fillProvenance(e *event.Event, t *event.Tool, st *sessionSta
 			}
 			c.provRegistered.Add(int64(res.Stored))
 			c.provSkipped.Add(int64(res.Skipped))
+			c.provTruncated.Add(int64(res.Truncated))
+			c.provEvicted.Add(int64(res.Evicted))
+		}
+		// A result that set bit B is private data the session now holds. A result can be
+		// both (a mailbox is untrusted content and private data) and then feeds both.
+		if bits.B && result != nil {
+			res := st.sens.Ingest(e.EventID, result, t.InputFeatures)
 			c.provTruncated.Add(int64(res.Truncated))
 			c.provEvicted.Add(int64(res.Evicted))
 		}
@@ -699,6 +731,7 @@ func (c *Collector) session(p *hook.Payload) *sessionState {
 			model:    p.Model,
 			permMode: p.PermissionMode,
 			prov:     prov.New(prov.Options{CommonDomains: c.webDomainTrust}),
+			sens:     prov.New(prov.Options{CommonDomains: c.webDomainTrust}),
 		}
 		c.sessions[p.SessionID] = st
 	}
@@ -759,6 +792,8 @@ type ProvStats struct {
 	Truncated  int64 // dropped because one result exceeded its per-ingest cap
 	Evicted    int64 // discarded to stay within the per-session cap
 	EdgeEvents int64 // action events that carried at least one edge
+	// ExfilEvents are acting calls that carried a value a sensitive read returned.
+	ExfilEvents int64
 }
 
 func (c *Collector) Stats() Stats {
@@ -781,12 +816,13 @@ func (c *Collector) Stats() Stats {
 		InterposeReports: c.interposeReports.Load(),
 		InterposeEvents:  c.interposeEvents.Load(),
 		Provenance: ProvStats{
-			Ingests:    c.provIngests.Load(),
-			Registered: c.provRegistered.Load(),
-			Skipped:    c.provSkipped.Load(),
-			Truncated:  c.provTruncated.Load(),
-			Evicted:    c.provEvicted.Load(),
-			EdgeEvents: c.provEdgeEvents.Load(),
+			Ingests:     c.provIngests.Load(),
+			Registered:  c.provRegistered.Load(),
+			Skipped:     c.provSkipped.Load(),
+			Truncated:   c.provTruncated.Load(),
+			Evicted:     c.provEvicted.Load(),
+			EdgeEvents:  c.provEdgeEvents.Load(),
+			ExfilEvents: c.provExfilEvents.Load(),
 		},
 		Shadow: ShadowStats{
 			Deny:       c.shadowDeny.Load(),
@@ -880,6 +916,36 @@ func opFor(toolName string) string {
 // renderInput flattens tool_input to text for feature extraction. Values only:
 // the keys are tool-schema names and contribute nothing but noise to
 // fingerprinting.
+// addressingKeys are tool_input fields that say WHERE an action goes rather than WHAT it
+// carries: a recipient, a channel, a URL, a path. A private value there is the user
+// addressing someone they know (a meeting participant, a payee), which the AgentDojo
+// measurement showed is as common in benign sessions as in hostile ones. A private value in
+// the remaining fields (a subject, a body, content) is data leaving. Matched by name,
+// case-insensitively; this is a convention, not a schema, and a tool that puts its payload
+// in a field named like this one hides it from the exfil match.
+var addressingKeys = map[string]bool{
+	"recipient": true, "recipients": true, "to": true, "cc": true, "bcc": true,
+	"email": true, "emails": true, "user_email": true, "participants": true,
+	"url": true, "channel": true, "address": true, "user": true,
+	"file_path": true, "path": true, "notebook_path": true,
+}
+
+// renderPayload is renderInput without the addressing fields.
+func renderPayload(p *hook.Payload) string {
+	if p.ToolInput == nil {
+		return ""
+	}
+	out := make([]byte, 0, 256)
+	for k, v := range p.ToolInput {
+		if addressingKeys[strings.ToLower(k)] {
+			continue
+		}
+		out = append(out, []byte(fmt.Sprint(v))...)
+		out = append(out, ' ')
+	}
+	return string(out)
+}
+
 func renderInput(p *hook.Payload) string {
 	if p.ToolInput == nil {
 		return ""

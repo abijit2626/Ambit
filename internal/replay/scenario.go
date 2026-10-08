@@ -122,6 +122,10 @@ type Expect struct {
 	Rule     string `json:"rule"`
 	// TurnDecision asserts the verdict under per-prompt-turn scoping, same values.
 	TurnDecision string `json:"turn_decision"`
+	// Exfil asserts whether the event carries a sensitive-data edge; ExfilClass its
+	// strongest match class.
+	Exfil      *bool  `json:"exfil"`
+	ExfilClass string `json:"exfil_class"`
 }
 
 // Step is one hook event in a scenario.
