@@ -95,6 +95,8 @@ type ConfigOverrides struct {
 	TrustedMCPServers     []string `json:"trusted_mcp_servers"`
 	TrustedContentDomains []string `json:"trusted_content_domains"`
 	ExtraUntrustedPaths   []string `json:"extra_untrusted_paths"`
+	// MCPToolLabels replaces the configured tool labels for this scenario.
+	MCPToolLabels map[string]map[string][]string `json:"mcp_tool_labels"`
 }
 
 // Expect is a set of assertions about one step's resulting event. Every field is
