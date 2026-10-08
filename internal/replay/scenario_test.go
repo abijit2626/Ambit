@@ -186,3 +186,18 @@ func names(s []*Scenario) []string {
 	}
 	return out
 }
+
+func TestParseRunLevelHeader(t *testing.T) {
+	sc := parse(t, `{"scenario":{"name":"x","hostile":true,"steps_unlabeled":true}}`+"\n"+oneStep)
+	if sc.Hostile == nil || !*sc.Hostile || !sc.StepsUnlabeled {
+		t.Errorf("header = %+v", sc.Header)
+	}
+}
+
+func TestParseRejectsALabeledStepInAnUnlabeledScenario(t *testing.T) {
+	src := `{"scenario":{"steps_unlabeled":true}}` + "\n" +
+		`{"payload":{"hook_event_name":"PreToolUse","session_id":"s"},"hostile":true}` + "\n"
+	if _, err := Parse(strings.NewReader(src), "t.jsonl"); err == nil || !strings.Contains(err.Error(), "steps_unlabeled") {
+		t.Errorf("err = %v; a header that says no step is labeled contradicts a labeled step", err)
+	}
+}
