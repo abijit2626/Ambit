@@ -236,3 +236,54 @@ func TestExtractIgnoresWindowsFilenamesAsDomains(t *testing.T) {
 		t.Errorf("domains = %v, want only evil.test", f.Domains)
 	}
 }
+
+// A credential is almost never bare: it travels glued to its key, in a config file or on a
+// command line. The run "SERVICE_KEY=<token>" must not hide the token from an intersection
+// against the bare token an ingested page carried. The replay corpus found this
+// (testdata/replay/attack-planted-token-assigned.jsonl).
+func TestExtractHighEntropyTokenGluedToAKey(t *testing.T) {
+	e := New(testKey)
+	const token = "xK9fQ2mZp7LwR4vT8bNc3Yd5"
+
+	bare := e.Extract("set the service key " + token + " in your config")
+	if !has(bare.HiEntropy, e, token) {
+		t.Fatal("test premise broken: the bare token is not captured")
+	}
+
+	for _, text := range []string{
+		"SERVICE_KEY=" + token,
+		"register --token=" + token,
+		"export API_TOKEN=" + token + " && run",
+	} {
+		f := e.Extract(text)
+		if !has(f.HiEntropy, e, token) {
+			t.Errorf("%q: the bare token is not captured, so it cannot match the same token seen bare elsewhere", text)
+		}
+	}
+
+	// The whole run is still kept, so nothing that matched before stops matching.
+	glued := "SERVICE_KEY=" + token
+	if !has(e.Extract(glued).HiEntropy, e, glued) {
+		t.Error("the whole glued run was dropped; only an addition was intended")
+	}
+}
+
+// Padding stays attached for a base64 value, and the unpadded body is captured too, since
+// the other side of an intersection may have lost its padding.
+func TestExtractBase64WithAndWithoutPadding(t *testing.T) {
+	e := New(testKey)
+	body := "aGVsbG8gd29ybGQgdGhpcyBpcyBiYXNlNjQgZGF0YQ"
+	f := e.Extract("blob " + body + "==")
+	if !has(f.HiEntropy, e, body+"==") || !has(f.HiEntropy, e, body) {
+		t.Errorf("want both the padded and the unpadded form, got %v", f.HiEntropy)
+	}
+}
+
+// The short key half and low-entropy values must not become fingerprints.
+func TestExtractAssignmentDoesNotFingerprintTheKeyOrLowEntropyValue(t *testing.T) {
+	e := New(testKey)
+	f := e.Extract("LOG_LEVEL=verbose --retries=3 PADDING=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if len(f.HiEntropy) != 0 {
+		t.Errorf("ordinary assignments produced high-entropy fingerprints: %v", f.HiEntropy)
+	}
+}
