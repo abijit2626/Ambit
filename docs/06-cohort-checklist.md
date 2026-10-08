@@ -29,12 +29,29 @@ Each one will otherwise cost the cohort a week to discover.
    files verbatim subsets, checks each against the M0 bundle, and fails if the bundle gains a
    key that makes the full policy pass.
 
-2. **Nothing supervises `ambitd`.** The repository ships no launchd job, systemd unit or
-   Windows service. `scripts/dev-local.sh` starts it with `nohup` under the user's own settings,
-   which is right for one machine and wrong for a cohort: a reboot or a crash leaves the
-   endpoint unobserved, and SCA check 10007 then reports D7. Something that starts it at boot
-   or login and restarts it has to come from your MDM. Decide what, and where its stderr goes:
-   the latency measurement below reads that log.
+2. **Install `ambitd` as a system service, not with `dev-local`.** `scripts/dev-local.sh` starts
+   it with `nohup` under the user's own settings, which is right for one machine and wrong for a
+   cohort: a reboot or a crash leaves the endpoint unobserved. `scripts/install-system.sh` (Linux,
+   macOS) and `scripts/install-system.ps1` (Windows) install it the way a monitoring agent runs:
+   as root or SYSTEM, from boot, restarted whenever it exits. The definitions are in
+   `deploy/service/`: a systemd unit, a LaunchDaemon, and on Windows a scheduled task, because
+   `ambitd` is a console program and making it a Windows service would add a dependency. The
+   installer starts the service and checks its health before it installs the managed settings,
+   and refuses to overwrite managed settings that are not the M0 bundle. Logs: `journalctl -u
+   ambitd` on Linux, `/Library/Logs/ambit/ambitd.log` on macOS,
+   `C:\ProgramData\ambit\ambitd.log` on Windows; the latency measurement below reads them.
+
+   As a system service, `ambitd`'s own home directory is root's or SYSTEM's, not the
+   developer's. It takes each session's home from the transcript path Claude Code reports
+   instead, so developer files outside the working directory keep their `home` zone. A session
+   whose transcript lives elsewhere (`CLAUDE_CONFIG_DIR`) falls back to the service account's
+   home; set `home` in the config for those.
+
+   What is verified: the Linux installer's whole flow (install, upgrade, status, uninstall,
+   refusing a held port and existing managed settings), run against a stub service manager and a
+   real `ambitd`; and the systemd unit, with `systemd-analyze verify`. What is not: the restart
+   itself on any platform, and the macOS and Windows installers, which have not been run. Kill
+   `ambitd` on a test machine of each kind and watch it come back before rolling out.
 
 3. **Hook latency is not reported as a number.** `ambitd` logs `hook response exceeded latency
    budget` for each response slower than `latency_budget_ms` (default 5) and records nothing
@@ -103,16 +120,19 @@ Each one will otherwise cost the cohort a week to discover.
 
 Per endpoint, in this order. Ask for 5–10 volunteers who have been told what is collected.
 
-1. Create the data directory private to the account that runs `ambitd`: `0700` on Unix, a
-   restricted ACL on Windows (`ambitd` refuses a directory that other accounts can read or that another account owns).
-2. Install `ambitd` and `mcp-interpose` from `make cross` and start `ambitd` under whatever you
-   chose in blocker 2. `ambitd -print-config` shows the effective configuration; set
-   `trusted_repo_paths`, `trusted_content_domains` and, if you classify MCP servers or tools,
-   `trusted_mcp_servers` and `mcp_tool_labels`. An unset trusted-repo list makes D8 mostly
-   noise early on, as its runbook says.
-3. Deliver `deploy/claude-code/managed-settings.m0.json` by MDM. Confirm it with `curl
-   http://127.0.0.1:7777/healthz` on the endpoint (`{"status":"ok"}`), then run one Claude Code
-   session and check that `events.jsonl` has a `session_start`.
+1. If the volunteer tried `dev-local` first, remove it: `./scripts/dev-local.sh --uninstall`
+   (or the `.ps1`). It holds the same port, and the installer refuses to start next to it.
+2. Build with `make cross` and run, as root or from an Administrator PowerShell:
+   `sudo ./scripts/install-system.sh --binary bin/ambitd-<os>-<arch>`, or
+   `.\scripts\install-system.ps1 -Binary .\bin\ambitd-windows-<arch>.exe`. It creates the data
+   directory, installs and starts the service, waits for the health endpoint, then installs
+   `deploy/claude-code/managed-settings.m0.json`. `--status` (`-Status`) shows the state.
+3. Optional configuration goes in `/etc/ambit/config.json`, `/usr/local/etc/ambit/config.json`
+   or `C:\ProgramData\ambit\config.json`; restart the service after changing it.
+   `ambitd -print-config` shows the effective configuration. Set `trusted_repo_paths`,
+   `trusted_content_domains` and, if you classify MCP servers or tools, `trusted_mcp_servers` and
+   `mcp_tool_labels`. An unset trusted-repo list makes D8 mostly noise early on, as its runbook
+   says. Then run one Claude Code session and check that `events.jsonl` has a `session_start`.
 4. For each MCP server the volunteer uses, wrap its command in `mcp-interpose -server NAME`
    in the MCP configuration (the README's "Classifying MCP servers and tools" section shows the
    shape), run a session so the surface is recorded, review it with `-show`,
@@ -127,7 +147,7 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
 | Criterion | How to measure it | Passes when |
 | --- | --- | --- |
 | 5–10 endpoint volunteer cohort | Wazuh agent list for the group | 5–10 agents active and sending events |
-| p99 hook response under 5 ms | Count `hook response exceeded latency budget` in each `ambitd` log, divide by that endpoint's hook-sourced events in `trajectory.jsonl` | Under 1% over budget, on every endpoint. Look at the `took` values too: a few at 4 ms and none at 200 ms is a different result from the reverse |
+| p99 hook response under 5 ms | Count `hook response exceeded latency budget` in each `ambitd` log (blocker 2 says where), divide by that endpoint's hook-sourced events in `trajectory.jsonl` | Under 1% over budget, on every endpoint. Look at the `took` values too: a few at 4 ms and none at 200 ms is a different result from the reverse |
 | Zero developer-visible behavior change | Ask each volunteer: did a prompt appear or disappear, did anything run slower, did any tool call fail that would not have? Also diff their `permissions` and `sandbox` settings against before | Every answer is no, and the managed bundle changed nothing but `env` and `hooks` |
 | Spool event loss under 0.1% | Last `health_dropped_events` per endpoint in `events.jsonl`, over that endpoint's total events; add the `sink_gap` markers (rule 100313) | Under 0.1%. State the blocker-4 caveat next to the number |
 | Interesting fraction measured | `AMBIT_DIR=<data dir> ./scripts/dev-local.sh --status` on each endpoint (the process line keys on `$AMBIT_DIR/ambitd`; ignore it if the binary is elsewhere) | A number exists. It is not a pass/fail: if it is far from 2–5%, tighten the filter before M1 |
@@ -152,8 +172,12 @@ why); for those, cause the condition on a test endpoint and use the real alert. 
 
 ## Rollback
 
-`./scripts/dev-local.sh --uninstall` (and the `.ps1`) removes a user-scope install. For a managed
-one, remove the managed-settings bundle and stop `ambitd` as a pair. Either alone trips an alert
-on the endpoint: a missing bundle fails SCA check 10001 (D12), and a stopped daemon fails 10007
-(D7). So take the endpoint out of the Wazuh agent group, or tell whoever watches the manager,
-before you remove anything. Otherwise the alerts that follow are your own.
+`sudo ./scripts/install-system.sh --uninstall` (`.\scripts\install-system.ps1 -Uninstall`)
+removes the managed settings first, if they are the M0 bundle, then the service and the binary.
+It keeps the spool and the fingerprint key; `--purge` (`-Purge`) removes them too.
+`./scripts/dev-local.sh --uninstall` removes a user-scope install.
+
+Removing either half trips an alert on the endpoint: a missing bundle fails SCA check 10001
+(D12), and a stopped daemon fails 10007 (D7). So take the endpoint out of the Wazuh agent group,
+or tell whoever watches the manager, before you remove anything. Otherwise the alerts that follow
+are your own.
