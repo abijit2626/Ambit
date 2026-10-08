@@ -1,0 +1,79 @@
+<!--
+  ambit R2 gate — the Rule-of-Two gate's shadow verdicts.
+
+  Manager-side. IDs 100320-100329. Allocation map in ambit_mcp_rules.xml.
+
+  ambitd evaluates docs/03-detection.md's third-bit table on every PreToolUse and records
+  the verdict on the event with policy_shadow=true. In M2 the verdict is NEVER returned to
+  Claude Code: the developer saw no prompt and nothing was blocked. These rules surface what
+  enforcement would have done, so the table can be judged on real sessions before any row
+  is promoted from shadow to ask to deny.
+
+  Levels are deliberately moderate. The replay corpus shows the gate denying a developer who
+  reads provider docs and then their own .env, which is ordinary work. Paging on every
+  shadow deny would teach analysts to ignore the rule. The one high-level rule is the
+  composite docs/03 names as a page condition: a would-be block on an action that also
+  carries a provenance edge, meaning the action both completes the Rule of Two and carries
+  a value from the untrusted content.
+
+  Matching on policy_shadow=true is intentional: an enforced verdict (M3) is a different
+  event with different triage, and these descriptions say "would have".
+-->
+
+<group name="ambit,ambit_r2_gate,">
+
+  <!-- Would have denied. -->
+  <rule id="100320" level="8">
+    <decoded_as>json</decoded_as>
+    <field name="policy_shadow">^true$</field>
+    <field name="policy_decision">^deny$</field>
+    <description>ambit R2 gate (shadow): would have DENIED $(tool_name) - $(policy_rule_id) on $(endpoint_id); not enforced</description>
+    <mitre>
+      <id>T1552</id>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_r2_gate,runbook_R2,</group>
+  </rule>
+
+  <!-- Would have asked the developer. -->
+  <rule id="100321" level="6">
+    <decoded_as>json</decoded_as>
+    <field name="policy_shadow">^true$</field>
+    <field name="policy_decision">^ask$</field>
+    <description>ambit R2 gate (shadow): would have ASKED before $(tool_name) - $(policy_rule_id) on $(endpoint_id); not enforced</description>
+    <mitre>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_r2_gate,runbook_R2,</group>
+  </rule>
+
+  <!-- The action that completed all three Rule-of-Two properties. Allowed by design. -->
+  <rule id="100322" level="5">
+    <decoded_as>json</decoded_as>
+    <field name="policy_shadow">^true$</field>
+    <field name="policy_decision">^allow_alert$</field>
+    <description>ambit R2 gate (shadow): session now holds untrusted input, sensitive data and external action - $(tool_name) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_r2_gate,runbook_R2,</group>
+  </rule>
+
+  <!--
+    The composite: a would-be block on an action that also carries a provenance edge. Both
+    halves are on the same event, so no correlation window is needed.
+  -->
+  <rule id="100323" level="13">
+    <decoded_as>json</decoded_as>
+    <field name="policy_shadow">^true$</field>
+    <field name="policy_decision">^deny$|^ask$</field>
+    <field name="prov_edge_count">\.+</field>
+    <description>ambit R2 gate (shadow): would have blocked $(tool_name), and it carries a value from untrusted content ($(prov_edge_class) at $(prov_edge_confidence), from $(prov_edge_from)) - $(policy_rule_id)</description>
+    <mitre>
+      <id>T1041</id>
+      <id>T1552</id>
+    </mitre>
+    <group>ambit_r2_gate,runbook_R2,</group>
+  </rule>
+
+</group>
