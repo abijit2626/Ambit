@@ -53,6 +53,7 @@ type sessionState struct {
 	mu       sync.Mutex
 	sequence int64
 	cwd      string
+	home     string // the home this session's paths are classified against
 	model    string
 	permMode string
 	zoner    *classify.Zoner
@@ -725,9 +726,11 @@ func (c *Collector) session(p *hook.Payload) *sessionState {
 	defer c.mu.Unlock()
 	st, ok := c.sessions[p.SessionID]
 	if !ok {
+		home := c.homeFor(p, c.cfg.Home)
 		st = &sessionState{
 			cwd:      p.CWD,
-			zoner:    classify.NewZoner(c.cfg.Home, p.CWD, c.cfg.ExtraUntrustedPaths),
+			home:     home,
+			zoner:    classify.NewZoner(home, p.CWD, c.cfg.ExtraUntrustedPaths),
 			model:    p.Model,
 			permMode: p.PermissionMode,
 			prov:     prov.New(prov.Options{CommonDomains: c.webDomainTrust}),
@@ -745,14 +748,45 @@ func (c *Collector) session(p *hook.Payload) *sessionState {
 	if p.Model != "" {
 		st.model = p.Model
 	}
-	if p.CWD != "" && p.CWD != st.cwd {
+	home := c.homeFor(p, st.home)
+	if (p.CWD != "" && p.CWD != st.cwd) || home != st.home {
 		// CwdChanged is a real event; rebuild the zoner so workdir classification
-		// follows the session rather than going stale.
-		st.cwd = p.CWD
-		st.zoner = classify.NewZoner(c.cfg.Home, p.CWD, c.cfg.ExtraUntrustedPaths)
+		// follows the session rather than going stale. The same holds for a home that
+		// only a later payload's transcript path revealed.
+		if p.CWD != "" {
+			st.cwd = p.CWD
+		}
+		st.home = home
+		st.zoner = classify.NewZoner(home, st.cwd, c.cfg.ExtraUntrustedPaths)
 	}
 	st.mu.Unlock()
 	return st
+}
+
+// homeFor is the home directory to classify this session's paths against. A configured
+// home wins. Otherwise the session's own home, taken from the transcript path Claude Code
+// reports (it lives under that user's ~/.claude/projects/), replaces the home of the
+// account ambitd runs as. That matters when ambitd is a system service: its own home is
+// root's or SYSTEM's, and every developer file outside the working directory would lose
+// its home zone. A transcript kept elsewhere (CLAUDE_CONFIG_DIR) yields nothing, and
+// current is kept.
+func (c *Collector) homeFor(p *hook.Payload, current string) string {
+	if !c.cfg.HomeIsDetected() {
+		return c.cfg.Home
+	}
+	if h := homeFromTranscript(p.TranscriptPath); h != "" {
+		return h
+	}
+	return current
+}
+
+func homeFromTranscript(tp string) string {
+	s := strings.ReplaceAll(tp, `\`, "/")
+	i := strings.Index(s, "/.claude/projects/")
+	if i <= 0 {
+		return ""
+	}
+	return s[:i]
 }
 
 // Forget drops a session's state. Called on SessionEnd so long-lived ambitd
