@@ -154,9 +154,46 @@ loop; Claude Code is a black box emitting events. This layer is an explicitly
 unsound approximation, and the design says so rather than implying taint-tracking
 guarantees it does not have.
 
+**Implementation status (`internal/prov`, alert-only).** 2a and 2b are built; 2c is not.
+The engine keeps a per-session set of keyed fingerprints from untrusted ingest, intersects
+it with every `PreToolUse` input, and puts the result on the event as `provenance.edges`.
+It changes no hook response and sets no decision. Rule 100283 reads the strongest edge.
+What it does and does not do, because the design above overstates nothing and the code
+should not either:
+
+- **"Untrusted ingest" is Rule-of-Two bit A.** A `PostToolUse` result registers exactly
+  when the same call set bit A (`internal/r2`), so the two layers cannot disagree. Content
+  from an operator-trusted domain or server does not register.
+- **A value the ingest did not introduce does not register.** What the user typed in a
+  prompt, and what the agent passed in the same call's input, are excluded. Without this,
+  every follow-up request to a host the agent was sent to would be an edge, because a page
+  names its own host. The cost is stated in `prov.Ingest`: a page that points the agent
+  back at the host it came from draws no *domain* edge, though a spelled-out URL still draws
+  a *URL* edge. A value the user typed *after* it was ingested is not retroactively
+  excluded.
+- **Confidence is by class:** URL 0.95; email and high-entropy token 0.90; IP and domain
+  0.80; shingle 0.30 (advisory, and off unless `EnableShingles`). A domain the operator
+  lists in `trusted_content_domains` is **down-weighted to 0.40, not dropped** — a trusted
+  code host is also an exfiltration sink, and s1ngularity wrote to public repositories on
+  one.
+- **The set is bounded and says so.** 256 fingerprints per result, 8192 per session, oldest
+  evicted first. Truncation and eviction are counted (`prov_truncated`, `prov_evicted` in
+  the `ambitd stopped` log line); a non-zero count means an absent edge in some session is
+  weaker evidence than it looks. Neither bound is sound: a flood can still push older
+  fingerprints out, and the per-ingest cap is only what makes that expensive.
+- **Not covered:** instruction files. `InstructionsLoaded` carries a path and no content,
+  so a poisoned `CLAUDE.md` taints the session (`instructions:untrusted`) but contributes no
+  fingerprints. Paraphrase and reconstruction defeat the intersection entirely, as above.
+  Cross-session matching is D10's separate, scalar form.
+- **Taint labels are in the spool but cross only on events that cross anyway.** A new label
+  does not by itself make an event cross; that would add volume before the interesting
+  fraction has been measured.
+
 ### 2a — Session taint (sound, coarse)
 
-Bit A as a label. Reliable, useless alone for attributing a *specific* action.
+Bit A as a label. Reliable, useless alone for attributing a *specific* action. Emitted as
+`web:hmac:<domain>`, `mcp:<server>`, `bash:network`, `file:untrusted` or
+`instructions:untrusted`, on the event that first introduces each label in a session.
 
 ### 2b — Content fingerprinting (unsound, specific)
 

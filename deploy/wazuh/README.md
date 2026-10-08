@@ -32,7 +32,9 @@ approval, a rug pull, a removal, a mid-session re-listing and an unwritable base
 store, then selects one representative event per shape. They therefore cannot drift
 from the schema. The last two are synthetic and labelled in the file: an M2-shaped
 event (shadow `policy_decision` plus a provenance edge) and a `sink_gap` marker,
-which only appears when a sink queue overflows.
+which only appears when a sink queue overflows. The provenance edge on its own is
+generated for real, from an untrusted fetch followed by a command that carries a URL
+the page named.
 
 Regenerate with `make fixtures` after any change to the flattened schema, and commit
 the result. An earlier hand-written set went stale through a field rename, which is
@@ -54,7 +56,7 @@ Three groups mark a rule as not-yet-checkable, and `rules_test.go` enforces what
 means:
 
 - **`ambit_pending_emitter`** — the field is in the schema but nothing populates it yet
-  (the policy engine is M3, provenance is M2, goal drift is M4, and `agent_entrypoint` has
+  (the policy engine is M3, goal drift is M4, and `agent_entrypoint` has
   no emitter at all). Such a rule must match **nothing** in the generated fixtures; if it
   matches, the emitter exists and the marker is stale, which would leave a working detector
   documented as inert.
