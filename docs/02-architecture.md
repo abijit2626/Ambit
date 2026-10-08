@@ -267,6 +267,11 @@ matching, `r:` for regex, `n:` for numeric comparison, `&&` to chain, `not` to
 negate, and a per-check `condition` of `all`, `any`, or `none`. `regex_type` selects
 `osregex` (default) or `pcre2`.
 
+The policy below is the full one, which asserts enforcement keys. While managed settings are
+observation-only (M0) an endpoint runs the subset the M0 bundle satisfies instead, in
+`deploy/wazuh/sca/ambit_managed_settings_m0.yml`; see
+[the cohort checklist](06-cohort-checklist.md).
+
 ```yaml
 policy:
   id: "ambit_managed_settings"
