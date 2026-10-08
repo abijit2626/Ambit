@@ -24,6 +24,7 @@ import (
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/filter"
+	"github.com/abijit2626/ambit/internal/gate"
 	"github.com/abijit2626/ambit/internal/hook"
 	"github.com/abijit2626/ambit/internal/prov"
 	"github.com/abijit2626/ambit/internal/r2"
@@ -63,6 +64,14 @@ type sessionState struct {
 	// event that caused it, so setR2Bits returns it per-call rather than storing
 	// it, and a caller reading r2 directly (snapshotR2) always sees it false.
 	r2 event.R2
+	// turnPrompt and turnBits are the same accounting scoped to one prompt turn: bits
+	// reset when prompt_id changes. They feed only the gate's alternative verdict, so
+	// the per-turn scoping (docs/03 candidate 3) can be measured beside the session one
+	// without changing anything the session bits drive. An event with no prompt_id stays
+	// in the current turn, so a client that never sends one degrades turn scoping to
+	// session scoping rather than to a fresh turn per event.
+	turnPrompt string
+	turnBits   r2.Bits
 	// prov is the provenance engine's per-session fingerprint set. It has its own
 	// lock, so it is deliberately not guarded by mu: the hook path takes mu only to
 	// read or write scalar fields, and holding it across a set intersection would
@@ -70,10 +79,18 @@ type sessionState struct {
 	prov *prov.Set
 }
 
+// priorBits is what each scoping held before an event's own bits were applied: the
+// input the gate needs, since its rows are about acting AFTER a bit was set.
+type priorBits struct {
+	session, turn r2.Bits
+}
+
 // setR2Bits ORs newBits into the session's Rule-of-Two state and returns the
 // event.R2 snapshot for the ONE event that triggered this call: the cumulative
 // bits, plus Transition true and SetBy set only when this call caused a bit to
-// flip from unset to set.
+// flip from unset to set. It also returns the bits each scoping held before this
+// call, read under the same lock that applies the new ones: two concurrent requests
+// for one session must not both see the state from before either of them.
 //
 // Calling this twice for the same tool call (once on PreToolUse, once on
 // PostToolUse) is expected, not a bug: PostToolUse additionally carries the
@@ -81,9 +98,19 @@ type sessionState struct {
 // about (a secret surfacing only in the output, for one). Re-applying the
 // same input-side bits on the second call is a no-op under monotonic OR, and
 // will not report a second Transition for something that already transitioned.
-func (s *sessionState) setR2Bits(newBits r2.Bits, eventID string) event.R2 {
+func (s *sessionState) setR2Bits(newBits r2.Bits, eventID, promptID string) (event.R2, priorBits) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if promptID != "" && promptID != s.turnPrompt {
+		s.turnPrompt = promptID
+		s.turnBits = r2.Bits{}
+	}
+	prior := priorBits{
+		session: r2.Bits{A: s.r2.A, B: s.r2.B, C: s.r2.C},
+		turn:    s.turnBits,
+	}
+	s.turnBits = s.turnBits.Or(newBits)
 
 	transitioned := (newBits.A && !s.r2.A) || (newBits.B && !s.r2.B) || (newBits.C && !s.r2.C)
 	s.r2.A = s.r2.A || newBits.A
@@ -96,7 +123,7 @@ func (s *sessionState) setR2Bits(newBits r2.Bits, eventID string) event.R2 {
 		s.r2.SetBy = eventID
 		out.SetBy = eventID
 	}
-	return out
+	return out, prior
 }
 
 // Collector implements hook.Handler.
@@ -134,9 +161,14 @@ type Collector struct {
 	provTruncated  atomic.Int64
 	provEvicted    atomic.Int64
 	provEdgeEvents atomic.Int64
-	otelRecords    atomic.Int64
-	otelToolCalls  atomic.Int64
-	otelLastSeen   atomic.Int64
+	// shadowDeny, shadowAsk and shadowAlert count the gate's session-scoped shadow
+	// verdicts: what enforcement would have done, had it been on.
+	shadowDeny    atomic.Int64
+	shadowAsk     atomic.Int64
+	shadowAlert   atomic.Int64
+	otelRecords   atomic.Int64
+	otelToolCalls atomic.Int64
+	otelLastSeen  atomic.Int64
 	// interposeReports and interposeEvents count the third collection path. They
 	// are separate from handled/crossed so the M0 interesting-fraction figure
 	// stays comparable against a cohort that ran without an interposer.
@@ -399,8 +431,54 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 			SecretHitCount: len(t.InputFeatures.SecretHits),
 			WebUntrusted:   c.webUntrusted(t.Name, t.InputFeatures),
 		})
-		e.R2 = st.setR2Bits(bits, e.EventID)
+		var prior priorBits
+		e.R2, prior = st.setR2Bits(bits, e.EventID, e.Session.PromptID)
 		c.fillProvenance(e, t, st, bits, resultFeatures)
+		if e.Kind == event.KindToolPre {
+			c.shadowGate(e, t, bits, prior)
+		}
+	}
+}
+
+// shadowGate records the Rule-of-Two gate's verdict on a PreToolUse without returning
+// it. Nothing here reaches Claude Code: the hook's decider is hook.ObserveOnly and
+// answers {} before this runs. The verdict exists to measure, on real sessions, how often
+// each row of docs/03's table would have stopped or prompted a developer.
+//
+// A row that does not fire leaves Policy at its zero value, so an ordinary event does not
+// grow by a bundle version and a shadow flag; the turn-scoped verdict is recorded either
+// way, because "the turn scoping would NOT have fired here" is half of the comparison.
+func (c *Collector) shadowGate(e *event.Event, t *event.Tool, bits r2.Bits, prior priorBits) {
+	start := time.Now()
+	action := gate.ActionFrom(t, bits)
+	v := gate.Evaluate(prior.session, action)
+	turn := gate.Evaluate(prior.turn, action)
+	elapsed := time.Since(start)
+
+	if v.Fired() {
+		e.Policy = event.Policy{
+			Decision:      v.Decision,
+			Reason:        v.Reason,
+			RuleIDs:       []string{v.RuleID},
+			BundleVersion: gate.BundleVersion,
+			LatencyUS:     elapsed.Microseconds(),
+			Shadow:        true,
+		}
+		c.countVerdict(v.Decision)
+	}
+	e.Policy.Alternatives = []event.ScopedVerdict{{
+		Scoping: event.ScopingTurn, Decision: turn.Decision, RuleID: turn.RuleID,
+	}}
+}
+
+func (c *Collector) countVerdict(d event.Decision) {
+	switch d {
+	case event.DecisionDeny:
+		c.shadowDeny.Add(1)
+	case event.DecisionAsk:
+		c.shadowAsk.Add(1)
+	case event.DecisionAllowAlert:
+		c.shadowAlert.Add(1)
 	}
 }
 
@@ -542,7 +620,7 @@ func (c *Collector) fillConfig(e *event.Event, p *hook.Payload, st *sessionState
 	// they contribute nothing to R2.
 	if e.Kind == event.KindInstructionsLoaded {
 		bits := r2.ClassifyInstructionsLoaded(ci.Trusted)
-		e.R2 = st.setR2Bits(bits, e.EventID)
+		e.R2, _ = st.setR2Bits(bits, e.EventID, e.Session.PromptID)
 		// An untrusted instruction file taints the session like any other bit-A
 		// source. It cannot feed the fingerprint set: the hook payload carries a path
 		// and no content, and reading an untrusted file from the daemon would be a
@@ -642,6 +720,15 @@ type Stats struct {
 	InterposeEvents  int64
 	// Provenance is the engine's account of itself, summed across sessions.
 	Provenance ProvStats
+	// Shadow counts the gate's session-scoped verdicts by decision. None was returned.
+	Shadow ShadowStats
+}
+
+// ShadowStats count what the Rule-of-Two gate would have decided.
+type ShadowStats struct {
+	Deny       int64
+	Ask        int64
+	AllowAlert int64
 }
 
 // ProvStats are the provenance engine's counters. Truncated and Evicted are the two
@@ -682,6 +769,11 @@ func (c *Collector) Stats() Stats {
 			Truncated:  c.provTruncated.Load(),
 			Evicted:    c.provEvicted.Load(),
 			EdgeEvents: c.provEdgeEvents.Load(),
+		},
+		Shadow: ShadowStats{
+			Deny:       c.shadowDeny.Load(),
+			Ask:        c.shadowAsk.Load(),
+			AllowAlert: c.shadowAlert.Load(),
 		},
 	}
 }
