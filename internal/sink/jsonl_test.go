@@ -3,10 +3,12 @@ package sink
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -316,5 +318,117 @@ func TestRotationRecoversAfterFailure(t *testing.T) {
 	}
 	if st, err := os.Stat(blocker); err != nil || st.IsDir() {
 		t.Errorf("rotation never resumed after the blocker was removed: %v", err)
+	}
+}
+
+// The oldest rotated generation is deleted by a rotation, so a rotation whose live-file
+// rename fails must not get as far as shifting anything. Before this was ordered
+// correctly, every failed attempt (they repeat every rotateRetry) deleted one more
+// generation and never refilled .1, so a file held open by a log shipper emptied the
+// whole history in a few minutes while the live file grew without bound.
+func TestFailedRotationKeepsRotatedHistory(t *testing.T) {
+	oldRetry, oldRename := rotateRetry, renameFile
+	rotateRetry = 0
+	defer func() { rotateRetry, renameFile = oldRetry, oldRename }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	history := map[string]string{
+		path + ".1": "newest\n",
+		path + ".2": "middle\n",
+		path + ".3": "oldest\n",
+	}
+	for p, body := range history {
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The live file is held open by something else: moving it fails every time.
+	renameFile = func(from, to string) error {
+		if from == path {
+			return errors.New("the process cannot access the file because it is being used by another process")
+		}
+		return oldRename(from, to)
+	}
+
+	opts := DefaultOptions(path)
+	opts.MaxBytes, opts.MaxFiles = 200, 3
+	w, err := Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = 60
+	for i := 0; i < total; i++ {
+		w.Write(rec{Kind: "tool_pre", N: i})
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for p, body := range history {
+		got, err := os.ReadFile(p)
+		if err != nil || string(got) != body {
+			t.Errorf("%s = %q (%v), want %q: a failed rotation destroyed rotated history", filepath.Base(p), got, err, body)
+		}
+	}
+	if got := len(readLines(t, path)); got != total {
+		t.Errorf("live file has %d lines, want %d", got, total)
+	}
+	if w.Stats().WriteErrs == 0 {
+		t.Error("the failed rotation was not counted")
+	}
+}
+
+// If the live file cannot be reopened after a rotation, the writer has to keep trying.
+// Giving up leaves it with no file, and every later event is then dropped until the
+// process restarts, which is detection loss with nothing at the detector to show it.
+func TestWriterRecoversAfterFailedReopen(t *testing.T) {
+	oldRetry, oldRename := rotateRetry, renameFile
+	rotateRetry = 0
+	defer func() { rotateRetry, renameFile = oldRetry, oldRename }()
+
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	var once sync.Once
+	renameFile = func(from, to string) error {
+		err := oldRename(from, to)
+		if err == nil && strings.HasSuffix(from, asideSuffix) {
+			// Occupy the live path so the reopen that follows the rotation fails.
+			once.Do(func() { _ = os.Mkdir(path, 0o700) })
+		}
+		return err
+	}
+
+	opts := DefaultOptions(path)
+	opts.MaxBytes, opts.MaxFiles = 200, 3
+	w, err := Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		w.Write(rec{Kind: "tool_pre", N: i})
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if st, err := os.Stat(path); err == nil && st.IsDir() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the rotation that should have made the reopen fail never happened")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // let the drain goroutine run into the failed reopen
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	before := w.Stats().Written
+	for i := 100; i < 110; i++ {
+		w.Write(rec{Kind: "tool_pre", N: i})
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if after := w.Stats().Written; after < before+10 {
+		t.Errorf("written went from %d to %d after the obstruction cleared; the writer never reopened", before, after)
 	}
 }

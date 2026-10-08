@@ -184,10 +184,17 @@ What differs from Unix, and why it matters:
   `deploy/wazuh/sca/ambit_managed_settings_windows.yml` leaves out the two checks that
   assert sandbox settings, because no configuration could satisfy them.
 - **Privacy is an ACL, not a mode.** `0700` means nothing on Windows, and `%ProgramData%`
-  is readable by every local user. A directory `ambitd` creates gets an explicit ACL
-  (the account that created it, SYSTEM, Administrators), set with `icacls`; the Wazuh agent
-  runs as SYSTEM and needs to read `events.jsonl`. A directory that already exists is never
-  touched. Default data path: `%ProgramData%\ambit`.
+  is readable by every local user. Every directory `ambitd` creates, parents included, gets
+  an explicit ACL (the account that created it, SYSTEM, Administrators), set with
+  `icacls`; the Wazuh agent runs as SYSTEM and needs to read `events.jsonl`. If setting the
+  ACL fails, what was created is removed again, so a later run cannot mistake it for
+  somebody else's. A directory that already exists is never changed, but it is checked: one
+  that `Users`, `Everyone` or `Authenticated Users` can read, or that an account other than
+  the current user, SYSTEM or Administrators owns, is refused, and the error carries the
+  `icacls` command that fixes it. That matters for an installer that pre-creates
+  `%ProgramData%\ambit` to drop `config.json` into: restrict it first. Default data path:
+  `%ProgramData%\ambit`. `mcp-interpose` runs as the developer, so its baselines default to
+  `%USERPROFILE%\.ambit\baselines`, which the FIM configuration also watches.
 - **Paths are normalized before anything is compared.** Windows drive paths are
   case-insensitive; Claude Code can report them with backslashes, as `/mnt/c/...` from WSL,
   or as `/c/...` from Git Bash. All of them reach the same zone label. Claude Code's

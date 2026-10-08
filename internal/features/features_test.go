@@ -216,3 +216,23 @@ func TestRegistrable(t *testing.T) {
 		t.Errorf("registrable(a.b.co.uk) = %q; expected the documented co.uk approximation", got)
 	}
 }
+
+// A Windows directory listing is full of executables and project files. Fingerprinting
+// each as a domain sets prov_fp_notable on ordinary `dir` output, which crosses the
+// event to the SIEM and inflates the interesting fraction the M0 exit metric measures.
+func TestExtractIgnoresWindowsFilenamesAsDomains(t *testing.T) {
+	e := New(testKey)
+	f := e.Extract("setup.exe install.cmd build.bat foo.msi web.config app.lnk Program.cs x.dll " +
+		"MyApp.csproj MyApp.sln Pkg.nupkg Directory.Build.props curl.exe -s")
+	if len(f.Domains) != 0 {
+		t.Errorf("Windows filenames were extracted as domains: %v", f.Domains)
+	}
+	if got := NotableFingerprint(f); got != "" {
+		t.Errorf("a listing of Windows files produced a notable fingerprint %q", got)
+	}
+	// A real domain next to them is still found.
+	f = e.Extract("setup.exe was fetched from cdn.evil.test")
+	if len(f.Domains) != 1 {
+		t.Errorf("domains = %v, want only evil.test", f.Domains)
+	}
+}

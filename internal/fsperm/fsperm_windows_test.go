@@ -3,6 +3,7 @@
 package fsperm
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,5 +62,49 @@ func TestPrivateDirDoesNotTouchAnExistingDirectory(t *testing.T) {
 	}
 	if after := aclOf(t, dir); after != before {
 		t.Errorf("an existing directory's ACL changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// Parents that PrivateDir creates are restricted too, not just the leaf.
+func TestPrivateDirRestrictsCreatedParentsACL(t *testing.T) {
+	root := t.TempDir()
+	if err := PrivateDir(filepath.Join(root, "outer", "inner")); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{filepath.Join(root, "outer"), filepath.Join(root, "outer", "inner")} {
+		if acl := aclOf(t, d); strings.Contains(acl, "(I)") || strings.Contains(acl, `BUILTIN\Users`) {
+			t.Errorf("%s is not private:\n%s", d, acl)
+		}
+	}
+}
+
+// A directory somebody pre-created with the inherited ACL (an installer making
+// C:\ProgramData\ambit to drop config.json into) is not private, and ambit must say so
+// instead of putting prompt text and the fingerprint key in it.
+func TestPrivateDirRefusesAnExposedExistingDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "shared")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(icacls(), dir, "/grant", "*S-1-5-32-545:(OI)(CI)R").CombinedOutput(); err != nil {
+		t.Fatalf("icacls: %v: %s", err, out)
+	}
+	err := PrivateDir(dir)
+	if !errors.Is(err, ErrNotPrivate) {
+		t.Fatalf("err = %v, want ErrNotPrivate for a directory Users can read", err)
+	}
+	if !strings.Contains(err.Error(), "icacls") {
+		t.Errorf("the error does not say how to fix it: %v", err)
+	}
+}
+
+// A directory ambit made itself is accepted on the next run: the check must not
+// reject its own output.
+func TestPrivateDirAcceptsADirectoryItMadeEarlier(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	for i := 0; i < 2; i++ {
+		if err := PrivateDir(dir); err != nil {
+			t.Fatalf("run %d: %v", i+1, err)
+		}
 	}
 }

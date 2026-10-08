@@ -264,16 +264,38 @@ if ($Uninstall) { Invoke-Uninstall; return }
 
 # --- install ------------------------------------------------------------------
 
-# Creating the directory ourselves means ambitd will find it already there and leave
-# its permissions alone, so this script has to make it private. Under the default
+# Creating the directory ourselves means ambitd will find it already there. ambitd never
+# changes an existing directory, and refuses one that other accounts can read or that
+# another account owns, so this script has to make it private. Under the default
 # %USERPROFILE% it already is; AMBIT_DIR can point anywhere, and the spool holds prompt
 # text. SYSTEM and Administrators keep access so a Wazuh agent (which runs as SYSTEM)
 # can tail events.jsonl.
+#
+# Every directory this creates is restricted, parents included, and all of them are
+# removed again if restricting fails. Leaving a half-done directory behind would be worse
+# than failing: a re-run would find it, skip this block, and ambitd would then be handed
+# a directory with the inherited ACL.
 if (-not (Test-Path $AmbitDir)) {
-    New-Item -ItemType Directory -Path $AmbitDir | Out-Null
+    $created = @()
+    $probe = $AmbitDir
+    while ($probe -and -not (Test-Path $probe)) {
+        $created = @($probe) + $created   # outermost first
+        $parent = Split-Path -Parent $probe
+        if ($parent -eq $probe) { break }
+        $probe = $parent
+    }
     $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    & icacls.exe $AmbitDir /inheritance:r /grant:r "*${me}:(OI)(CI)F" '/grant:r' '*S-1-5-18:(OI)(CI)F' '/grant:r' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "could not restrict $AmbitDir with icacls (exit $LASTEXITCODE)" }
+    foreach ($dir in $created) {
+        New-Item -ItemType Directory -Path $dir | Out-Null
+        & icacls.exe $dir /inheritance:r /grant:r "*${me}:(OI)(CI)F" '/grant:r' '*S-1-5-18:(OI)(CI)F' '/grant:r' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            foreach ($d in ($created | Sort-Object { $_.Length } -Descending)) {
+                Remove-Item -Recurse -Force -LiteralPath $d -ErrorAction SilentlyContinue
+            }
+            throw "could not restrict $dir with icacls (exit $code); removed what was created so a re-run starts clean"
+        }
+    }
 }
 
 Write-Bold 'Building ambitd'
