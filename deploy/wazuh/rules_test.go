@@ -821,6 +821,14 @@ func TestRulesStayQuietWhereTheyShould(t *testing.T) {
 			why: "every endpoint heartbeats on a timer; alerting on a healthy one is pure volume",
 		},
 		{
+			name: "the provenance-edge rule does not fire on a network command with no edge",
+			rule: 100283,
+			pick: func(ev map[string]any) bool {
+				return ev["kind"] == "tool_pre" && ev["bash_command_class"] == "network" && ev["prov_edge_count"] == nil
+			},
+			why: "most outbound commands derive from nothing the session ingested; paging on them would make the rule noise",
+		},
+		{
 			name: "D6's system-zone rule does not fire on a home-zone config change",
 			rule: 100253,
 			pick: func(ev map[string]any) bool {
@@ -855,6 +863,56 @@ func TestRulesStayQuietWhereTheyShould(t *testing.T) {
 				t.Skipf("no fixture of this shape; regenerate with `make fixtures` or drop the case")
 			}
 		})
+	}
+}
+
+// TestProvenanceEdgeRuleHasARealEmitter is the other direction of the pending-emitter
+// check, for the one rule that used to carry the marker because the provenance engine
+// did not exist. It must now match a line the real pipeline generated and not only the
+// hand-written one: the synthetic line proves the rule's syntax, and only a generated
+// line proves ambitd can produce what the rule reads.
+//
+// If this fails after a schema change, regenerate the fixtures; if it still fails, the
+// engine has stopped emitting edges and the rule has silently gone back to being inert.
+func TestProvenanceEdgeRuleHasARealEmitter(t *testing.T) {
+	rules := loadRules(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+	r, ok := byID[100283]
+	if !ok {
+		t.Fatal("rule 100283 not found")
+	}
+	if r.hasGroup(groupPendingEmitter) {
+		t.Errorf("rule 100283 still carries %s, but the provenance engine exists", groupPendingEmitter)
+	}
+
+	var generated, synthetic int
+	for i, ev := range loadFixtures(t) {
+		got, err := matches(r, ev, byID)
+		if err != nil {
+			t.Fatalf("fixture %d: %v", i+1, err)
+		}
+		if !got {
+			continue
+		}
+		if isSynthetic(ev) {
+			synthetic++
+			continue
+		}
+		generated++
+		// The edge's source must be present, or an analyst has nothing to open.
+		if from, _ := ev["prov_edge_from"].(string); from == "" {
+			t.Errorf("generated fixture %d matched but carries no prov_edge_from", i+1)
+		}
+		if _, ok := ev["prov_edge_confidence"].(float64); !ok {
+			t.Errorf("generated fixture %d matched but carries no prov_edge_confidence", i+1)
+		}
+	}
+	if generated == 0 {
+		t.Errorf("rule 100283 matches no generated fixture (%d synthetic): ambitd is not producing provenance edges, "+
+			"or the fixtures are stale; run `make fixtures`", synthetic)
 	}
 }
 

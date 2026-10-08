@@ -71,9 +71,18 @@
   </rule>
 
   <!--
-    PENDING EMITTER. A provenance edge is ambitd's own statement that this action derived
-    from untrusted content it ingested earlier — the signal D10's tripwire only
-    approximates. The provenance engine lands in M2, so nothing sets prov_edge_count yet.
+    A provenance edge is ambitd's own statement that this action carried a value which
+    also appeared in untrusted content it ingested earlier in the same session — the
+    signal D10's tripwire only approximates. The engine is internal/prov; an edge is
+    evidence for a reviewer, not proof of copying, and the model re-wording the value
+    defeats it entirely. Only the strongest edge and the count reach this rule; the
+    raw edges and the ingest they point at are in the local spool.
+
+    prov_edge_confidence separates a spelled-out URL or a checksum-valid IBAN (0.95), an
+    email or opaque token (0.90) from a bare domain (0.80), and a domain the operator trusts for content
+    (0.40). A trusted domain is down-weighted rather than dropped because a trusted
+    code host is also an exfiltration sink. The rule does not threshold on it yet: the
+    first deployment is meant to show where that line belongs.
   -->
   <rule id="100283" level="12">
     <decoded_as>json</decoded_as>
@@ -82,7 +91,7 @@
     <mitre>
       <id>T1105</id>
     </mitre>
-    <group>ambit_provenance,ambit_pending_emitter,runbook_D10,</group>
+    <group>ambit_provenance,runbook_D10,</group>
   </rule>
 
   <!-- ===================== D8 — poisoned instruction file ===================== -->

@@ -25,6 +25,7 @@ import (
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/filter"
 	"github.com/abijit2626/ambit/internal/hook"
+	"github.com/abijit2626/ambit/internal/prov"
 	"github.com/abijit2626/ambit/internal/r2"
 	"github.com/abijit2626/ambit/internal/redact"
 )
@@ -43,8 +44,9 @@ type Sink interface {
 // which is also the unit Rule-of-Two accounting uses: monotonic bits that never
 // clear within a session (docs/03-detection.md, Layer 1), shipped in shadow
 // mode specifically to measure how fast a session saturates to all three
-// before choosing a narrower scoping. The
-// provenance fingerprint set is M2 work not yet built; r2 is not — see setR2Bits.
+// before choosing a narrower scoping. The provenance fingerprint set (prov) is
+// session-scoped for the same reason and with the same open question: it lives and
+// dies with this struct, so a /clear that mints a new session_id starts it empty.
 type sessionState struct {
 	mu       sync.Mutex
 	sequence int64
@@ -61,6 +63,11 @@ type sessionState struct {
 	// event that caused it, so setR2Bits returns it per-call rather than storing
 	// it, and a caller reading r2 directly (snapshotR2) always sees it false.
 	r2 event.R2
+	// prov is the provenance engine's per-session fingerprint set. It has its own
+	// lock, so it is deliberately not guarded by mu: the hook path takes mu only to
+	// read or write scalar fields, and holding it across a set intersection would
+	// serialize unrelated requests for the same session for no benefit.
+	prov *prov.Set
 }
 
 // setR2Bits ORs newBits into the session's Rule-of-Two state and returns the
@@ -117,9 +124,19 @@ type Collector struct {
 	// hookToolCalls counts tool events seen on the hook path, for comparison
 	// against the OTel stream. See OTel() on why the comparison is coarse.
 	hookToolCalls atomic.Int64
-	otelRecords   atomic.Int64
-	otelToolCalls atomic.Int64
-	otelLastSeen  atomic.Int64
+	// The provenance counters are summed across sessions, because a session's own
+	// prov.Stats disappears at SessionEnd and truncation has to stay visible after
+	// that. provTruncated and provEvicted are the ones to watch: either being
+	// non-zero means some "no edge" was produced by an incomplete set.
+	provIngests    atomic.Int64
+	provRegistered atomic.Int64
+	provSkipped    atomic.Int64
+	provTruncated  atomic.Int64
+	provEvicted    atomic.Int64
+	provEdgeEvents atomic.Int64
+	otelRecords    atomic.Int64
+	otelToolCalls  atomic.Int64
+	otelLastSeen   atomic.Int64
 	// interposeReports and interposeEvents count the third collection path. They
 	// are separate from handled/crossed so the M0 interesting-fraction figure
 	// stays comparable against a cohort that ran without an interposer.
@@ -194,6 +211,16 @@ func (c *Collector) Handle(p *hook.Payload) {
 	}
 
 	c.emit(e)
+
+	// The session is over, so its state goes. Forget documents itself as called on
+	// SessionEnd, and nothing called it: every session an ambitd process ever saw
+	// stayed in memory until the process restarted, which the provenance
+	// fingerprint set (up to 8192 entries per session) turns from a rounding error
+	// into real growth. After emit, not before, so the SessionEnd event itself still
+	// carries the session's final Rule-of-Two state.
+	if p.HookEventName == hook.EvSessionEnd {
+		c.Forget(p.SessionID)
+	}
 }
 
 // emit writes one event to both sinks: the spool gets everything in the rich
@@ -270,7 +297,7 @@ func (c *Collector) build(p *hook.Payload) *event.Event {
 
 	switch kind {
 	case event.KindPromptSubmit:
-		c.fillPrompt(e, p)
+		c.fillPrompt(e, p, st)
 	case event.KindToolPre, event.KindToolPost, event.KindToolFail, event.KindPermissionRequest, event.KindPermissionDenied:
 		c.fillTool(e, p, st)
 	case event.KindInstructionsLoaded, event.KindConfigChange, event.KindFileChanged:
@@ -279,11 +306,17 @@ func (c *Collector) build(p *hook.Payload) *event.Event {
 	return e
 }
 
-func (c *Collector) fillPrompt(e *event.Event, p *hook.Payload) {
+func (c *Collector) fillPrompt(e *event.Event, p *hook.Payload, st *sessionState) {
 	// The prompt text is retained in the rich event for the spool, redacted, so
 	// the declared objective is available to M4's goal-drift scorer. It has no
 	// field in the flattened representation and therefore cannot reach Wazuh.
 	clean, hits := c.red.Redact(p.UserInput)
+
+	// What the user wrote is not introduced by anything the agent later ingests, so
+	// it is declared to the provenance engine. Extracted from the redacted text, for
+	// the same reason tool input is: a secret must not become a fingerprint. The
+	// features themselves are not kept on the event; only the engine holds them.
+	st.prov.Declare(c.ext.Extract(clean))
 	e.Prompt = &event.PromptInfo{
 		Text:       clean,
 		TextDigest: c.ext.Digest(p.UserInput),
@@ -332,15 +365,16 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 	t.InputFeatures = c.ext.Extract(cleanInput)
 	t.InputFeatures.SecretHits = toSecretHits(inputHits)
 
+	// resultFeatures is nil unless the payload carries a result. It is declared out
+	// here because the provenance ingest below, which needs the R2 bits, runs after
+	// the block that computes it.
+	var resultFeatures *event.Features
 	if p.ToolResult != nil {
 		resultText := fmt.Sprint(p.ToolResult)
 		cleanResult, resultHits := c.red.Redact(resultText)
 		t.ResultDigest = c.ext.Digest(resultText)
 		t.ResultBytes = len(resultText)
-		// Result features feed the provenance ingest set in M2. In M0 they are
-		// computed and spooled so the M2 work starts from real data rather than
-		// from a guess about what these look like.
-		resultFeatures := c.ext.Extract(cleanResult)
+		resultFeatures = c.ext.Extract(cleanResult)
 		t.InputFeatures.SecretHits = append(t.InputFeatures.SecretHits, toSecretHits(resultHits)...)
 		e.Provenance.FPNotable = features.NotableFingerprint(resultFeatures)
 		if e.Provenance.FPNotable != "" {
@@ -366,7 +400,98 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 			WebUntrusted:   c.webUntrusted(t.Name, t.InputFeatures),
 		})
 		e.R2 = st.setR2Bits(bits, e.EventID)
+		c.fillProvenance(e, t, st, bits, resultFeatures)
 	}
+}
+
+// fillProvenance runs the provenance engine for one tool event: the intersection
+// on PreToolUse, the ingest on PostToolUse, and the session taint label for either.
+// It changes nothing the agent can observe; the result is fields on the event.
+//
+// The intersection runs on PreToolUse only. docs/03 says "on every PreToolUse", and
+// the same call also produces a PostToolUse (and, if it is prompted, a
+// PermissionRequest) carrying the very same input: matching on all of them would
+// report one action as two or three edges, and rule 100283 would page for each.
+func (c *Collector) fillProvenance(e *event.Event, t *event.Tool, st *sessionState, bits r2.Bits, result *event.Features) {
+	if bits.A {
+		// Layer 2a, session taint: bit A as a label. A label rides on the event that
+		// first introduces it and not on every later one, the same transition
+		// discipline Rule-of-Two uses, so a long session does not widen every event.
+		for _, label := range c.taintLabels(t) {
+			if st.prov.AddTaint(label) {
+				e.Provenance.Taint = append(e.Provenance.Taint, label)
+			}
+		}
+	}
+
+	switch e.Kind {
+	case event.KindToolPre:
+		if edges := st.prov.Match(t.InputFeatures); len(edges) > 0 {
+			e.Provenance.Edges = edges
+			e.Provenance.IngestRefs = prov.Refs(edges)
+			c.provEdgeEvents.Add(1)
+		}
+	case event.KindToolPost:
+		// Only untrusted ingest registers. bit A is the same predicate Rule-of-Two
+		// uses for "untrusted input", so the two layers cannot disagree about what
+		// counts: a result is tracked exactly when it moved the session toward the
+		// first bit of the Rule of Two.
+		if bits.A && result != nil {
+			res := st.prov.Ingest(e.EventID, result, t.InputFeatures)
+			if res.Stored > 0 {
+				c.provIngests.Add(1)
+			}
+			c.provRegistered.Add(int64(res.Stored))
+			c.provSkipped.Add(int64(res.Skipped))
+			c.provTruncated.Add(int64(res.Truncated))
+			c.provEvicted.Add(int64(res.Evicted))
+		}
+	}
+}
+
+// maxTaintLabelsPerEvent bounds how many labels one event can carry, because the
+// flattened event is under a field budget (see event's TestSIEMEventFieldBudgetPerKind)
+// and the web label is per-domain.
+const maxTaintLabelsPerEvent = 4
+
+// taintLabels names where a bit-A tool event's untrusted input came from. The forms
+// follow docs/04's example ("web:hmac:...", "mcp:github"). Domains are keyed
+// digests, never names; an MCP server name is operator-configured and is cleartext
+// everywhere else in the schema already.
+func (c *Collector) taintLabels(t *event.Tool) []string {
+	var out []string
+	if t.MCP != nil && t.MCP.Trust != "internal" {
+		out = append(out, "mcp:"+t.MCP.Server)
+	}
+	if t.Name == "WebFetch" || t.Name == "WebSearch" {
+		n := 0
+		if t.InputFeatures != nil {
+			for _, d := range t.InputFeatures.Domains {
+				if c.webDomainTrust[d] || n >= maxTaintLabelsPerEvent {
+					continue
+				}
+				out = append(out, "web:"+d)
+				n++
+			}
+		}
+		if n == 0 {
+			// WebSearch carries no URL to take a domain from.
+			out = append(out, "web")
+		}
+	}
+	if t.Bash != nil && classify.IsNetworkClass(t.Bash.CommandClass) {
+		out = append(out, "bash:network")
+	}
+	for _, p := range t.Paths {
+		if p.Zone == event.ZoneUntrusted && p.Op == "read" {
+			out = append(out, "file:untrusted")
+			break
+		}
+	}
+	if len(out) > maxTaintLabelsPerEvent {
+		out = out[:maxTaintLabelsPerEvent]
+	}
+	return out
 }
 
 // webUntrusted reports whether a WebFetch/WebSearch result's domain is not on
@@ -416,7 +541,15 @@ func (c *Collector) fillConfig(e *event.Event, p *hook.Payload, st *sessionState
 	// endpoint's own configuration, not content the agent reads as context, so
 	// they contribute nothing to R2.
 	if e.Kind == event.KindInstructionsLoaded {
-		e.R2 = st.setR2Bits(r2.ClassifyInstructionsLoaded(ci.Trusted), e.EventID)
+		bits := r2.ClassifyInstructionsLoaded(ci.Trusted)
+		e.R2 = st.setR2Bits(bits, e.EventID)
+		// An untrusted instruction file taints the session like any other bit-A
+		// source. It cannot feed the fingerprint set: the hook payload carries a path
+		// and no content, and reading an untrusted file from the daemon would be a
+		// new capability this layer does not get to assume.
+		if bits.A && st.prov.AddTaint("instructions:untrusted") {
+			e.Provenance.Taint = append(e.Provenance.Taint, "instructions:untrusted")
+		}
 	}
 }
 
@@ -469,6 +602,7 @@ func (c *Collector) session(p *hook.Payload) *sessionState {
 			zoner:    classify.NewZoner(c.cfg.Home, p.CWD, c.cfg.ExtraUntrustedPaths),
 			model:    p.Model,
 			permMode: p.PermissionMode,
+			prov:     prov.New(prov.Options{CommonDomains: c.webDomainTrust}),
 		}
 		c.sessions[p.SessionID] = st
 	}
@@ -506,6 +640,20 @@ type Stats struct {
 	CrossReasons     map[string]int64
 	InterposeReports int64
 	InterposeEvents  int64
+	// Provenance is the engine's account of itself, summed across sessions.
+	Provenance ProvStats
+}
+
+// ProvStats are the provenance engine's counters. Truncated and Evicted are the two
+// that matter operationally: either being non-zero means some session's fingerprint
+// set was incomplete, so an absent edge there is weaker evidence than it looks.
+type ProvStats struct {
+	Ingests    int64 // tool results that registered at least one fingerprint
+	Registered int64 // fingerprints stored
+	Skipped    int64 // not stored: the user or the agent had already supplied them
+	Truncated  int64 // dropped because one result exceeded its per-ingest cap
+	Evicted    int64 // discarded to stay within the per-session cap
+	EdgeEvents int64 // action events that carried at least one edge
 }
 
 func (c *Collector) Stats() Stats {
@@ -527,6 +675,14 @@ func (c *Collector) Stats() Stats {
 		CrossReasons:     reasons,
 		InterposeReports: c.interposeReports.Load(),
 		InterposeEvents:  c.interposeEvents.Load(),
+		Provenance: ProvStats{
+			Ingests:    c.provIngests.Load(),
+			Registered: c.provRegistered.Load(),
+			Skipped:    c.provSkipped.Load(),
+			Truncated:  c.provTruncated.Load(),
+			Evicted:    c.provEvicted.Load(),
+			EdgeEvents: c.provEdgeEvents.Load(),
+		},
 	}
 }
 

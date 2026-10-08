@@ -154,9 +154,46 @@ loop; Claude Code is a black box emitting events. This layer is an explicitly
 unsound approximation, and the design says so rather than implying taint-tracking
 guarantees it does not have.
 
+**Implementation status (`internal/prov`, alert-only).** 2a and 2b are built; 2c is not.
+The engine keeps a per-session set of keyed fingerprints from untrusted ingest, intersects
+it with every `PreToolUse` input, and puts the result on the event as `provenance.edges`.
+It changes no hook response and sets no decision. Rule 100283 reads the strongest edge.
+What it does and does not do, because the design above overstates nothing and the code
+should not either:
+
+- **"Untrusted ingest" is Rule-of-Two bit A.** A `PostToolUse` result registers exactly
+  when the same call set bit A (`internal/r2`), so the two layers cannot disagree. Content
+  from an operator-trusted domain or server does not register.
+- **A value the ingest did not introduce does not register.** What the user typed in a
+  prompt, and what the agent passed in the same call's input, are excluded. Without this,
+  every follow-up request to a host the agent was sent to would be an edge, because a page
+  names its own host. The cost is stated in `prov.Ingest`: a page that points the agent
+  back at the host it came from draws no *domain* edge, though a spelled-out URL still draws
+  a *URL* edge. A value the user typed *after* it was ingested is not retroactively
+  excluded.
+- **Confidence is by class:** URL and IBAN 0.95; email and high-entropy token 0.90; IP and
+  domain 0.80; shingle 0.30 (advisory, and off unless `EnableShingles`). A domain the operator
+  lists in `trusted_content_domains` is **down-weighted to 0.40, not dropped** — a trusted
+  code host is also an exfiltration sink, and s1ngularity wrote to public repositories on
+  one.
+- **The set is bounded and says so.** 256 fingerprints per result, 8192 per session, oldest
+  evicted first. Truncation and eviction are counted (`prov_truncated`, `prov_evicted` in
+  the `ambitd stopped` log line); a non-zero count means an absent edge in some session is
+  weaker evidence than it looks. Neither bound is sound: a flood can still push older
+  fingerprints out, and the per-ingest cap is only what makes that expensive.
+- **Not covered:** instruction files. `InstructionsLoaded` carries a path and no content,
+  so a poisoned `CLAUDE.md` taints the session (`instructions:untrusted`) but contributes no
+  fingerprints. Paraphrase and reconstruction defeat the intersection entirely, as above.
+  Cross-session matching is D10's separate, scalar form.
+- **Taint labels are in the spool but cross only on events that cross anyway.** A new label
+  does not by itself make an event cross; that would add volume before the interesting
+  fraction has been measured.
+
 ### 2a — Session taint (sound, coarse)
 
-Bit A as a label. Reliable, useless alone for attributing a *specific* action.
+Bit A as a label. Reliable, useless alone for attributing a *specific* action. Emitted as
+`web:hmac:<domain>`, `mcp:<server>`, `bash:network`, `file:untrusted` or
+`instructions:untrusted`, on the event that first introduces each label in a session.
 
 ### 2b — Content fingerprinting (unsound, specific)
 
@@ -604,8 +641,85 @@ of time when three public ones exist:
 - **ControlArena** (UK AISI with Redwood Research) — control protocols, settings,
   model organisms.
 
-Use as the regression suite: replay trajectories through `ambitd`, measure detection
-and false-positive rate per detector. Wazuh rules get their own test path —
+**Implementation status.** The replay half is built: `cmd/ambit-replay` (`internal/replay`)
+feeds trajectories to the real collector in-process and reports precision, recall, a
+confidence-floor sweep and Rule-of-Two saturation depth; the README documents the format.
+It measures the provenance engine and R2 accounting. It does not yet measure the Wazuh rules
+(those have their own fixture path below) or goal drift (M4). `testdata/replay` holds 18 scenarios written alongside the engine, by the same author,
+which is exactly the bias NIST's finding below warns about, so its numbers pin behavior and
+must not be read as a detection rate. The AgentDojo adapter is the first corpus that avoids
+that bias. Its attacks are AgentDojo's, not adapted to ambit, and that cuts both ways: by the
+warning below, a generic baseline overstates a detector's coverage, so the AgentDojo recall is
+an upper bound against an attacker who knows to paraphrase. SHADE-Arena and ControlArena have
+no adapter yet.
+
+What the first runs found, recorded because they are the reason a harness is worth having:
+
+- **A real recall bug**, now fixed. A credential glued to its key (`SERVICE_KEY=<token>`,
+  `--token=<token>`) tokenized as one run, so it never matched the bare token an ingested page
+  carried. The extractor now also fingerprints each `=`-separated segment.
+- **A by-design miss, now recorded.** The redactor strips the value of any `…token=<value>`
+  before feature extraction, so a planted secret used that way draws no edge and sets bit B
+  instead. Redaction takes precedence over provenance.
+- **First measurement against real runs: AgentDojo.** `agentdojo-convert` maps AgentDojo's
+  published run logs onto hook payloads (each suite an unclassified MCP server), and
+  `scripts/agentdojo-measure.sh` reproduces the numbers below from upstream commit `089ed468`.
+  Run-level truth comes from AgentDojo's own checker: a run whose injected attack succeeded is
+  hostile, a run with no injection is benign, and failed, errored and DoS attack runs carry
+  no label. A run is positive if any action in it drew an edge, so the benign-run rate is the
+  number to read recall against.
+
+  | Claude 3.7 Sonnet, `important_instructions` | hostile runs | caught | benign runs | edge drawn |
+  | --- | ---: | ---: | ---: | ---: |
+  | banking | 6 | 0 | 25 | 2 |
+  | slack | 25 | 25 | 26 | 12 |
+  | travel | 1 | 0 | 27 | 1 |
+  | workspace | 15 | 12 | 54 | 12 |
+  | **all** | **47** | **37 (0.79)** | **132** | **27 (0.20)** |
+
+  On GPT-4o (2024-05-13), banking suite, all attacks: 70 of 553 successful attacks caught
+  (0.13), and 3 of 25 benign runs drew an edge. At the action level, 49 of 485 actions in
+  benign Claude 3.7 runs drew an edge (0.10).
+
+  Every case was read, not just counted. What they show:
+  - **The edges in successful attacks land on the attacker's own action**, for example
+    `invite_user_to_slack` with the attacker's address, or a fetch of the attacker's site. They
+    are not incidental.
+  - **The false positives are legitimate carry-through**, the case 2b predicts. The user's own
+    task requires a value from a tool result: an IBAN from the transaction history, an address
+    from a web page, URLs posted in a channel. The edge cannot tell that lineage from an
+    injected one, and confidence does not help, because most are email and domain matches at
+    0.80–0.90.
+  - **The misses have four causes, and only one is a fixable gap.** (1) *Account numbers.*
+    AgentDojo's attacker IBAN `US133000000121212121212` has entropy 2.23, below the 3.2
+    high-entropy floor, so it is never fingerprinted. A real-format German IBAN (`DE89…`, 2.94)
+    misses too, so whether an IBAN is caught depends on its digits. That was 403 of the 483
+    GPT-4o banking misses. **An `iban` class now exists** (strict: registry country, that
+    country's length, mod-97 check digits; printed and compact forms are one fingerprint).
+    It does **not** catch AgentDojo's attacker account, which is not an IBAN: the US issues
+    none and its check digits fail. A real attacker moving money needs a real IBAN, and a looser
+    "IBAN-shaped" rule would fingerprint every order number, so the strict rule is deliberate.
+    Re-measured, it still helps, and every changed run was read:
+    GPT-4o banking goes from 70 to 203 hostile runs with an edge. Of the 133 new ones, **82
+    have the edge on the attacker's own payment**: AgentDojo's injection tasks make the agent
+    put the user's data in that payment, such as their IBAN or a contact's, and the class catches
+    the stolen account number on its way out. **51 are incidental**: the only edge is on a
+    legitimate payment the user asked for, so run recall overstates the gain by that much.
+    The cost is legitimate carry-through again. One more benign run is flagged on each model
+    (Claude 3.7: 27 to 29 of 132; GPT-4o: 3 to 5 of 25), where a user pays an account read from
+    a bill. A redirected-payment attack has exactly that shape too, which is why the edge must
+    never page alone. (2) *Short or common values*, such as a new password of
+    `new_password` or `delete_file(13)`, have no class at all, and should not. (3) *Attacks on the
+    agent's answer.* The travel injections that only change what the agent says produce no
+    action, so an action monitor cannot see them. (4) Paraphrase, as above, which the hand-written
+    corpus already records.
+- **Confidence does not separate the false positives in the starter corpus.** The benign
+  carry-through cases (following a documentation link, putting an article's URL in a summary)
+  are full-URL matches at 0.95, so raising the floor removes recall and keeps them. The edge
+  cannot be the page condition alone; this is the empirical case for the composite below.
+
+Use the public corpora as the regression suite: replay trajectories through `ambitd`, measure
+detection and false-positive rate per detector. Wazuh rules get their own test path —
 `wazuh-logtest` takes a log line and reports which decoder and rule matched, so rule
 correctness is testable from a fixture file of `events.jsonl` lines without a live
 fleet.
