@@ -1,21 +1,9 @@
-<#
-.SYNOPSIS
-Round-trip test for dev-local.ps1: install against a seeded settings.json, install
-again, check status, uninstall. Touches only a temporary directory; your real
-Claude Code settings are never read.
-
-.EXAMPLE
-go build -o bin\ambitd.exe .\cmd\ambitd
-powershell -ExecutionPolicy Bypass -File .\scripts\dev-local-test.ps1
-#>
 [CmdletBinding()]
 param(
     [string]$Binary = '.\bin\ambitd.exe',
     [int]$HookPort = 17777,
     [int]$OtlpPort = 14318
 )
-
-# ASCII only: Windows PowerShell 5.1 reads a BOM-less script as the system code page.
 
 $ErrorActionPreference = 'Stop'
 $script:failures = 0
@@ -32,13 +20,10 @@ function Test-NoBom($path) {
 $devLocal = Join-Path $PSScriptRoot 'dev-local.ps1'
 $Binary = (Resolve-Path $Binary).Path
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('ambit-devlocal-' + [guid]::NewGuid().ToString('N'))
-# A space in both paths on purpose: Start-Process does not quote its arguments, and a
-# profile path with a space is the normal case on Windows.
 $ambitDir = Join-Path $tmp 'ambit dir'
 $settings = Join-Path $tmp 'claude home\settings.json'
 New-Item -ItemType Directory -Path (Split-Path -Parent $settings) | Out-Null
 
-# A settings file that already has things the installer must not disturb.
 $seed = @'
 {
   "model": "opus",
