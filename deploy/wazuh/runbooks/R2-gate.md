@@ -27,8 +27,9 @@ alerts say what enforcement *would* have done.
     sensitive data.
   - `r2.egress_after_ab` (deny): another outbound network command after both.
   - `r2.write_outside_after_ab` (ask): a write outside the working directory after both.
-  - `r2.mcp_after_ab` (ask): a call to an MCP server the operator has not classified internal,
-    after both.
+  - `r2.mcp_after_ab` (ask): an MCP call that can act, after both. A tool the operator labelled
+    `read_only` never triggers it; an unlabelled tool on a server not classified internal
+    always can.
   - `r2.trifecta` (allow, 100322): the call that gave the session all three properties.
 - `r2_a`, `r2_b`, `r2_c` on the same event are the session's bits after the call.
   `policy_bundle_version` names the rule table that produced the verdict.
