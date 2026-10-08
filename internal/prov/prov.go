@@ -44,6 +44,7 @@ import (
 // flattened, in prov_edge_class; a Wazuh rule can key on them.
 const (
 	ClassURL       = "url"
+	ClassIBAN      = "iban"
 	ClassEmail     = "email"
 	ClassHiEntropy = "hi_entropy"
 	ClassIP        = "ip"
@@ -58,7 +59,11 @@ const (
 // reasons (a shared CDN, a package registry) while the same full URL appearing in
 // ingested content and then in an action is rarely coincidence.
 const (
-	confURL       = 0.95
+	confURL = 0.95
+	// confIBAN matches confURL: a checksum-valid IBAN is as specific as a full URL, and
+	// the same account number in ingested content and then in a payment is the
+	// redirected-payment attack.
+	confIBAN      = 0.95
 	confEmail     = 0.90
 	confHiEntropy = 0.90
 	confIP        = 0.80
@@ -175,7 +180,7 @@ func candidates(f *event.Features) []key {
 	if f == nil {
 		return nil
 	}
-	n := len(f.URLs) + len(f.Emails) + len(f.HiEntropy) + len(f.IPs) + len(f.Domains) + len(f.Shingles)
+	n := len(f.URLs) + len(f.IBANs) + len(f.Emails) + len(f.HiEntropy) + len(f.IPs) + len(f.Domains) + len(f.Shingles)
 	out := make([]key, 0, n)
 	add := func(class string, ds []string) {
 		for _, d := range ds {
@@ -185,6 +190,7 @@ func candidates(f *event.Features) []key {
 		}
 	}
 	add(ClassURL, f.URLs)
+	add(ClassIBAN, f.IBANs)
 	add(ClassEmail, f.Emails)
 	add(ClassHiEntropy, f.HiEntropy)
 	add(ClassIP, f.IPs)
@@ -358,6 +364,8 @@ func (s *Set) confidence(k key) float64 {
 	switch k.class {
 	case ClassURL:
 		return confURL
+	case ClassIBAN:
+		return confIBAN
 	case ClassEmail:
 		return confEmail
 	case ClassHiEntropy:

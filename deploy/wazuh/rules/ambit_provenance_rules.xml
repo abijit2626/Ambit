@@ -78,8 +78,8 @@
     defeats it entirely. Only the strongest edge and the count reach this rule; the
     raw edges and the ingest they point at are in the local spool.
 
-    prov_edge_confidence separates a spelled-out URL (0.95), an email or opaque token
-    (0.90) from a bare domain (0.80), and a domain the operator trusts for content
+    prov_edge_confidence separates a spelled-out URL or a checksum-valid IBAN (0.95), an
+    email or opaque token (0.90) from a bare domain (0.80), and a domain the operator trusts for content
     (0.40). A trusted domain is down-weighted rather than dropped because a trusted
     code host is also an exfiltration sink. The rule does not threshold on it yet: the
     first deployment is meant to show where that line belongs.

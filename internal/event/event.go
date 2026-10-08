@@ -252,11 +252,13 @@ type PathRef struct {
 }
 
 type Features struct {
-	Domains    []string    `json:"domains,omitempty"`
-	URLs       []string    `json:"urls,omitempty"`
-	Emails     []string    `json:"emails,omitempty"`
-	IPs        []string    `json:"ips,omitempty"`
-	HiEntropy  []string    `json:"hi_entropy,omitempty"`
+	Domains   []string `json:"domains,omitempty"`
+	URLs      []string `json:"urls,omitempty"`
+	Emails    []string `json:"emails,omitempty"`
+	IPs       []string `json:"ips,omitempty"`
+	HiEntropy []string `json:"hi_entropy,omitempty"`
+	// IBANs are checksum-valid IBANs, normalized to the compact form before digesting.
+	IBANs      []string    `json:"ibans,omitempty"`
 	Shingles   []string    `json:"shingles,omitempty"`
 	SecretHits []SecretHit `json:"secret_hits,omitempty"`
 	Counts     Counts      `json:"counts"`

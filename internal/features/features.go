@@ -178,6 +178,7 @@ func (e *Extractor) Extract(text string) *event.Features {
 	f.Emails = e.digestSet(emails)
 	f.IPs = e.digestSet(ips)
 	f.HiEntropy = e.digestSet(hi)
+	f.IBANs = e.digestSet(ibans(text))
 	if e.EnableShingles {
 		f.Shingles = e.digestSet(shingleSet(text, e.ShingleN))
 	}
@@ -193,12 +194,15 @@ func (e *Extractor) Extract(text string) *event.Features {
 // docs/03-detection.md on the D10 investigation.
 //
 // Only the specific classes qualify. Shingles and bare hostnames are too noisy
-// to page on, so a domain, email or high-entropy token is chosen, in that order.
+// to page on, so an IBAN, email, domain or high-entropy token is chosen, in that
+// order. An IBAN comes first: it is checksum-validated, so it is the most specific
+// value the extractor produces, and one account number turning up across agents is
+// exactly the propagation D10 exists to notice.
 func NotableFingerprint(f *event.Features) string {
 	if f == nil {
 		return ""
 	}
-	for _, set := range [][]string{f.Emails, f.Domains, f.HiEntropy} {
+	for _, set := range [][]string{f.IBANs, f.Emails, f.Domains, f.HiEntropy} {
 		if len(set) > 0 {
 			return set[0] // sets are sorted, so the choice is deterministic
 		}
