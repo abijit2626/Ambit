@@ -645,11 +645,13 @@ of time when three public ones exist:
 feeds trajectories to the real collector in-process and reports precision, recall, a
 confidence-floor sweep and Rule-of-Two saturation depth; the README documents the format.
 It measures the provenance engine and R2 accounting. It does not yet measure the Wazuh rules
-(those have their own fixture path below) or goal drift (M4). What does not exist is the
-public corpora themselves: `testdata/replay` holds 18 scenarios written alongside the engine,
-by the same author, which is exactly the bias NIST's finding below warns about, so its numbers pin
-behavior and must not be read as a detection rate. An adapter from AgentDojo, SHADE-Arena or
-ControlArena trajectories to hook payloads is the missing piece.
+(those have their own fixture path below) or goal drift (M4). `testdata/replay` holds 18 scenarios written alongside the engine, by the same author,
+which is exactly the bias NIST's finding below warns about, so its numbers pin behavior and
+must not be read as a detection rate. The AgentDojo adapter is the first corpus that avoids
+that bias. Its attacks are AgentDojo's, not adapted to ambit, and that cuts both ways: by the
+warning below, a generic baseline overstates a detector's coverage, so the AgentDojo recall is
+an upper bound against an attacker who knows to paraphrase. SHADE-Arena and ControlArena have
+no adapter yet.
 
 What the first runs found, recorded because they are the reason a harness is worth having:
 
@@ -659,6 +661,45 @@ What the first runs found, recorded because they are the reason a harness is wor
 - **A by-design miss, now recorded.** The redactor strips the value of any `…token=<value>`
   before feature extraction, so a planted secret used that way draws no edge and sets bit B
   instead. Redaction takes precedence over provenance.
+- **First measurement against real runs: AgentDojo.** `agentdojo-convert` maps AgentDojo's
+  published run logs onto hook payloads (each suite an unclassified MCP server), and
+  `scripts/agentdojo-measure.sh` reproduces the numbers below from upstream commit `089ed468`.
+  Run-level truth comes from AgentDojo's own checker: a run whose injected attack succeeded is
+  hostile, a run with no injection is benign, and failed, errored and DoS attack runs carry
+  no label. A run is positive if any action in it drew an edge, so the benign-run rate is the
+  number to read recall against.
+
+  | Claude 3.7 Sonnet, `important_instructions` | hostile runs | caught | benign runs | edge drawn |
+  | --- | ---: | ---: | ---: | ---: |
+  | banking | 6 | 0 | 25 | 2 |
+  | slack | 25 | 25 | 26 | 12 |
+  | travel | 1 | 0 | 27 | 1 |
+  | workspace | 15 | 12 | 54 | 12 |
+  | **all** | **47** | **37 (0.79)** | **132** | **27 (0.20)** |
+
+  On GPT-4o (2024-05-13), banking suite, all attacks: 70 of 553 successful attacks caught
+  (0.13), and 3 of 25 benign runs drew an edge. At the action level, 49 of 485 actions in
+  benign Claude 3.7 runs drew an edge (0.10).
+
+  Every case was read, not just counted. What they show:
+  - **The edges in successful attacks land on the attacker's own action**, for example
+    `invite_user_to_slack` with the attacker's address, or a fetch of the attacker's site. They
+    are not incidental.
+  - **The false positives are legitimate carry-through**, the case 2b predicts. The user's own
+    task requires a value from a tool result: an IBAN from the transaction history, an address
+    from a web page, URLs posted in a channel. The edge cannot tell that lineage from an
+    injected one, and confidence does not help, because most are email and domain matches at
+    0.80–0.90.
+  - **The misses have four causes, and only one is a fixable gap.** (1) *Account numbers.*
+    AgentDojo's attacker IBAN `US133000000121212121212` has entropy 2.23, below the 3.2
+    high-entropy floor, so it is never fingerprinted. A real-format German IBAN (`DE89…`, 2.94)
+    misses too, so whether an IBAN is caught depends on its digits. That is 403 of the 483
+    GPT-4o banking misses, and the case for a structured-identifier class (IBANs, account and
+    card numbers) with its own rules. (2) *Short or common values*, such as a new password of
+    `new_password` or `delete_file(13)`, have no class at all, and should not. (3) *Attacks on the
+    agent's answer.* The travel injections that only change what the agent says produce no
+    action, so an action monitor cannot see them. (4) Paraphrase, as above, which the hand-written
+    corpus already records.
 - **Confidence does not separate the false positives in the starter corpus.** The benign
   carry-through cases (following a documentation link, putting an article's URL in a summary)
   are full-URL matches at 0.95, so raising the floor removes recall and keeps them. The edge
