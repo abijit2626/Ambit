@@ -183,6 +183,9 @@ func applyOverrides(cfg *config.Config, o *ConfigOverrides) {
 	if o.ExtraUntrustedPaths != nil {
 		cfg.ExtraUntrustedPaths = o.ExtraUntrustedPaths
 	}
+	if o.MCPToolLabels != nil {
+		cfg.MCPToolLabels = o.MCPToolLabels
+	}
 }
 
 func fillFromEvent(sr *StepResult, e *event.Event, stepOfEvent map[string]int, self int) {

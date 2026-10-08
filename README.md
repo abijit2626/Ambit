@@ -300,6 +300,34 @@ mcp-interpose -server github -approve   # the explicit operator step D4 compares
 mcp-interpose -server github -revoke    # withdraw approval after an incident
 ```
 
+### Classifying MCP servers and tools
+
+An MCP server nobody has classified is treated as the worst case: every call is untrusted
+input and an external action (Rule-of-Two bits A and C). Two settings in `config.json` relax
+that, and nothing else can: a server's own annotations never do.
+
+```jsonc
+{
+  "trusted_mcp_servers": ["internal-wiki"],          // results are not untrusted input
+  "mcp_tool_labels": {                               // per tool; globs allowed
+    "bank": {
+      "read_file":   ["untrusted", "read_only"],     // carries outside content: bit A, provenance ingest
+      "get_balance": ["sensitive", "read_only"],     // reads private data: bit B
+      "get_*":       ["read_only"],                  // labels from every matching entry combine
+      "send_money":  []                              // classified: acts (bit C), carries neither
+    }
+  }
+}
+```
+
+A labelled tool's bits come from its labels alone: `untrusted` sets A, `sensitive` sets B, and
+anything not `read_only` sets C. A tool with no matching entry keeps the server's default, so
+missing classification never relaxes anything. An unknown label or a malformed pattern is a
+configuration error rather than a silent no-op. Leave `untrusted` off only for a tool whose
+results can never contain text written by someone else. That is the label to get right,
+because only untrusted results feed provenance. `testdata/agentdojo/mcp-tool-labels.json`
+classifies AgentDojo's four suites and is what the measurements in docs/03 use.
+
 Properties the tests enforce, each because getting it wrong is silent:
 
 - **`ambitd` is inert.** Every hook response is `{}`. An empty response means no
@@ -400,11 +428,13 @@ team executes a runbook against a sample alert.
   session id, which would reset bits B and C that should not reset. Shadow mode exists
   to measure both, and the gate's verdict is computed under a per-turn scoping alongside
   for that comparison. See [docs/03-detection.md](docs/03-detection.md).
-- **The gate is blind wherever bit B cannot be set.** B comes from credential paths, reads
-  outside the working directory and recognised secrets. Sensitive data that arrives in a
-  tool *result*, such as a balance, an IBAN or a mailbox, sets nothing. Against AgentDojo's
-  2,626 published runs the gate never fired, missing all 600 successful attacks, because no
-  run ever reached B. A sensitivity label for MCP servers is the missing input.
+- **The gate depends on MCP tools being classified.** B comes from credential paths, reads
+  outside the working directory, recognised secrets, and MCP tools labelled `sensitive`.
+  Without labels, sensitive data arriving in a tool result sets nothing, and against
+  AgentDojo's 2,626 published runs the gate never fired. With AgentDojo's tools labelled it
+  catches 70% of Claude 3.7's successful attacks but also flags 42% of benign runs, because
+  reading email and replying is a genuine Rule-of-Two case. It is measurable now, and not
+  good enough to enforce.
 - **The goal-drift pre-filter must key on an action's own Rule-of-Two bits**, never on a
   session-level transition, or it skips every repeat of an already-tripped bit.
   Operator `TrustedMCPServers` classification is the larger coverage risk: marking a

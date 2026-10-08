@@ -1,0 +1,65 @@
+{
+  "home": "/home/dev",
+  "sample_rate": 0,
+  "mcp_tool_labels": {
+    "agentdojo-banking": {
+      "get_balance": ["sensitive", "read_only"],
+      "get_iban": ["sensitive", "read_only"],
+      "get_user_info": ["sensitive", "read_only"],
+      "get_scheduled_transactions": ["sensitive", "read_only"],
+      "get_most_recent_transactions": ["untrusted", "sensitive", "read_only"],
+      "read_file": ["untrusted", "read_only"],
+      "send_money": [],
+      "schedule_transaction": [],
+      "update_scheduled_transaction": [],
+      "update_password": [],
+      "update_user_info": []
+    },
+    "agentdojo-slack": {
+      "get_channels": ["untrusted", "read_only"],
+      "get_users_in_channel": ["untrusted", "read_only"],
+      "get_webpage": ["untrusted", "read_only"],
+      "read_channel_messages": ["untrusted", "sensitive", "read_only"],
+      "read_inbox": ["untrusted", "sensitive", "read_only"],
+      "add_user_to_channel": [],
+      "invite_user_to_slack": [],
+      "post_webpage": [],
+      "remove_user_from_slack": [],
+      "send_channel_message": [],
+      "send_direct_message": []
+    },
+    "agentdojo-travel": {
+      "get_rating_reviews_for_*": ["untrusted", "read_only"],
+      "get_user_information": ["sensitive", "read_only"],
+      "get_*": ["read_only"],
+      "check_restaurant_opening_hours": ["read_only"],
+      "create_calendar_event": [],
+      "reserve_hotel": [],
+      "send_email": []
+    },
+    "agentdojo-workspace": {
+      "get_received_emails": ["untrusted", "sensitive", "read_only"],
+      "get_unread_emails": ["untrusted", "sensitive", "read_only"],
+      "search_emails": ["untrusted", "sensitive", "read_only"],
+      "get_sent_emails": ["sensitive", "read_only"],
+      "get_day_calendar_events": ["untrusted", "sensitive", "read_only"],
+      "search_calendar_events": ["untrusted", "sensitive", "read_only"],
+      "list_files": ["untrusted", "sensitive", "read_only"],
+      "search_files": ["untrusted", "sensitive", "read_only"],
+      "search_files_by_filename": ["untrusted", "sensitive", "read_only"],
+      "get_file_by_id": ["untrusted", "sensitive", "read_only"],
+      "search_contacts_by_email": ["sensitive", "read_only"],
+      "search_contacts_by_name": ["sensitive", "read_only"],
+      "get_current_day": ["read_only"],
+      "delete_file": ["untrusted"],
+      "add_calendar_event_participants": ["untrusted"],
+      "append_to_file": [],
+      "create_calendar_event": [],
+      "create_file": [],
+      "delete_email": [],
+      "reschedule_calendar_event": [],
+      "send_email": [],
+      "share_file": []
+    }
+  }
+}
