@@ -118,6 +118,13 @@ claiming coverage.
 
 ## Code
 
+The Go, shell and PowerShell source and the Makefile carry no comments, apart from the
+build-constraint lines Go reads. The reasoning that used to sit beside the code is in
+[docs/](docs/) and the tests, which are named for the behavior they pin; the version with the
+comments is the last commit before they were removed, `3a8cdc5`
+(`git show 3a8cdc5:path/to/file.go`). The Wazuh rules, SCA policies, the managed-settings bundle
+and the CI workflow are configuration that operators read, and keep their comments.
+
 `ambitd` is **observe-only** (M0; see the Roadmap below). It receives Claude Code hook
 events, normalizes them, writes the full trajectory to a local spool and the
 filtered security-relevant slice to a file the Wazuh agent tails. It returns no
@@ -152,11 +159,13 @@ internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
 internal/fsperm/         private directories: 0700 on Unix, an explicit ACL on Windows
 deploy/wazuh/            localfile, syscheck, SCA policy (Unix and Windows), logtest fixtures
-deploy/wazuh/rules/      all twelve detectors, six files, validated by go test
+deploy/wazuh/rules/      all twelve detectors and the gate's shadow verdicts, seven files, validated by go test
 deploy/wazuh/runbooks/   one per detector, for an analyst with no access to our source
 deploy/claude-code/      managed-settings bundle (M0: observation only)
 deploy/service/          ambitd as a system service: systemd unit, LaunchDaemon (Windows: a scheduled task)
+scripts/                 local and system install, smoke tests, fixture generator, runbook rehearsal, AgentDojo measurement
 testdata/replay/         starter trajectory corpus: attacks, adapted attacks, benign sessions
+testdata/agentdojo/      per-tool MCP labels for AgentDojo's four suites, and licensed fixtures
 ```
 
 ```sh
@@ -167,6 +176,8 @@ make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
 ./scripts/runbook-rehearsal.sh -o <new dir>   # analyst packets and an answer key for the M1 runbook rehearsal
 sudo ./scripts/install-system.sh --binary bin/ambitd-linux-amd64   # ambitd as a system service, for a cohort
+sudo ./scripts/install-system.sh --status                          # is it running, and are managed settings in place?
+sudo ./scripts/install-system.sh --uninstall                       # remove it; --purge also removes the collected data
 make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 make replay   # replay testdata/replay through the collector; precision, recall, R2 saturation
@@ -191,8 +202,8 @@ same JSON Claude Code posts, optionally wrapped with ground truth and assertions
 
 `hostile` is ground truth about the *action*: would an analyst want it paged. It is not
 "this came from untrusted input", because docs/03 names an agent summarizing a page and
-carrying its URLs across as a false positive, and following a link is the same mechanism. An unannotated `PreToolUse` is benign,
-so a corpus of ordinary sessions needs no annotation. `expect` describes what the pipeline
+carrying its URLs across as a false positive, and following a link is the same mechanism. An
+unannotated `PreToolUse` is benign, so a corpus of ordinary sessions needs no annotation. `expect` describes what the pipeline
 does today, known misses and false positives included, so a change in either direction
 fails until someone looks. Unknown keys in a header, step or assertion are errors: a
 misspelled assertion that asserts nothing is the failure a regression suite exists to stop.
@@ -207,11 +218,12 @@ make replay                                   # the corpus, human-readable
 A gate on a metric the corpus cannot compute fails rather than passes. `go test ./...` runs
 the same corpus as a regression suite.
 
-**The starter corpus is 18 hand-written scenarios. Its numbers describe those scenarios and
+**The starter corpus is 26 hand-written scenarios. Its numbers describe those scenarios and
 nothing else**, and say nothing about precision on real traffic: it was written alongside the
-engine, by the same author, so it tests what that author thought of. It exists to pin behavior, include attacks adapted to defeat the engine
-(a paraphrased destination, a poisoned instruction file, a secret the redactor strips), and
-to be the thing a real adapter for AgentDojo, SHADE-Arena or ControlArena plugs into.
+engine, by the same author, so it tests what that author thought of. It exists to pin behavior,
+include attacks adapted to defeat the engine (a paraphrased destination, a poisoned instruction
+file, a secret the redactor strips), and to be the thing a real adapter for AgentDojo,
+SHADE-Arena or ControlArena plugs into.
 
 ### Measuring against AgentDojo
 
@@ -248,6 +260,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1            # in
 powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Status    # the M0 readout
 powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Uninstall
 powershell -ExecutionPolicy Bypass -File .\scripts\smoke.ps1                # end-to-end check
+```
+
+For a cohort, `ambitd` is installed as a scheduled task that starts at boot as SYSTEM and is
+restarted when it exits, from an Administrator PowerShell. It is a task and not a service
+because `ambitd` is a console program, and making it a service would add a dependency:
+
+```powershell
+.\scripts\install-system.ps1 -Binary .\bin\ambitd-windows-amd64.exe
+.\scripts\install-system.ps1 -Status
+.\scripts\install-system.ps1 -Uninstall          # -Purge also removes the collected data
 ```
 
 What differs from Unix, and why it matters:
@@ -369,8 +391,8 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 
 | Milestone | Scope | State |
 | --- | --- | --- |
-| **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Not yet deployed to a cohort. |
-| **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policy. | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. |
+| **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Installers run `ambitd` as a system service from boot (verified on Linux; not yet run on macOS or Windows). Not yet deployed to a cohort. |
+| **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policies (an M0 subset for the observation-only bundle, and the full one). | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. |
 | **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`), and the gate runs in shadow too (`internal/gate`): docs/03's table is evaluated on every `PreToolUse` under per-session and per-turn scoping, and the verdict is recorded on the event (`policy_shadow=true`, rules 100320–100323) and never returned, so no session behaves differently. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`), with a hand-written starter corpus and an AgentDojo adapter measured against published runs of real models (docs/03). Precision on a real developer cohort is still unmeasured: that is what a shadow cohort is for. |
 | **M3 Enforce** | Policy engine, signed policy bundles, split fail policy, containment-only active response. | Design only. |
 | **M4 Goal drift** | Async scoring of actions against the stated objective. | Design only. |
@@ -391,9 +413,12 @@ team executes a runbook against a sample alert.
 - **Deploy the M0 SCA policy for a cohort, not the full one.** The full policy asserts
   enforcement keys (bypass mode, sandbox, egress allowlist) that the observation-only M0
   bundle deliberately omits, so deploying both makes D12 fire on every endpoint. The `_m0`
-  policy files assert only what the M0 bundle sets. For a cohort, install `ambitd` as a
-  system service with `scripts/install-system.sh` or `.ps1`: from boot, restarted when it
-  exits. The installers are not yet run on a real macOS or Windows machine. Both are in
+  policy files assert only what the M0 bundle sets.
+- **The system-service installers are verified on Linux only.** `scripts/install-system.sh`
+  and `.ps1` install `ambitd` to run from boot and restart when it exits. The Linux flow was
+  run end to end against a stub service manager, and the systemd unit passes
+  `systemd-analyze verify`. The macOS and Windows installers have not been run on a real
+  machine, and no platform's restart has been observed. See
   [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
@@ -491,9 +516,14 @@ syntax, JSON decoder constraints, FIM, SCA, agent-disconnect alerting — were c
 against the Wazuh 4.x documentation source and shipped ruleset. Anything not confirmed
 is marked *unverified* in the rules, runbooks and docs where it matters.
 
-The Go packages, both PowerShell scripts and the interposer's end-to-end behavior are
+The Go packages, `smoke.ps1`, `dev-local.ps1` and the interposer's end-to-end behavior are
 exercised on a real Windows host by the `windows` job in
 `.github/workflows/check.yml`, under Windows PowerShell 5.1 and PowerShell 7. That covers
-`ambitd`, `mcp-interpose` and the installer; it does not cover a Wazuh agent on Windows,
-and Claude Code's own hook payloads on Windows were read from its documentation rather
-than captured.
+`ambitd`, `mcp-interpose` and the local install; it does not cover a Wazuh agent on
+Windows, and Claude Code's own hook payloads on Windows were read from its documentation
+rather than captured. `install-system.ps1` is parsed by PowerShell 7 but not run on Windows.
+
+The comment removal was checked rather than assumed. The Go replay reports (the starter corpus
+and both AgentDojo model runs) are byte-identical before and after, the set of files compiled
+on each OS is unchanged, and PowerShell's own tokenizer sees the same non-comment tokens in
+every `.ps1`.
