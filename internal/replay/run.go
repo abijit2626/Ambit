@@ -63,6 +63,10 @@ type StepResult struct {
 	Decision     event.Decision `json:"decision,omitempty"`
 	Rule         string         `json:"rule,omitempty"`
 	TurnDecision event.Decision `json:"turn_decision,omitempty"`
+	// Exfil counts sensitive-data edges; ExfilClass and ExfilFrom describe the strongest.
+	Exfil      int    `json:"exfil,omitempty"`
+	ExfilClass string `json:"exfil_class,omitempty"`
+	ExfilFrom  int    `json:"exfil_from,omitempty"`
 	// Hostile is the step's ground truth, if annotated.
 	Hostile *bool `json:"hostile,omitempty"`
 	// Failures are assertions that did not hold.
@@ -202,6 +206,11 @@ func fillFromEvent(sr *StepResult, e *event.Event, stepOfEvent map[string]int, s
 			sr.TurnDecision = alt.Decision
 		}
 	}
+	if sr.Exfil = len(e.Provenance.Exfil); sr.Exfil > 0 {
+		top := e.Provenance.Exfil[0]
+		sr.ExfilClass = top.MatchClass
+		sr.ExfilFrom = stepOfEvent[top.FromEvent]
+	}
 	sr.Edges = len(e.Provenance.Edges)
 	if sr.Edges > 0 {
 		// The collector sorts strongest first, and the flattened event relies on that.
@@ -310,6 +319,16 @@ func check(st *Step, sr *StepResult) []string {
 		if !found {
 			fail("expected a taint label with prefix %q, got %v", ex.Taint, sr.Taint)
 		}
+	}
+	if ex.Exfil != nil && *ex.Exfil != (sr.Exfil > 0) {
+		if *ex.Exfil {
+			fail("expected a sensitive-data edge, got none")
+		} else {
+			fail("expected no sensitive-data edge, got %d (strongest %s)", sr.Exfil, sr.ExfilClass)
+		}
+	}
+	if ex.ExfilClass != "" && ex.ExfilClass != sr.ExfilClass {
+		fail("expected sensitive-data edge class %q, got %q", ex.ExfilClass, sr.ExfilClass)
 	}
 	if ex.Decision != "" && ex.Decision != decisionName(sr.Decision) {
 		fail("expected session verdict %q, got %q", ex.Decision, decisionName(sr.Decision))
