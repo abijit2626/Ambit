@@ -15,9 +15,6 @@ func loadCorpus(t *testing.T) []*Scenario {
 	return scs
 }
 
-// TestCorpus is the regression suite. Every scenario's assertions describe what the
-// pipeline does today, known misses and false positives included, so a change in either
-// direction fails here until somebody looks at it and updates the corpus on purpose.
 func TestCorpus(t *testing.T) {
 	scs := loadCorpus(t)
 	var results []*Result
@@ -37,7 +34,7 @@ func TestCorpus(t *testing.T) {
 	if s.Ignored != 0 {
 		t.Errorf("%d corpus step(s) produced no event; a misspelled hook name asserts nothing", s.Ignored)
 	}
-	// A corpus that cannot compute a metric cannot regress it.
+
 	c := s.Confusion
 	if c.Hostile() == 0 || c.Benign() == 0 {
 		t.Fatalf("corpus has %d hostile and %d benign tool calls; both are needed for precision and recall to mean anything",
@@ -49,8 +46,6 @@ func TestCorpus(t *testing.T) {
 	t.Logf("corpus: TP %d FP %d FN %d TN %d", c.TP, c.FP, c.FN, c.TN)
 }
 
-// The tags are documentation that a reader will trust, so they are checked against the
-// scenarios they describe.
 func TestCorpusTagsMatchWhatTheScenariosActuallyDo(t *testing.T) {
 	has := func(sc *Scenario, tag string) bool {
 		for _, x := range sc.Tags {

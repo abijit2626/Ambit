@@ -30,8 +30,6 @@ func send(sid string, input map[string]any) *hook.Payload {
 	return pre(sid, "p1", "mcp__bank__send_money", input)
 }
 
-// The case the class exists for: private data read by a sensitive tool leaves in the
-// payload of an acting call.
 func TestExfilEdgeOnPrivateDataInThePayload(t *testing.T) {
 	c, events, traj := exfilCollector(t)
 	readIBAN(c, "s1")
@@ -47,7 +45,7 @@ func TestExfilEdgeOnPrivateDataInThePayload(t *testing.T) {
 	if c.Stats().Provenance.ExfilEvents != 1 {
 		t.Errorf("ExfilEvents = %d, want 1", c.Stats().Provenance.ExfilEvents)
 	}
-	// Spool only: the flattened event carries no exfil field until its precision is known.
+
 	flat := events.decode(t, events.count()-1)
 	for k := range flat {
 		if len(k) >= 5 && k[:5] == "exfil" {
@@ -56,8 +54,6 @@ func TestExfilEdgeOnPrivateDataInThePayload(t *testing.T) {
 	}
 }
 
-// A private value used as the destination is the user addressing someone they know.
-// AgentDojo shows that pattern equally in benign and hostile runs.
 func TestNoExfilEdgeWhenThePrivateValueIsTheDestination(t *testing.T) {
 	c, _, traj := exfilCollector(t)
 	readIBAN(c, "s1")
@@ -76,7 +72,6 @@ func TestOnlyActingCallsAreMatched(t *testing.T) {
 	}
 }
 
-// A value the user typed is theirs to send.
 func TestUserTypedValueIsNotExfil(t *testing.T) {
 	c, _, traj := exfilCollector(t)
 	c.Handle(prompt("s1", "send my IBAN "+ownIBAN+" to my accountant"))
@@ -87,8 +82,6 @@ func TestUserTypedValueIsNotExfil(t *testing.T) {
 	}
 }
 
-// Untrusted content is provenance's business, not private data: it does not feed the
-// sensitive set.
 func TestUntrustedOnlyResultDoesNotFeedTheSensitiveSet(t *testing.T) {
 	c, _, traj := exfilCollector(t)
 	c.Handle(mcpPost("s1", "mcp__bank__read_file", map[string]any{"file_path": "bill.txt"}, "Pay to "+ownIBAN))
@@ -102,9 +95,6 @@ func TestUntrustedOnlyResultDoesNotFeedTheSensitiveSet(t *testing.T) {
 	}
 }
 
-// A hostname is not private data. On AgentDojo, domain matches made up most of the benign
-// sensitive-data edges and none of the useful ones: a channel summary naming the sites
-// people had shared. The untrusted-content set still draws its edge from the same host.
 func TestAHostnameInThePayloadIsNotExfil(t *testing.T) {
 	c, _, traj := exfilCollector(t)
 	c.cfg.MCPToolLabels["bank"]["get_notes"] = []string{"sensitive", "untrusted", "read_only"}

@@ -1,22 +1,5 @@
 package wazuh
 
-// Rehearsal packets.
-//
-// The M1 exit criterion is that someone outside the team executes a runbook against a
-// sample alert. The runbooks claim to be self-sufficient ("you do not need access to the
-// customer's source tree"), and nothing checks that claim until a stranger tries. This
-// file builds what that stranger is handed, and the answer key kept apart from it.
-//
-// It is a test file because it needs exactly what the rule tests already have: the rule
-// parser and the matcher that proves a rule fires on a fixture. Re-implementing either
-// elsewhere would let the packets drift from the rules they are meant to rehearse.
-//
-// What a packet is NOT: a real Wazuh alert. The alert is assembled here from the rule and
-// the fixture event, in Wazuh's JSON shape, using the same offline matching model as the
-// rest of this package. Which rule Wazuh would actually report for an event is
-// wazuh-logtest's decision, and the packet README says to regenerate the alert that way
-// before a rehearsal that is meant to count.
-
 import (
 	"encoding/json"
 	"fmt"
@@ -30,14 +13,10 @@ import (
 )
 
 const (
-	// rehearsalEnv names the directory TestWriteRehearsalPackets writes to. Unset, that
-	// test skips, so `go test ./...` never writes outside the temp dir.
 	rehearsalEnv = "AMBIT_REHEARSAL_DIR"
-	// rehearsalOnlyEnv narrows the packets to a comma-separated list of runbook ids.
+
 	rehearsalOnlyEnv = "AMBIT_REHEARSAL_ONLY"
 
-	// maxSamplesPerRunbook bounds a packet. Two is enough to see the headline alert and
-	// one different rule from the same detector; more turns a rehearsal into a quiz.
 	maxSamplesPerRunbook = 2
 )
 
@@ -47,8 +26,6 @@ var (
 	backtickedRe   = regexp.MustCompile("`([a-z][a-z0-9_]*)`")
 )
 
-// groupTokens splits a rule's <group> text into its names. hasGroup is a substring test,
-// which is wrong here: "runbook_D1" is a substring of "runbook_D10".
 func groupTokens(r rule) []string {
 	var out []string
 	for _, g := range strings.Split(r.Groups, ",") {
@@ -59,7 +36,6 @@ func groupTokens(r rule) []string {
 	return out
 }
 
-// runbookOf returns the runbook id a rule points at ("D4", "R2"), or "".
 func runbookOf(r rule) string {
 	for _, g := range groupTokens(r) {
 		if m := runbookGroupRe.FindStringSubmatch(g); m != nil {
@@ -70,24 +46,23 @@ func runbookOf(r rule) string {
 }
 
 type sample struct {
-	line      int // 1-based line in the fixtures file
+	line      int
 	synthetic bool
-	top       rule   // the rule whose alert this sample stands for
-	fired     []rule // every runbook rule the event satisfies, including top
+	top       rule
+	fired     []rule
 	event     map[string]any
 	raw       string
 }
 
 type plan struct {
 	id       string
-	runbook  string // file name under runbooks/
+	runbook  string
 	rules    []rule
 	samples  []sample
-	skipWhy  string // set when no sample can be built offline
+	skipWhy  string
 	skipNote string
 }
 
-// runbookIDs lists the runbooks on disk in natural order (D1..D12, then R2).
 func runbookIDs(t *testing.T) map[string]string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(runbooksDir, "*.md"))
@@ -120,9 +95,6 @@ func naturalLess(a, b string) bool {
 	return na < nb
 }
 
-// planRehearsals decides, for each runbook, which fixture events stand in for its alerts
-// and, where none can, says why. Silence would be the failure here: a detector that quietly
-// has no packet looks the same as one that was rehearsed.
 func planRehearsals(t *testing.T, only map[string]bool) []plan {
 	t.Helper()
 	rules := loadRules(t)
@@ -165,7 +137,7 @@ func planRehearsals(t *testing.T, only map[string]bool) []plan {
 			case r.hasGroup(groupWazuhSourced) || readsExternalEvent(r, byID, t):
 				wazuhSourced++
 			case r.Level < 1:
-				// A level-0 rule never produces an alert.
+
 			default:
 				matchable = append(matchable, r)
 			}
@@ -194,8 +166,6 @@ func planRehearsals(t *testing.T, only map[string]bool) []plan {
 			})
 		}
 
-		// Real pipeline output before synthetic, then the more severe alert, then the
-		// earlier line. Then keep at most one sample per distinct top rule.
 		sort.SliceStable(p.samples, func(a, b int) bool {
 			sa, sb := p.samples[a], p.samples[b]
 			if sa.synthetic != sb.synthetic {
@@ -252,8 +222,6 @@ func skipReason(total, matchable, wazuhSourced, correlation int) (why, note stri
 	}
 }
 
-// interpolate fills $(field) in a rule description from the event, the way Wazuh does. A
-// field the event lacks is left as written rather than replaced with a guess.
 func interpolate(desc string, ev map[string]any) string {
 	return interpolateRe.ReplaceAllStringFunc(strings.TrimSpace(desc), func(m string) string {
 		name := interpolateRe.FindStringSubmatch(m)[1]
@@ -265,7 +233,6 @@ func interpolate(desc string, ev map[string]any) string {
 	})
 }
 
-// alertJSON assembles a Wazuh-shaped alert from a rule and the event it fired on.
 func alertJSON(s sample) ([]byte, error) {
 	var groups []string
 	groups = append(groups, groupTokens(s.top)...)
@@ -285,7 +252,6 @@ func alertJSON(s sample) ([]byte, error) {
 	return json.MarshalIndent(alert, "", "  ")
 }
 
-// section returns the body of the "## <heading>" section of a markdown document.
 func section(md, heading string) string {
 	lines := strings.Split(md, "\n")
 	var body []string
@@ -305,9 +271,6 @@ func section(md, heading string) string {
 	return strings.TrimSpace(strings.Join(body, "\n"))
 }
 
-// assertedFields lists the event fields the runbook's "What this alert asserts" section
-// names in backticks, with their values in this event. It is what a reviewer needs to
-// check an analyst's reading of the alert against the runbook's own claims.
 func assertedFields(runbook string, ev map[string]any) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -374,8 +337,6 @@ the event satisfies). Wazuh decides which rule actually reports an event, so con
 wazuh-logtest before relying on the rule id.
 `
 
-// writePackets writes the analyst packet and the answer key under dir. The two are sibling
-// directories so that handing over "analyst/" cannot hand over the key by accident.
 func writePackets(t *testing.T, dir string, plans []plan) (built int) {
 	t.Helper()
 	analyst := filepath.Join(dir, "analyst")
@@ -482,8 +443,6 @@ func onlyFromEnv() map[string]bool {
 	return out
 }
 
-// TestWriteRehearsalPackets writes the packets for a real rehearsal. It is driven by
-// scripts/runbook-rehearsal.sh and does nothing under a plain `go test ./...`.
 func TestWriteRehearsalPackets(t *testing.T) {
 	dir := os.Getenv(rehearsalEnv)
 	if dir == "" {
@@ -501,10 +460,6 @@ func TestWriteRehearsalPackets(t *testing.T) {
 	t.Logf("wrote %d packet(s), %d without one, to %s", built, len(plans)-built, dir)
 }
 
-// TestRehearsalPacketsAreSound runs the generator on every `go test` so it cannot rot
-// unnoticed. What it pins is mostly the ways a packet could be silently wrong: a runbook
-// with no packet and no stated reason, an alert that disagrees with its rule, or an answer
-// key that leaks into the analyst's directory.
 func TestRehearsalPacketsAreSound(t *testing.T) {
 	plans := planRehearsals(t, nil)
 	dir := t.TempDir()
@@ -515,7 +470,6 @@ func TestRehearsalPacketsAreSound(t *testing.T) {
 		byID[r.ID] = r
 	}
 
-	// Every runbook is either packaged or has a stated reason. No third state.
 	for _, p := range plans {
 		_, err := os.Stat(filepath.Join(dir, "analyst", p.id, "alert-1.json"))
 		switch {
@@ -528,17 +482,13 @@ func TestRehearsalPacketsAreSound(t *testing.T) {
 		}
 	}
 
-	// The pins that stop the generator quietly producing nothing: detectors whose events
-	// the fixtures are known to contain must be packaged, and detectors that read Wazuh's
-	// own alerts must be skipped with that reason rather than given a fabricated alert.
 	want := map[string]bool{"D4": true, "D5": true, "D2": true, "R2": true}
 	for _, p := range plans {
 		if want[p.id] && len(p.samples) == 0 {
 			t.Errorf("%s should have a packet from the generated fixtures but has none (%s)", p.id, p.skipWhy)
 		}
 	}
-	// D12 is read entirely from SCA results. D6 is not on this list: half its rules read
-	// FIM alerts, but the rest fire on config_change hook events, which the fixtures hold.
+
 	for _, p := range plans {
 		if p.id == "D12" && len(p.samples) != 0 {
 			t.Errorf("%s reads Wazuh-internal alerts, so a fixture-built alert would be invented", p.id)
@@ -548,7 +498,6 @@ func TestRehearsalPacketsAreSound(t *testing.T) {
 		t.Fatal("no packets were built at all")
 	}
 
-	// Each alert agrees with the rule it names, and its description is fully interpolated.
 	alerts, _ := filepath.Glob(filepath.Join(dir, "analyst", "*", "alert-*.json"))
 	if len(alerts) == 0 {
 		t.Fatal("no alert files written")
@@ -586,7 +535,6 @@ func TestRehearsalPacketsAreSound(t *testing.T) {
 		}
 	}
 
-	// The analyst directory must hold nothing from the key.
 	err := filepath.Walk(filepath.Join(dir, "analyst"), func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
@@ -611,7 +559,7 @@ func TestRehearsalPacketsAreSound(t *testing.T) {
 }
 
 func TestRunbookGroupMatchingIsExact(t *testing.T) {
-	// hasGroup is a substring test; the packet planner must not use it for runbook ids.
+
 	r := rule{Groups: "ambit_d10,runbook_D10,"}
 	if got := runbookOf(r); got != "D10" {
 		t.Errorf("runbookOf = %q, want D10", got)

@@ -17,9 +17,6 @@ func has(set []string, e *Extractor, value string) bool {
 	return false
 }
 
-// TestDigestIsKeyedAndOpaque is the MSSP-posture guard: a fingerprint must not
-// reveal its value, and two orgs must not produce the same digest for the same
-// value.
 func TestDigestIsKeyedAndOpaque(t *testing.T) {
 	a := New(testKey)
 	b := New([]byte("a-different-org-key"))
@@ -91,17 +88,12 @@ func TestExtractHighEntropyTokens(t *testing.T) {
 		t.Error("base64 blob not captured as high-entropy")
 	}
 
-	// A long low-entropy run should not qualify, or every underscore-separated
-	// identifier in a codebase becomes a fingerprint.
 	f2 := e.Extract("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if len(f2.HiEntropy) != 0 {
 		t.Errorf("repeated characters should not qualify as high-entropy: %v", f2.HiEntropy)
 	}
 }
 
-// TestExtractIgnoresFilenamesAsDomains is the noise guard that matters most: if
-// main.go and index.js become domain fingerprints, the provenance intersection
-// fills with matches on ordinary source files.
 func TestExtractIgnoresFilenamesAsDomains(t *testing.T) {
 	e := New(testKey)
 	f := e.Extract("edited main.go, index.js, App.tsx, README.md, go.sum and package.lock")
@@ -150,8 +142,6 @@ func TestShinglesOffByDefault(t *testing.T) {
 	}
 }
 
-// TestNotableFingerprintPrefersSpecificClasses: the scalar tripwire must carry a
-// high-specificity fingerprint, never a shingle.
 func TestNotableFingerprintPrefersSpecificClasses(t *testing.T) {
 	e := New(testKey)
 	e.EnableShingles = true
@@ -210,16 +200,12 @@ func TestRegistrable(t *testing.T) {
 			t.Errorf("registrable(%q) = %q, want %q", in, got, want)
 		}
 	}
-	// Documented approximation: no public-suffix list, so a multi-label suffix
-	// over-merges. Coarser matching, not missed matching.
+
 	if got := Registrable("a.b.co.uk"); got != "co.uk" {
 		t.Errorf("registrable(a.b.co.uk) = %q; expected the documented co.uk approximation", got)
 	}
 }
 
-// A Windows directory listing is full of executables and project files. Fingerprinting
-// each as a domain sets prov_fp_notable on ordinary `dir` output, which crosses the
-// event to the SIEM and inflates the interesting fraction the M0 exit metric measures.
 func TestExtractIgnoresWindowsFilenamesAsDomains(t *testing.T) {
 	e := New(testKey)
 	f := e.Extract("setup.exe install.cmd build.bat foo.msi web.config app.lnk Program.cs x.dll " +
@@ -230,17 +216,13 @@ func TestExtractIgnoresWindowsFilenamesAsDomains(t *testing.T) {
 	if got := NotableFingerprint(f); got != "" {
 		t.Errorf("a listing of Windows files produced a notable fingerprint %q", got)
 	}
-	// A real domain next to them is still found.
+
 	f = e.Extract("setup.exe was fetched from cdn.evil.test")
 	if len(f.Domains) != 1 {
 		t.Errorf("domains = %v, want only evil.test", f.Domains)
 	}
 }
 
-// A credential is almost never bare: it travels glued to its key, in a config file or on a
-// command line. The run "SERVICE_KEY=<token>" must not hide the token from an intersection
-// against the bare token an ingested page carried. The replay corpus found this
-// (testdata/replay/attack-planted-token-assigned.jsonl).
 func TestExtractHighEntropyTokenGluedToAKey(t *testing.T) {
 	e := New(testKey)
 	const token = "xK9fQ2mZp7LwR4vT8bNc3Yd5"
@@ -261,15 +243,12 @@ func TestExtractHighEntropyTokenGluedToAKey(t *testing.T) {
 		}
 	}
 
-	// The whole run is still kept, so nothing that matched before stops matching.
 	glued := "SERVICE_KEY=" + token
 	if !has(e.Extract(glued).HiEntropy, e, glued) {
 		t.Error("the whole glued run was dropped; only an addition was intended")
 	}
 }
 
-// Padding stays attached for a base64 value, and the unpadded body is captured too, since
-// the other side of an intersection may have lost its padding.
 func TestExtractBase64WithAndWithoutPadding(t *testing.T) {
 	e := New(testKey)
 	body := "aGVsbG8gd29ybGQgdGhpcyBpcyBiYXNlNjQgZGF0YQ"
@@ -279,7 +258,6 @@ func TestExtractBase64WithAndWithoutPadding(t *testing.T) {
 	}
 }
 
-// The short key half and low-entropy values must not become fingerprints.
 func TestExtractAssignmentDoesNotFingerprintTheKeyOrLowEntropyValue(t *testing.T) {
 	e := New(testKey)
 	f := e.Extract("LOG_LEVEL=verbose --retries=3 PADDING=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")

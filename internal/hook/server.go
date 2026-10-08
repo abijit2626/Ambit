@@ -14,67 +14,40 @@ import (
 	"time"
 )
 
-// maxBodyBytes caps an inbound hook body. Tool results can be large — Claude
-// Code's own OTel content cap is 60 KB by default — and an unbounded read on the
-// synchronous hook path is a memory and latency hazard. Oversized bodies are
-// truncated, not rejected: losing some content is better than losing the event.
-const maxBodyBytes = 4 << 20 // 4 MiB
+const maxBodyBytes = 4 << 20
 
-// Handler turns a payload into whatever ambitd does with it. Implementations
-// must not block: they are called on the hook's synchronous path.
 type Handler interface {
 	Handle(*Payload)
 }
 
-// HandlerFunc adapts a function to Handler.
 type HandlerFunc func(*Payload)
 
 func (f HandlerFunc) Handle(p *Payload) { f(p) }
 
-// Decider produces the response for an event. In M0 the only implementation is
-// ObserveOnly.
 type Decider interface {
 	Decide(*Payload) *Response
 }
 
-// ObserveOnly returns no decision for every event.
-//
-// This is what makes M0 inert. Claude Code's pipeline is
-// PreToolUse hook -> deny rules -> allow rules -> ask rules -> permission mode,
-// and an empty response means the hook expressed no opinion, so every subsequent
-// layer behaves exactly as it would with no hook installed. Returning "allow"
-// here would be wrong even though it sounds equivalent: it suppresses the
-// permission prompt a developer would otherwise see.
 type ObserveOnly struct{}
 
 func (ObserveOnly) Decide(*Payload) *Response { return &Response{} }
 
-// Server serves hook events on a loopback listener.
 type Server struct {
 	handler Handler
 	decider Decider
 	log     *slog.Logger
 	srv     *http.Server
 
-	// Budget is the latency target. Exceeding it is logged, because the hook
-	// path sits in front of every tool call on the endpoint and a regression
-	// here is felt by every developer at once.
 	Budget time.Duration
 }
 
-// Options configure the server.
 type Options struct {
-	// Addr must be a loopback address. ambitd decides locally precisely so that
-	// no fleet-wide network dependency sits in the critical path.
 	Addr    string
 	Handler Handler
 	Decider Decider
 	Logger  *slog.Logger
 	Budget  time.Duration
-	// Extra mounts additional handlers on the same loopback listener, keyed by
-	// path. ambitd uses it for the interposer's report endpoint: one loopback bind
-	// means one bind control to get right (internal/loopback), and one address for
-	// a component on this endpoint to know. /hook and /healthz are reserved.
+
 	Extra map[string]http.Handler
 }
 
@@ -103,9 +76,7 @@ func NewServer(opts Options) (*Server, error) {
 	for path, h := range opts.Extra {
 		switch path {
 		case "", "/hook", "/healthz":
-			// Refused rather than ignored: silently dropping a mount would present
-			// as an endpoint that accepts nothing, and shadowing /hook would break
-			// the synchronous path.
+
 			return nil, fmt.Errorf("hook: extra mount %q is reserved", path)
 		}
 		if h == nil {
@@ -116,8 +87,7 @@ func NewServer(opts Options) (*Server, error) {
 	s.srv = &http.Server{
 		Addr:    opts.Addr,
 		Handler: mux,
-		// Generous relative to the 5ms budget: these bound a pathological client,
-		// not normal operation.
+
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -126,7 +96,6 @@ func NewServer(opts Options) (*Server, error) {
 	return s, nil
 }
 
-// Serve listens and serves until the context is cancelled.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	go func() {
 		<-ctx.Done()
@@ -140,11 +109,8 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	return nil
 }
 
-// ValidateLoopback reports whether addr is a loopback bind address. Delegates to
-// internal/loopback so this control has exactly one definition.
 func ValidateLoopback(addr string) error { return loopback.Validate(addr) }
 
-// Listen opens a loopback listener, refusing any non-loopback bind.
 func Listen(addr string) (net.Listener, error) { return loopback.Listen(addr) }
 
 func (s *Server) serveHook(w http.ResponseWriter, r *http.Request) {
@@ -156,8 +122,7 @@ func (s *Server) serveHook(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
-		// Respond with an empty decision rather than an error: a failure in
-		// ambitd must not fail the tool call in M0.
+
 		s.log.Warn("hook body read failed", "err", err)
 		s.respond(w, &Response{}, start)
 		return
@@ -170,8 +135,6 @@ func (s *Server) serveHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decide first, then hand off. The handler is async by contract, so the
-	// response is not waiting on any event processing.
 	resp := s.decider.Decide(&p)
 	s.handler.Handle(&p)
 	s.respond(w, resp, start)

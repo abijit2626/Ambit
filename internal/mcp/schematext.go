@@ -7,18 +7,8 @@ import (
 	"strings"
 )
 
-// maxSchemaText bounds the text handed to the D5 scanner. A hostile server can
-// send a megabyte of schema; the regex pass over it happens on the relay's
-// analysis path, and an unbounded scan there is a latency hazard for the
-// developer's tool calls. Truncation is reported by the caller as a schema that
-// was only partly scanned rather than silently accepted.
 const maxSchemaText = 64 << 10
 
-// schemaKeywords are JSON Schema structural keys. Their names are skipped when
-// collecting text: matching a rule against the literal word "description" or
-// "properties" would be noise on every tool in the fleet. Their *values* are
-// still collected, which is the point — a poisoned tool hides its instructions in
-// a parameter description.
 var schemaKeywords = map[string]bool{
 	"$schema": true, "$id": true, "$ref": true, "$defs": true, "$comment": true,
 	"type": true, "properties": true, "required": true, "items": true,
@@ -32,12 +22,6 @@ var schemaKeywords = map[string]bool{
 	"deprecated": true,
 }
 
-// SchemaText flattens a tool schema to the text D5 should scan: every string
-// value, plus property names that are not JSON Schema keywords.
-//
-// Property names are included because the model reads them too: a parameter named
-// `send_credentials_to_url` is metadata that shapes behavior exactly like a
-// description does. Truncated reports whether the bound was hit.
 func SchemaText(raw json.RawMessage) (text string, truncated bool) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return "", false
@@ -46,8 +30,7 @@ func SchemaText(raw json.RawMessage) (text string, truncated bool) {
 	dec.UseNumber()
 	var v any
 	if err := dec.Decode(&v); err != nil {
-		// Unparseable schema: scan the raw bytes rather than nothing. Whatever it
-		// is, the model was offered it.
+
 		return clip(string(raw))
 	}
 	var b strings.Builder
@@ -72,8 +55,7 @@ func collectText(b *strings.Builder, v any) {
 		for k := range t {
 			keys = append(keys, k)
 		}
-		// Sorted so the same schema always produces the same text, which keeps
-		// findings stable between two listings that differ only in key order.
+
 		sort.Strings(keys)
 		for _, k := range keys {
 			if !schemaKeywords[k] {

@@ -25,25 +25,21 @@ func TestEachRowFiresOnlyWhenItsPreconditionHolds(t *testing.T) {
 		want   event.Decision
 		rule   string
 	}{
-		// Credential read: needs A before it.
+
 		{"credential read after A", a, Action{CredentialRead: true, Bits: b}, event.DecisionDeny, RuleCredentialAfterA},
 		{"credential read with no prior A", none, Action{CredentialRead: true, Bits: b}, event.DecisionNone, ""},
 
-		// Push or publish: needs A and B.
 		{"push after A and B", ab, Action{BashClass: classify.ClassVCSWrite, Bits: ac}, event.DecisionAsk, RulePublishAfterAB},
 		{"publish after A and B", ab, Action{BashClass: classify.ClassPublish, Bits: ac}, event.DecisionAsk, RulePublishAfterAB},
 		{"push after A only", a, Action{BashClass: classify.ClassVCSWrite, Bits: ac}, event.DecisionNone, ""},
 
-		// Other outbound network: needs A and B.
 		{"curl after A and B", ab, Action{BashClass: classify.ClassNetwork, Bits: ac}, event.DecisionDeny, RuleEgressAfterAB},
 		{"curl after B only", b, Action{BashClass: classify.ClassNetwork, Bits: ac}, event.DecisionAllowAlert, RuleTrifecta},
 		{"non-network bash after A and B", ab, Action{BashClass: classify.ClassFilesystem}, event.DecisionNone, ""},
 
-		// Write outside the working directory: needs A and B.
 		{"write outside after A and B", ab, Action{WriteOutside: true, Bits: r2.Bits{C: true}}, event.DecisionAsk, RuleWriteOutsideAB},
 		{"write outside after A only", a, Action{WriteOutside: true, Bits: r2.Bits{C: true}}, event.DecisionNone, ""},
 
-		// Unclassified MCP server: needs A and B.
 		{"mcp call after A and B", ab, Action{MCPMayAct: true, Bits: ac}, event.DecisionAsk, RuleMCPAfterAB},
 		{"mcp call after A only", a, Action{MCPMayAct: true, Bits: ac}, event.DecisionNone, ""},
 	}
@@ -60,8 +56,6 @@ func TestEachRowFiresOnlyWhenItsPreconditionHolds(t *testing.T) {
 	}
 }
 
-// A push is also network-capable. docs/03 asks for ask, not deny, for a push or publish, so
-// the more specific row must win.
 func TestPublishOutranksTheGeneralNetworkRow(t *testing.T) {
 	if !classify.IsNetworkClass(classify.ClassVCSWrite) {
 		t.Fatal("test premise broken: a push is no longer network-class, so the precedence is untested")
@@ -71,8 +65,6 @@ func TestPublishOutranksTheGeneralNetworkRow(t *testing.T) {
 	}
 }
 
-// "Everything else" alerts on the action that completes the trifecta, not on every later
-// action in a session that already holds all three bits.
 func TestTrifectaAlertsOnlyOnTheTransition(t *testing.T) {
 	if v := Evaluate(ac, Action{Bits: b}); v.Decision != event.DecisionAllowAlert || v.RuleID != RuleTrifecta {
 		t.Errorf("completing the trifecta = %+v, want allow_alert", v)
@@ -85,8 +77,6 @@ func TestTrifectaAlertsOnlyOnTheTransition(t *testing.T) {
 	}
 }
 
-// The specific rows are not transitions: a second exfiltration attempt in a saturated
-// session must be denied just like the first.
 func TestRowsStillFireInASaturatedSession(t *testing.T) {
 	if v := Evaluate(abc, Action{BashClass: classify.ClassNetwork, Bits: ac}); v.Decision != event.DecisionDeny {
 		t.Errorf("curl in a saturated session = %+v, want deny", v)
@@ -120,14 +110,12 @@ func TestActionFromReadsTheEvent(t *testing.T) {
 		t.Errorf("ActionFrom = %+v", got)
 	}
 
-	// A write inside the working directory, or to a path the zoner could not place, is not
-	// "outside": the same rule internal/r2 applies to bit C.
 	for _, z := range []string{event.ZoneWorkdir, event.ZoneUnknown} {
 		if ActionFrom(&event.Tool{Paths: []event.PathRef{{Zone: z, Op: "write"}}}, none).WriteOutside {
 			t.Errorf("a write in zone %q counted as outside the working directory", z)
 		}
 	}
-	// A server the operator classified internal is not unclassified.
+
 	if ActionFrom(&event.Tool{MCP: &event.MCP{Server: "wiki", Trust: "internal"}}, none).MCPMayAct {
 		t.Error("an internal MCP server counted as unclassified")
 	}
@@ -153,7 +141,7 @@ func TestMCPMayActFollowsLabels(t *testing.T) {
 			t.Errorf("%s: MCPMayAct = %v, want %v", c.name, got, c.want)
 		}
 	}
-	// The row itself: a read-only call after A and B does not ask; an acting one does.
+
 	if v := Evaluate(ab, Action{MCPMayAct: false}); v.Fired() {
 		t.Errorf("read-only MCP call after A and B = %+v, want nothing", v)
 	}

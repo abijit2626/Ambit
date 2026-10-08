@@ -9,22 +9,11 @@ import (
 	"github.com/abijit2626/ambit/internal/otlp"
 )
 
-// otelToolEvents are the OTel log event names that correspond to a tool call.
-// These are what the discrepancy counter compares against the hook stream.
 var otelToolEvents = map[string]bool{
 	"claude_code.tool_decision": true,
 	"claude_code.tool_result":   true,
 }
 
-// HandleOTel consumes decoded OTLP records.
-//
-// OTel records go to the SPOOL ONLY. They never cross to Wazuh: the stream is
-// content-rich and high-volume, and the hook stream already carries the
-// security-relevant slice with better structure. What OTel is for here is being a
-// SECOND, INDEPENDENT path — the hook endpoint dies with ambitd, while OTel's
-// destination is pinned in managed settings with developer-set variables removed.
-// Losing one while the other continues is the discrepancy detector D7 keys on,
-// and that discrepancy is the point. See docs/02-architecture.md.
 func (c *Collector) HandleOTel(records []otlp.Record) {
 	for _, r := range records {
 		c.otelRecords.Add(1)
@@ -48,9 +37,7 @@ func (c *Collector) buildOTel(r otlp.Record) *event.Event {
 	case "claude_code.tool_result":
 		kind = event.KindToolPost
 	default:
-		// Anything else is recorded for the spool but is not a tool observation.
-		// Deliberately not dropped: an unmodelled OTel event that vanished would
-		// be a blind spot in the stream whose whole job is corroboration.
+
 		kind = event.KindAmbitdHealth
 	}
 
@@ -72,8 +59,7 @@ func (c *Collector) buildOTel(r otlp.Record) *event.Event {
 			AmbitdVersion: c.version,
 		},
 		Actor: event.Actor{
-			// Prefer OTel's own attribution when present: it comes from Claude
-			// Code rather than from our config, so a mismatch is itself a signal.
+
 			UserID: firstNonEmpty(r.Attr("user.id"), c.cfg.UserID),
 			OrgID:  firstNonEmpty(r.Attr("organization.id"), c.cfg.OrgID),
 		},
@@ -100,30 +86,17 @@ func (c *Collector) buildOTel(r otlp.Record) *event.Event {
 	return e
 }
 
-// OTelStats reports the second stream's state and the discrepancy against the
-// hook stream.
 type OTelStats struct {
 	Records   int64
 	ToolCalls int64
-	// HookToolCalls is the hook stream's count over the same period.
+
 	HookToolCalls int64
-	// LastSeen is when a record last arrived. A stale value with the process
-	// alive is the signal that the OTel path specifically has stopped.
+
 	LastSeen time.Time
-	// Discrepant is true when exactly one of the two streams is reporting tool
-	// calls. Both quiet is an idle endpoint, not a discrepancy.
+
 	Discrepant bool
 }
 
-// OTel returns the second-stream statistics.
-//
-// The comparison is deliberately coarse: "one stream reporting, the other
-// silent." It is NOT a per-call reconciliation, and it must not be read as one.
-// The two streams see different things — the hook path sees every subscribed
-// event while OTel emits on its own schedule and behind content gates — so exact
-// counts legitimately differ. Only total silence on one side while the other is
-// active is a signal. Tightening this into a ratio threshold needs baseline data
-// from M0, not a guess here.
 func (c *Collector) OTel() OTelStats {
 	otelTools := c.otelToolCalls.Load()
 	hookTools := c.hookToolCalls.Load()

@@ -55,8 +55,7 @@ func TestWriteOneObjectPerLine(t *testing.T) {
 	if len(lines) != 50 {
 		t.Fatalf("got %d lines, want 50", len(lines))
 	}
-	// Every line must parse on its own: log_format json is documented as being
-	// for single-line JSON files, so a multi-line object is silently unusable.
+
 	for i, l := range lines {
 		var r rec
 		if err := json.Unmarshal([]byte(l), &r); err != nil {
@@ -68,8 +67,6 @@ func TestWriteOneObjectPerLine(t *testing.T) {
 	}
 }
 
-// TestWriteNeverEmitsRawNewline guards the one-object-per-line contract against
-// content that contains newlines.
 func TestWriteNeverEmitsRawNewline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	w, _ := Open(DefaultOptions(path))
@@ -81,13 +78,10 @@ func TestWriteNeverEmitsRawNewline(t *testing.T) {
 	}
 }
 
-// TestWriteNeverBlocks is the property that protects the hook path. A full queue
-// must drop, not wait: a disk stall that became a developer stall would get the
-// system disabled.
 func TestWriteNeverBlocks(t *testing.T) {
 	opts := DefaultOptions(filepath.Join(t.TempDir(), "events.jsonl"))
 	opts.QueueSize = 4
-	opts.FlushInterval = time.Hour // keep the drain goroutine idle
+	opts.FlushInterval = time.Hour
 	w, err := Open(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -112,8 +106,6 @@ func TestWriteNeverBlocks(t *testing.T) {
 	}
 }
 
-// TestDropsEmitGapMarker: loss must be visible. A SIEM silently missing events
-// is worse than one reporting a hole.
 func TestDropsEmitGapMarker(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	opts := DefaultOptions(path)
@@ -127,8 +119,7 @@ func TestDropsEmitGapMarker(t *testing.T) {
 	for i := 0; i < 2000; i++ {
 		w.Write(rec{Kind: "tool_pre", N: i})
 	}
-	// Give the drain goroutine time to emit a marker and then keep writing so a
-	// post-drop event exists to precede.
+
 	time.Sleep(200 * time.Millisecond)
 	for i := 0; i < 50; i++ {
 		w.Write(rec{Kind: "tool_pre", N: i})
@@ -157,7 +148,7 @@ func TestRotationBoundsDisk(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	opts := DefaultOptions(path)
-	opts.MaxBytes = 2 << 10 // 2 KiB
+	opts.MaxBytes = 2 << 10
 	opts.MaxFiles = 3
 	opts.FlushInterval = 5 * time.Millisecond
 
@@ -178,7 +169,7 @@ func TestRotationBoundsDisk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// active file + at most MaxFiles rotated
+
 	if len(entries) > opts.MaxFiles+1 {
 		names := make([]string, 0, len(entries))
 		for _, e := range entries {
@@ -217,8 +208,7 @@ func TestFileModeIsOwnerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Windows reports 0666 or 0444 whatever was asked for; there, privacy is the
-	// directory ACL, which internal/fsperm tests.
+
 	if perm := st.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("mode = %o, want 600: events carry redacted but still sensitive metadata", perm)
 	}
@@ -246,10 +236,6 @@ func TestStats(t *testing.T) {
 	}
 }
 
-// A rotation that cannot rename the live file must not strand the writer. On Windows
-// that is routine — a log shipper tailing the file holds it open — and a writer that
-// closed the file and then gave up would drop every later event with nothing but a
-// counter to show for it.
 func TestRotationFailureKeepsWriting(t *testing.T) {
 	old := rotateRetry
 	rotateRetry = 0
@@ -257,8 +243,7 @@ func TestRotationFailureKeepsWriting(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
-	// A non-empty directory where the rotated file belongs makes the rename fail on
-	// every platform, without needing a second process to hold the file open.
+
 	blocker := path + ".1"
 	if err := os.MkdirAll(filepath.Join(blocker, "keep"), 0o700); err != nil {
 		t.Fatal(err)
@@ -286,7 +271,6 @@ func TestRotationFailureKeepsWriting(t *testing.T) {
 	}
 }
 
-// Once whatever blocked the rename goes away, rotation resumes.
 func TestRotationRecoversAfterFailure(t *testing.T) {
 	old := rotateRetry
 	rotateRetry = 0
@@ -306,7 +290,7 @@ func TestRotationRecoversAfterFailure(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		w.Write(rec{Kind: "tool_pre", N: i})
 	}
-	time.Sleep(400 * time.Millisecond) // let the drain goroutine reach the failing rotation
+	time.Sleep(400 * time.Millisecond)
 	if err := os.RemoveAll(blocker); err != nil {
 		t.Fatal(err)
 	}
@@ -321,11 +305,6 @@ func TestRotationRecoversAfterFailure(t *testing.T) {
 	}
 }
 
-// The oldest rotated generation is deleted by a rotation, so a rotation whose live-file
-// rename fails must not get as far as shifting anything. Before this was ordered
-// correctly, every failed attempt (they repeat every rotateRetry) deleted one more
-// generation and never refilled .1, so a file held open by a log shipper emptied the
-// whole history in a few minutes while the live file grew without bound.
 func TestFailedRotationKeepsRotatedHistory(t *testing.T) {
 	oldRetry, oldRename := rotateRetry, renameFile
 	rotateRetry = 0
@@ -343,7 +322,7 @@ func TestFailedRotationKeepsRotatedHistory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The live file is held open by something else: moving it fails every time.
+
 	renameFile = func(from, to string) error {
 		if from == path {
 			return errors.New("the process cannot access the file because it is being used by another process")
@@ -379,9 +358,6 @@ func TestFailedRotationKeepsRotatedHistory(t *testing.T) {
 	}
 }
 
-// If the live file cannot be reopened after a rotation, the writer has to keep trying.
-// Giving up leaves it with no file, and every later event is then dropped until the
-// process restarts, which is detection loss with nothing at the detector to show it.
 func TestWriterRecoversAfterFailedReopen(t *testing.T) {
 	oldRetry, oldRename := rotateRetry, renameFile
 	rotateRetry = 0
@@ -392,7 +368,7 @@ func TestWriterRecoversAfterFailedReopen(t *testing.T) {
 	renameFile = func(from, to string) error {
 		err := oldRename(from, to)
 		if err == nil && strings.HasSuffix(from, asideSuffix) {
-			// Occupy the live path so the reopen that follows the rotation fails.
+
 			once.Do(func() { _ = os.Mkdir(path, 0o700) })
 		}
 		return err
@@ -417,7 +393,7 @@ func TestWriterRecoversAfterFailedReopen(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	time.Sleep(50 * time.Millisecond) // let the drain goroutine run into the failed reopen
+	time.Sleep(50 * time.Millisecond)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}

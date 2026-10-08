@@ -7,29 +7,12 @@ import (
 	"github.com/abijit2626/ambit/internal/interpose"
 )
 
-// HandleInterpose turns one interposer report into mcp_list events.
-//
-// The division of labour is the point: mcp-interpose observes and compares, and
-// ambitd decides identity, trust and what crosses. Specifically, ambitd — not the
-// interposer — assigns the event id, the endpoint and actor identity, the trust
-// label from operator configuration, and the Wazuh verdict. The interposer runs as
-// the developer, as a child of the agent process, and giving a process inside that
-// blast radius any of those would defeat the point of the split. See
-// docs/05-mcp-interpose-decision.md.
-//
-// One report becomes a per-server summary event plus one event per tool. The
-// summary always crosses to Wazuh; the per-tool events cross only when they say
-// something. internal/filter has the reasoning.
 func (c *Collector) HandleInterpose(rep *interpose.Report) {
 	if rep == nil || rep.Server == "" {
 		return
 	}
 	c.interposeReports.Add(1)
 
-	// A degraded interposer is reported through the existing health path rather
-	// than a new one. "The baseline store could not be written" means D4 is blind
-	// on this endpoint, which is the same class of fact as a collection path going
-	// silent, and D7's rules already read ambitd_health.
 	if rep.Degraded {
 		c.log.Warn("interposer degraded",
 			"server", rep.Server, "reason", rep.DegradedReason, "trigger", rep.Trigger)
@@ -47,9 +30,7 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 		MCP: &event.MCP{
 			Server: rep.Server,
 			Trust:  trust,
-			// The roll-up goes in Worst, not BaselineState: the flattened schema
-			// carries baseline_state on per-tool events only, so a Wazuh rule
-			// matching it cannot double-fire on the summary. See event.MCP.Worst.
+
 			Worst:         rep.Worst,
 			ToolCount:     rep.Counts.Tools,
 			NewCount:      rep.Counts.New,
@@ -69,11 +50,7 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 	for _, t := range rep.Tools {
 		e := c.interposeEvent(rep, st)
 		e.Tool = &event.Tool{
-			// The name Claude Code would use for this tool. Reconstructing it is
-			// what makes tool identity survive interposition: a Wazuh rule can
-			// correlate this listing against the calls that follow, and a
-			// managed-settings permission rule still names the same tool. The
-			// gateways evaluated in docs/05 broke exactly this.
+
 			Name: mcpToolName(rep.Server, t.Tool),
 			MCP: &event.MCP{
 				Server:           rep.Server,
@@ -89,10 +66,7 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 				Approved:         boolPtr(rep.Approved),
 				Complete:         boolPtr(rep.Complete),
 				ServerVersion:    rep.ServerInfo.Version,
-				// Annotations are carried exactly as the server stated them, with
-				// absent distinct from false, and they may only make policy
-				// stricter. A server claiming readOnlyHint earns no relaxation
-				// here or anywhere downstream. See docs/02.
+
 				Annotations: t.Annotations,
 			},
 		}
@@ -102,7 +76,6 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 	}
 }
 
-// interposeEvent builds the common envelope for an mcp_list event.
 func (c *Collector) interposeEvent(rep *interpose.Report, st *sessionState) *event.Event {
 	now := time.Now().UTC()
 	ts := rep.TS
@@ -111,8 +84,7 @@ func (c *Collector) interposeEvent(rep *interpose.Report, st *sessionState) *eve
 	}
 	e := &event.Event{
 		EventID: newEventID(),
-		// TS is the interposer's observation time; IngestedAt is ours. Keeping
-		// both is what lets an investigation see a report that arrived late.
+
 		TS:         ts,
 		IngestedAt: now.Format(time.RFC3339Nano),
 		Source:     event.SourceInterpose,
@@ -126,13 +98,11 @@ func (c *Collector) interposeEvent(rep *interpose.Report, st *sessionState) *eve
 		Actor: event.Actor{UserID: c.cfg.UserID, OrgID: c.cfg.OrgID},
 		Agent: event.Agent{
 			Kind: "claude-code",
-			// The MCP client's self-reported version, which for our purposes is
-			// the agent's. A claim, recorded rather than trusted.
+
 			Version: rep.ClientVersion,
 		},
 		Session: event.Session{
-			// Often empty: MCP carries no Claude Code session id and the
-			// interposer refuses to invent one. See interpose.Report.SessionID.
+
 			SessionID: rep.SessionID,
 			Sequence:  st.next(),
 		},
@@ -145,7 +115,6 @@ func (c *Collector) interposeEvent(rep *interpose.Report, st *sessionState) *eve
 	return e
 }
 
-// emitInterposeHealth reports a degraded interposer as an ambitd_health event.
 func (c *Collector) emitInterposeHealth(rep *interpose.Report) {
 	now := time.Now().UTC()
 	e := &event.Event{
@@ -168,11 +137,6 @@ func (c *Collector) emitInterposeHealth(rep *interpose.Report) {
 	c.emit(e)
 }
 
-// interposeSession finds or creates the sequence counter for a report.
-//
-// Reports usually carry no session id, so they are keyed on the server instead.
-// The key is prefixed so it can never collide with a real Claude Code session id
-// and quietly share a sequence counter with it.
 func (c *Collector) interposeSession(rep *interpose.Report) *sessionState {
 	key := rep.SessionID
 	if key == "" {
@@ -188,7 +152,6 @@ func (c *Collector) interposeSession(rep *interpose.Report) *sessionState {
 	return st
 }
 
-// mcpToolName reconstructs Claude Code's MCP tool name.
 func mcpToolName(server, tool string) string {
 	if server == "" || tool == "" {
 		return ""

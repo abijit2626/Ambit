@@ -27,7 +27,6 @@ func TestPrivateDirACL(t *testing.T) {
 	}
 	acl := aclOf(t, dir)
 
-	// Inherited entries are what let other local users in; icacls marks them (I).
 	if strings.Contains(acl, "(I)") {
 		t.Errorf("directory still inherits access from its parent:\n%s", acl)
 	}
@@ -36,7 +35,7 @@ func TestPrivateDirACL(t *testing.T) {
 			t.Errorf("%s still has access:\n%s", broad, acl)
 		}
 	}
-	// SYSTEM must keep access: the Wazuh agent reads events.jsonl as SYSTEM.
+
 	if !strings.Contains(acl, `NT AUTHORITY\SYSTEM`) {
 		t.Errorf("SYSTEM lost access, so the Wazuh agent could not tail the sink:\n%s", acl)
 	}
@@ -44,7 +43,6 @@ func TestPrivateDirACL(t *testing.T) {
 		t.Errorf("Administrators lost access:\n%s", acl)
 	}
 
-	// A file created inside inherits the restricted ACL, not the parent's.
 	f := filepath.Join(dir, "events.jsonl")
 	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -65,7 +63,6 @@ func TestPrivateDirDoesNotTouchAnExistingDirectory(t *testing.T) {
 	}
 }
 
-// Parents that PrivateDir creates are restricted too, not just the leaf.
 func TestPrivateDirRestrictsCreatedParentsACL(t *testing.T) {
 	root := t.TempDir()
 	if err := PrivateDir(filepath.Join(root, "outer", "inner")); err != nil {
@@ -78,9 +75,6 @@ func TestPrivateDirRestrictsCreatedParentsACL(t *testing.T) {
 	}
 }
 
-// A directory somebody pre-created with the inherited ACL (an installer making
-// C:\ProgramData\ambit to drop config.json into) is not private, and ambit must say so
-// instead of putting prompt text and the fingerprint key in it.
 func TestPrivateDirRefusesAnExposedExistingDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "shared")
 	if err := os.Mkdir(dir, 0o700); err != nil {
@@ -98,8 +92,6 @@ func TestPrivateDirRefusesAnExposedExistingDirectory(t *testing.T) {
 	}
 }
 
-// A directory ambit made itself is accepted on the next run: the check must not
-// reject its own output.
 func TestPrivateDirAcceptsADirectoryItMadeEarlier(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	for i := 0; i < 2; i++ {

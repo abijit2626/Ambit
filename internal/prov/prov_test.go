@@ -8,8 +8,6 @@ import (
 	"github.com/abijit2626/ambit/internal/event"
 )
 
-// feat builds a Features value out of already-digested strings. The package never
-// sees a raw value or a key, so neither do its tests.
 func feat(domains, urls []string) *event.Features {
 	return &event.Features{Domains: domains, URLs: urls}
 }
@@ -45,9 +43,6 @@ func TestMatchReturnsNothingWhenNothingWasIngested(t *testing.T) {
 	}
 }
 
-// A class is part of the key. The same digest as a URL and as a domain is two
-// different claims, and conflating them would let a domain match report URL
-// confidence.
 func TestClassIsPartOfTheKey(t *testing.T) {
 	s := New(Options{})
 	s.Ingest("ev1", &event.Features{Domains: []string{"hmac:same"}}, nil)
@@ -90,7 +85,7 @@ func TestEdgesAreStrongestFirstAndDeterministic(t *testing.T) {
 			t.Errorf("edge %d (%v) outranks edge %d (%v)", i, first[i].Confidence, i-1, first[i-1].Confidence)
 		}
 	}
-	// Same input, byte-identical output.
+
 	again := s.Match(action)
 	for i := range first {
 		if first[i] != again[i] {
@@ -99,9 +94,6 @@ func TestEdgesAreStrongestFirstAndDeterministic(t *testing.T) {
 	}
 }
 
-// The earliest ingest is the one that introduced the value. A later ingest that
-// repeats it must not steal the attribution, or an edge would point at the last page
-// that mentioned the value and not the first.
 func TestFirstIngestKeepsTheAttribution(t *testing.T) {
 	s := New(Options{})
 	s.Ingest("ev_first", feat([]string{"hmac:d"}, nil), nil)
@@ -113,8 +105,6 @@ func TestFirstIngestKeepsTheAttribution(t *testing.T) {
 	}
 }
 
-// The novelty rule, own-input half. A page the agent was told to fetch names its own
-// host; that is not the page introducing it.
 func TestOwnInputIsNotIntroducedByTheResult(t *testing.T) {
 	s := New(Options{})
 	own := feat([]string{"hmac:docs"}, []string{"hmac:docs-url"})
@@ -134,9 +124,6 @@ func TestOwnInputIsNotIntroducedByTheResult(t *testing.T) {
 	}
 }
 
-// The cost of the rule, pinned so nobody believes it away. A page that points the
-// agent back at the host it came from draws no DOMAIN edge, but a spelled-out URL
-// still draws a URL edge.
 func TestOwnHostDrawsNoDomainEdgeButANewURLStillDoes(t *testing.T) {
 	s := New(Options{})
 	own := feat([]string{"hmac:evil"}, []string{"hmac:evil-readme"})
@@ -152,7 +139,6 @@ func TestOwnHostDrawsNoDomainEdgeButANewURLStillDoes(t *testing.T) {
 	}
 }
 
-// The novelty rule, user half.
 func TestDeclaredByTheUserIsNotIntroducedByAnIngest(t *testing.T) {
 	s := New(Options{})
 	s.Declare(feat([]string{"hmac:mine"}, nil))
@@ -166,8 +152,6 @@ func TestDeclaredByTheUserIsNotIntroducedByAnIngest(t *testing.T) {
 	}
 }
 
-// Declare is not retroactive. The agent already met the value in untrusted content;
-// the user typing it afterwards does not change where it was first met.
 func TestDeclareDoesNotRewriteHistory(t *testing.T) {
 	s := New(Options{})
 	s.Ingest("ev1", feat([]string{"hmac:d"}, nil), nil)
@@ -177,9 +161,6 @@ func TestDeclareDoesNotRewriteHistory(t *testing.T) {
 	}
 }
 
-// A trusted domain is a down-weight, not a suppression: a trusted code host is also
-// an exfiltration sink, and silently dropping it would blind the layer to
-// s1ngularity-shaped attacks.
 func TestCommonDomainIsDownweightedNotDropped(t *testing.T) {
 	s := New(Options{CommonDomains: map[string]bool{"hmac:github": true}})
 	s.Ingest("ev1", &event.Features{
@@ -198,13 +179,11 @@ func TestCommonDomainIsDownweightedNotDropped(t *testing.T) {
 		t.Error("a trusted domain must rank below an ordinary one")
 	}
 
-	// The full URL on the same trusted host is where the attack is caught, and is
-	// not down-weighted.
 	got = s.Match(&event.Features{URLs: []string{"hmac:github-gist"}})
 	if len(got) != 1 || got[0].Confidence != confURL {
 		t.Errorf("url on a trusted host = %+v, want full url confidence", got)
 	}
-	// An ordinary domain keeps the ordinary weight.
+
 	got = s.Match(&event.Features{Domains: []string{"hmac:evil"}})
 	if len(got) != 1 || got[0].Confidence != confDomain {
 		t.Errorf("ordinary domain = %+v, want confidence %v", got, confDomain)
@@ -233,7 +212,6 @@ func TestPerIngestCapKeepsSpecificClassesAndCountsTheRest(t *testing.T) {
 	}
 }
 
-// One enormous result must not evict everything the session ingested earlier.
 func TestOneLargeIngestCannotFlushTheSet(t *testing.T) {
 	s := New(Options{MaxPerIngest: 4, MaxFingerprints: 100})
 	s.Ingest("ev_early", feat([]string{"hmac:early"}, nil), nil)
@@ -319,8 +297,6 @@ func TestRefsAreDistinctAndOrdered(t *testing.T) {
 	}
 }
 
-// The hook endpoint serves requests concurrently and two can be for one session.
-// Run under -race.
 func TestConcurrentUseIsSafe(t *testing.T) {
 	s := New(Options{MaxFingerprints: 64})
 	var wg sync.WaitGroup
@@ -354,9 +330,6 @@ func TestIBANMatchesAtURLConfidenceAndOutranksAnEmail(t *testing.T) {
 	}
 }
 
-// A Set can leave a class out entirely. The sensitive-data set leaves out domains because a
-// hostname is not private data; the untrusted-content set keeps them, because a domain a
-// page names is exactly what a redirected action looks like.
 func TestExcludedClassIsNeitherRegisteredNorMatched(t *testing.T) {
 	both := feat([]string{"hmac:host"}, []string{"hmac:url"})
 

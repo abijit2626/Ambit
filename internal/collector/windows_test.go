@@ -12,10 +12,6 @@ import (
 	"github.com/abijit2626/ambit/internal/hook"
 )
 
-// The Windows tests run on every host. Nothing here touches the filesystem: paths
-// are strings the collector classifies, so a Linux CI run sees exactly what a
-// Windows endpoint's hook payloads would hold.
-
 func newWindowsCollector(t *testing.T) (*Collector, *memSink, *memSink) {
 	t.Helper()
 	cfg := config.Default()
@@ -24,8 +20,7 @@ func newWindowsCollector(t *testing.T) (*Collector, *memSink, *memSink) {
 	cfg.UserID = "u_test"
 	cfg.OrgID = "o_test"
 	cfg.SampleRate = 0
-	// Configured the way an operator would type it, which need not match the case or
-	// separators Claude Code reports.
+
 	cfg.TrustedRepoPaths = []string{`c:/users/dev/src/myrepo`}
 
 	events, traj := &memSink{}, &memSink{}
@@ -64,7 +59,7 @@ func TestWindowsOrdinaryReadStaysInTheSpool(t *testing.T) {
 		SessionID:     "s1",
 		CWD:           `C:\Users\dev\src\myrepo`,
 		ToolName:      "Read",
-		// Different case from the working directory: it is the same directory.
+
 		ToolInput: map[string]any{"file_path": `C:\USERS\DEV\SRC\MYREPO\main.go`},
 	})
 	if traj.count() != 1 || events.count() != 0 {
@@ -73,7 +68,6 @@ func TestWindowsOrdinaryReadStaysInTheSpool(t *testing.T) {
 	}
 }
 
-// The MSSP-posture guard, on Windows paths: only the zone label may be cleartext.
 func TestWindowsNoCleartextPathsReachTheSIEM(t *testing.T) {
 	c, events, _ := newWindowsCollector(t)
 	c.Handle(&hook.Payload{
@@ -94,7 +88,6 @@ func TestWindowsNoCleartextPathsReachTheSIEM(t *testing.T) {
 	}
 }
 
-// Claude Code's PowerShell tool carries its script in tool_input.command, like Bash.
 func TestPowerShellExfilCrossesAsNetwork(t *testing.T) {
 	c, events, _ := newWindowsCollector(t)
 	c.Handle(&hook.Payload{
@@ -120,8 +113,6 @@ func TestPowerShellExfilCrossesAsNetwork(t *testing.T) {
 	}
 }
 
-// D8 on Windows: trusted-repo matching must survive case and separator differences,
-// and must not be fooled by a sibling directory whose name merely starts the same.
 func TestWindowsInstructionFileTrust(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -155,8 +146,6 @@ func TestWindowsInstructionFileTrust(t *testing.T) {
 	}
 }
 
-// The same boundary bug existed on Unix: /src/myrepo-evil shares a string prefix with
-// a trusted /src/myrepo. This pins the fix on the platform the original tests use.
 func TestInstructionFileTrustIsPerPathSegment(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{

@@ -2,20 +2,6 @@ package event
 
 import "sort"
 
-// SIEMEvent is the flattened, Wazuh-bound representation: scalar values and
-// arrays of strings only.
-//
-// Two constraints from Wazuh's JSON decoder drive this shape, and neither is
-// nesting depth — nested objects are addressable with dot notation and the
-// shipped ruleset uses them three levels deep:
-//
-//  1. "An array of objects is not supported." Arrays of scalars are. So
-//     Tool.Paths, Provenance.Edges and Features.SecretHits cannot be carried at
-//     all and must collapse to scalars.
-//  2. Field count. analysisd.decoder_order_size defaults to 256 (range
-//     32-1024). A wide event risks rejection, which is silent detection loss.
-//
-// Target is under 40 fields. See docs/04-data-model.md.
 type SIEMEvent struct {
 	SchemaV int    `json:"schema_v"`
 	EventID string `json:"event_id"`
@@ -55,11 +41,6 @@ type SIEMEvent struct {
 	ToolMCPOpenworldHint   *bool  `json:"tool_mcp_openworld_hint,omitempty"`
 	ToolMCPMetadataHash    string `json:"tool_mcp_metadata_hash,omitempty"`
 
-	// The mcp_* fields below appear on mcp_list events only, from the interposer.
-	// Six fields is the whole D4/D5 surface a rule needs: what the verdict was,
-	// what it was before, what changed, what the scan classed it as, how large the
-	// advertised surface is, and whether the listing was routine. The per-listing
-	// counts stay in the spool; see the comment on event.MCP.
 	MCPBaselineState string   `json:"mcp_baseline_state,omitempty"`
 	MCPPrevHash      string   `json:"mcp_prev_metadata_hash,omitempty"`
 	MCPChangedFields []string `json:"mcp_changed_fields,omitempty"`
@@ -69,8 +50,6 @@ type SIEMEvent struct {
 	BashArgv0        string   `json:"bash_argv0,omitempty"`
 	BashCommandClass string   `json:"bash_command_class,omitempty"`
 
-	// PathZone, PathOp and PathDigest describe only the highest-severity path
-	// of the call. PathCount preserves the cardinality D2 needs.
 	PathZone   string `json:"path_zone,omitempty"`
 	PathOp     string `json:"path_op,omitempty"`
 	PathDigest string `json:"path_digest,omitempty"`
@@ -80,8 +59,7 @@ type SIEMEvent struct {
 	ResultBytes    int      `json:"result_bytes,omitempty"`
 
 	TaintLabels []string `json:"taint_labels,omitempty"`
-	// ProvEdge* describe only the highest-confidence edge. ProvEdgeCount
-	// preserves how many there were.
+
 	ProvEdgeCount      int     `json:"prov_edge_count,omitempty"`
 	ProvEdgeClass      string  `json:"prov_edge_class,omitempty"`
 	ProvEdgeConfidence float64 `json:"prov_edge_confidence,omitempty"`
@@ -101,13 +79,8 @@ type SIEMEvent struct {
 
 	GoalDriftScore *float64 `json:"goal_drift_score,omitempty"`
 
-	// ConfigZone and ConfigPathDigest carry config_change, file_changed and
-	// instructions_loaded detail. Kept flat rather than in a nested object so
-	// D6 and D8 rules address them directly.
 	ConfigSource string `json:"config_source,omitempty"`
-	// ConfigLoadReason is why an instruction file loaded (session_start, file_read, ...).
-	// An InstructionsLoaded event carries load_reason and no config_source, so without
-	// this field the reason never reaches a rule or an analyst.
+
 	ConfigLoadReason string `json:"config_load_reason,omitempty"`
 	ConfigPathDigest string `json:"config_path_digest,omitempty"`
 	ConfigZone       string `json:"config_zone,omitempty"`
@@ -118,9 +91,6 @@ type SIEMEvent struct {
 	HealthDroppedEvents int64  `json:"health_dropped_events,omitempty"`
 }
 
-// zoneSeverity ranks zones so Flatten can pick the one path that survives.
-// Higher wins. credential outranks untrusted deliberately: a .env inside
-// node_modules is a credential read, not a dependency read.
 var zoneSeverity = map[string]int{
 	ZoneCredential: 50,
 	ZoneSystem:     40,
@@ -130,9 +100,6 @@ var zoneSeverity = map[string]int{
 	ZoneUnknown:    5,
 }
 
-// Zone labels. These cross to Wazuh in cleartext while paths stay keyed
-// digests: the zone carries the security meaning, so an external analyst who
-// cannot resolve a digest can still triage. See docs/01 on the MSSP posture.
 const (
 	ZoneCredential = "credential"
 	ZoneSystem     = "system"
@@ -142,16 +109,8 @@ const (
 	ZoneUnknown    = "unknown"
 )
 
-// ZoneSeverity exposes the ranking for callers that need to compare zones.
 func ZoneSeverity(zone string) int { return zoneSeverity[zone] }
 
-// Flatten projects the rich Event onto the Wazuh-bound representation.
-//
-// The projection is lossy by design and the losses are documented in
-// docs/04-data-model.md: arrays of objects collapse to their highest-severity
-// or highest-confidence member plus a count, raw feature fingerprints are not
-// emitted at all, and operational-only fields are dropped. Anything a runbook
-// needs beyond this is a spool-pull request.
 func Flatten(e *Event) *SIEMEvent {
 	s := &SIEMEvent{
 		SchemaV:                SchemaVersion,
@@ -191,8 +150,6 @@ func Flatten(e *Event) *SIEMEvent {
 		GoalDriftScore:         e.Scores.GoalDrift,
 	}
 
-	// policy.rule_ids -> the deciding rule only. Triage cares which rule fired,
-	// not the full evaluation trace.
 	if len(e.Policy.RuleIDs) > 0 {
 		s.PolicyRuleID = e.Policy.RuleIDs[0]
 	}
@@ -222,7 +179,6 @@ func Flatten(e *Event) *SIEMEvent {
 			s.BashCommandClass = b.CommandClass
 		}
 
-		// Array of objects -> highest-severity member plus count.
 		if n := len(t.Paths); n > 0 {
 			s.PathCount = n
 			top := t.Paths[0]
@@ -236,8 +192,6 @@ func Flatten(e *Event) *SIEMEvent {
 			s.PathDigest = top.PathDigest
 		}
 
-		// Secret hits -> kind strings only. Per-kind counts are dropped; the
-		// value is never carried in either representation.
 		if f := t.InputFeatures; f != nil && len(f.SecretHits) > 0 {
 			kinds := make([]string, 0, len(f.SecretHits))
 			for _, h := range f.SecretHits {
@@ -248,7 +202,6 @@ func Flatten(e *Event) *SIEMEvent {
 		}
 	}
 
-	// Array of objects -> highest-confidence member plus count.
 	if n := len(e.Provenance.Edges); n > 0 {
 		s.ProvEdgeCount = n
 		top := e.Provenance.Edges[0]

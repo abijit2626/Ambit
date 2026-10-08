@@ -12,9 +12,6 @@ func rec(name string, attrs map[string]string) otlp.Record {
 	return otlp.Record{Signal: otlp.SignalLogs, Name: name, TS: time.Now().UTC(), Attrs: attrs}
 }
 
-// TestOTelGoesToSpoolOnly is the boundary that matters: the OTel stream is
-// content-rich and high-volume, and pushing it at the indexer is the firehose the
-// filter exists to prevent.
 func TestOTelGoesToSpoolOnly(t *testing.T) {
 	c, events, traj := newTestCollector(t)
 	c.HandleOTel([]otlp.Record{
@@ -46,8 +43,7 @@ func TestOTelRecordsCarrySourceAndAttribution(t *testing.T) {
 		t.Errorf("source = %v, want otel", m["source"])
 	}
 	actor := m["actor"].(map[string]any)
-	// OTel's own attribution wins over our config: it comes from Claude Code, so
-	// a mismatch between the two is itself worth seeing.
+
 	if actor["user_id"] != "u_from_otel" || actor["org_id"] != "o_from_otel" {
 		t.Errorf("actor = %v, want OTel's attribution to win", actor)
 	}
@@ -59,7 +55,7 @@ func TestOTelRecordsCarrySourceAndAttribution(t *testing.T) {
 
 func TestOTelMCPAttribution(t *testing.T) {
 	c, _, traj := newTestCollector(t)
-	// Explicit MCP attributes.
+
 	c.HandleOTel([]otlp.Record{rec("claude_code.tool_result", map[string]string{
 		"session.id": "s1", "tool_name": "mcp__github__create_issue",
 		"mcp_server.name": "github", "mcp_tool.name": "create_issue",
@@ -70,9 +66,6 @@ func TestOTelMCPAttribution(t *testing.T) {
 		t.Errorf("mcp = %v", mcp)
 	}
 
-	// Falling back to parsing the tool name, for when the attributes are
-	// redacted — the docs note MCP names are replaced with "custom" unless
-	// OTEL_LOG_TOOL_DETAILS is set, so this path is the common one.
 	c2, _, traj2 := newTestCollector(t)
 	c2.HandleOTel([]otlp.Record{rec("claude_code.tool_result", map[string]string{
 		"session.id": "s1", "tool_name": "mcp__jira__create",
@@ -92,8 +85,6 @@ func TestOTelUnmodelledEventIsStillSpooled(t *testing.T) {
 	}
 }
 
-// TestStreamDiscrepancy covers D7's finer half. Both streams quiet is an idle
-// endpoint; exactly one quiet while the other reports is the signal.
 func TestStreamDiscrepancy(t *testing.T) {
 	t.Run("both quiet is not discrepant", func(t *testing.T) {
 		c, _, _ := newTestCollector(t)
@@ -136,8 +127,7 @@ func TestStreamDiscrepancy(t *testing.T) {
 		if st.Discrepant {
 			t.Error("both streams reporting must not be discrepant even when counts differ")
 		}
-		// Counts legitimately differ between the streams; the comparison is
-		// deliberately "one silent", not a ratio.
+
 		if st.ToolCalls == 0 || st.HookToolCalls == 0 {
 			t.Errorf("both counters should be non-zero: %+v", st)
 		}

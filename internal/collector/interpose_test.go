@@ -42,13 +42,10 @@ func listingReport() *interpose.Report {
 	}
 }
 
-// TestInterposeReportBecomesEvents covers the split: one report becomes a per-server
-// summary plus one event per tool, all of them mcp_list, sourced as interpose.
 func TestInterposeReportBecomesEvents(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.HandleInterpose(listingReport())
 
-	// Spool holds everything: the summary plus both tools.
 	if traj.count() != 3 {
 		t.Fatalf("spool got %d events, want 3 (summary + 2 tools)", traj.count())
 	}
@@ -65,10 +62,6 @@ func TestInterposeReportBecomesEvents(t *testing.T) {
 	}
 }
 
-// TestInterposeToolIdentityIsReconstructed is the property the whole per-server
-// design exists to protect. A Wazuh rule correlating a listing with the calls that
-// follow, and a managed-settings permission rule naming a tool, both depend on this
-// exact string.
 func TestInterposeToolIdentityIsReconstructed(t *testing.T) {
 	c, events, _ := newTestCollector(t)
 	c.HandleInterpose(listingReport())
@@ -91,8 +84,6 @@ func TestInterposeToolIdentityIsReconstructed(t *testing.T) {
 	}
 }
 
-// TestApprovedToolsDoNotCrossButDriftDoes is the volume control from docs/04: one
-// event per server per session, plus the tools that say something.
 func TestApprovedToolsDoNotCrossButDriftDoes(t *testing.T) {
 	c, events, traj := newTestCollector(t)
 	c.HandleInterpose(listingReport())
@@ -100,7 +91,7 @@ func TestApprovedToolsDoNotCrossButDriftDoes(t *testing.T) {
 	if traj.count() != 3 {
 		t.Fatalf("spool got %d events, want 3", traj.count())
 	}
-	// Summary + the drifted tool. The approved tool with no findings stays local.
+
 	if events.count() != 2 {
 		t.Fatalf("SIEM sink got %d events, want 2 (summary + drift):\n%s", events.count(), events.all())
 	}
@@ -116,8 +107,6 @@ func TestInterposeSummaryCarriesTheInventory(t *testing.T) {
 	c, events, traj := newTestCollector(t)
 	c.HandleInterpose(listingReport())
 
-	// The roll-up is still recorded locally, for investigation and for a dashboard
-	// that wants "servers with drift" without correlating.
 	if got := traj.decode(t, 0)["tool"].(map[string]any)["mcp"].(map[string]any)["worst"]; got != event.MCPStateDrift {
 		t.Errorf("spool summary worst = %v, want %q", got, event.MCPStateDrift)
 	}
@@ -126,9 +115,7 @@ func TestInterposeSummaryCarriesTheInventory(t *testing.T) {
 	if summary["tool_mcp_tool"] != nil {
 		t.Errorf("the summary event should name no tool, got %v", summary["tool_mcp_tool"])
 	}
-	// The roll-up must NOT appear as mcp_baseline_state: a rule matching that field
-	// would then fire twice for one drifted tool, once on the finding and once on the
-	// listing, and could not tell them apart.
+
 	if _, present := summary["mcp_baseline_state"]; present {
 		t.Errorf("the summary carried mcp_baseline_state (%v); that field belongs to per-tool events only", summary["mcp_baseline_state"])
 	}
@@ -167,14 +154,12 @@ func TestInterposeDriftEventCarriesBothSidesAndClasses(t *testing.T) {
 	if !ok || len(classes) != 2 {
 		t.Errorf("mcp_scan_classes = %v", drift["mcp_scan_classes"])
 	}
-	// Rule ids are for local tuning and must not cross.
+
 	if strings.Contains(events.all(), "hidden.ignore_previous") {
 		t.Error("scan rule ids crossed to the SIEM sink; they are local tuning data")
 	}
 }
 
-// TestInterposeAnnotationsSurviveWithAbsentDistinctFromFalse is requirement 4 from
-// docs/02: annotations are carried as stated, and absent never becomes false.
 func TestInterposeAnnotationsSurviveWithAbsentDistinctFromFalse(t *testing.T) {
 	c, events, _ := newTestCollector(t)
 	c.HandleInterpose(listingReport())
@@ -199,8 +184,6 @@ func TestInterposeAnnotationsSurviveWithAbsentDistinctFromFalse(t *testing.T) {
 	}
 }
 
-// TestTrustComesFromConfigurationNotTheServer: the interposer reports what a server
-// said; only operator configuration decides trust.
 func TestTrustComesFromConfigurationNotTheServer(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 
@@ -211,7 +194,7 @@ func TestTrustComesFromConfigurationNotTheServer(t *testing.T) {
 	}
 
 	trusted := listingReport()
-	trusted.Server = "internal-wiki" // the one in the test config's trusted list
+	trusted.Server = "internal-wiki"
 	c.HandleInterpose(trusted)
 	mcpBlock := traj.decode(t, 3)["tool"].(map[string]any)["mcp"].(map[string]any)
 	if mcpBlock["trust"] != "internal" {
@@ -219,8 +202,6 @@ func TestTrustComesFromConfigurationNotTheServer(t *testing.T) {
 	}
 }
 
-// TestDegradedInterposerReportsHealth: "the baseline store could not be written"
-// means D4 is blind on this endpoint, which belongs in the health stream D7 reads.
 func TestDegradedInterposerReportsHealth(t *testing.T) {
 	c, events, _ := newTestCollector(t)
 	rep := listingReport()
@@ -235,8 +216,7 @@ func TestDegradedInterposerReportsHealth(t *testing.T) {
 	if health["health_status"] != "degraded" {
 		t.Errorf("health_status = %v, want degraded", health["health_status"])
 	}
-	// The reason is operational detail and stays out of the SIEM-bound event; it is
-	// logged locally instead.
+
 	if strings.Contains(events.all(), "permission denied") {
 		t.Error("the degraded reason should not cross; it can name local paths")
 	}
@@ -251,9 +231,6 @@ func TestEmptyAndNilReportsAreIgnored(t *testing.T) {
 	}
 }
 
-// TestNoServerMetadataTextCrosses is the leak control for this path. Descriptions are
-// third-party text held on the endpoint; nothing from them may ride an mcp_list event
-// to a SIEM or onward to a monitoring firm.
 func TestNoServerMetadataTextCrosses(t *testing.T) {
 	c, events, _ := newTestCollector(t)
 	rep := listingReport()

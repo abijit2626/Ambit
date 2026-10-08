@@ -12,19 +12,6 @@ import (
 	"unsafe"
 )
 
-// The SIDs are the same on every Windows machine and in every locale, unlike the names
-// "SYSTEM" and "Administrators"; sidSystem and sidAdministrators are in sddl.go.
-
-// restrict replaces dir's ACL with full control for the current user, SYSTEM and
-// Administrators, inherited by everything created inside, and removes every
-// inherited entry — which is what grants BUILTIN\Users read access under
-// C:\ProgramData.
-//
-// It shells out to icacls rather than calling SetNamedSecurityInfo because ambitd has
-// no third-party dependencies by design, and the standard library's syscall package
-// does not expose ACL editing. icacls is invoked by absolute path under SystemRoot so
-// a hostile PATH cannot substitute it: this binary runs on the same endpoint the
-// threat model says may already be compromised.
 func restrict(dir string) error {
 	user, err := currentUserSID()
 	if err != nil {
@@ -75,10 +62,6 @@ const (
 	sddlRevision1            = 1
 )
 
-// checkExisting refuses a directory that was not made private. It reads the owner and
-// the access list in SDDL form and applies audit to them. A directory whose descriptor
-// cannot be read is refused too: if ambit cannot tell that it is private, it is not
-// going to put prompt text in it.
 func checkExisting(dir string) error {
 	sddl, err := securityDescriptor(dir)
 	if err != nil {
@@ -91,7 +74,6 @@ func checkExisting(dir string) error {
 	return audit(dir, sddl, self)
 }
 
-// securityDescriptor returns the owner and DACL of a file or directory as SDDL.
 func securityDescriptor(path string) (string, error) {
 	name, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
