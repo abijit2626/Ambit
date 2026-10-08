@@ -102,6 +102,23 @@ func TestUntrustedOnlyResultDoesNotFeedTheSensitiveSet(t *testing.T) {
 	}
 }
 
+// A hostname is not private data. On AgentDojo, domain matches made up most of the benign
+// sensitive-data edges and none of the useful ones: a channel summary naming the sites
+// people had shared. The untrusted-content set still draws its edge from the same host.
+func TestAHostnameInThePayloadIsNotExfil(t *testing.T) {
+	c, _, traj := exfilCollector(t)
+	c.cfg.MCPToolLabels["bank"]["get_notes"] = []string{"sensitive", "untrusted", "read_only"}
+	c.Handle(mcpPost("s1", "mcp__bank__get_notes", map[string]any{}, "Bob shared www.shared-article.example in general."))
+	c.Handle(send("s1", map[string]any{"recipient": "GB29NWBK60161331926819", "subject": "Summary: www.shared-article.example"}))
+	e := last(t, traj)
+	if len(e.Provenance.Exfil) != 0 {
+		t.Errorf("a hostname drew an exfil edge: %+v", e.Provenance.Exfil)
+	}
+	if len(e.Provenance.Edges) == 0 {
+		t.Error("test premise broken: the untrusted result should still draw a provenance edge on the host")
+	}
+}
+
 func TestRenderPayloadDropsAddressingFields(t *testing.T) {
 	p := &hook.Payload{ToolInput: map[string]any{
 		"Recipients": []string{"a@x.test"}, "TO": "b@x.test", "url": "https://x.test", "file_path": "/tmp/x",

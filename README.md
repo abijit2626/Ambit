@@ -436,9 +436,11 @@ team executes a runbook against a sample alert.
   flattened field or rule yet. Only the call's payload is matched, not its addressing fields
   (`recipient`, `to`, `url` and similar), because addressing a known contact was as common in
   benign AgentDojo runs as in hostile ones. On GPT-4o banking it flags 136 of 553 successful
-  attacks on the attacker's own payment against 1 of 25 benign runs. A tool that names its
-  payload field like an address hides it, and a short value in a body (a security code)
-  matches no fingerprint class.
+  attacks on the attacker's own payment against 1 of 25 benign runs. Hostnames are left out
+  of the set, because they were most of the benign flags on Claude 3.7 and none of the useful
+  matches; the cost is that on Claude 3.7 it now has no catch that provenance lacks. A tool
+  that names its payload field like an address hides it, and a short value in a body (a
+  security code) matches no fingerprint class.
 - **Rule-of-Two session scoping is unresolved.** Bits are monotonic per session. A
   session that runs long saturates to all three, and `/clear` is reported to start a new
   session id, which would reset bits B and C that should not reset. Shadow mode exists

@@ -353,3 +353,29 @@ func TestIBANMatchesAtURLConfidenceAndOutranksAnEmail(t *testing.T) {
 		t.Errorf("a validated IBAN should be as specific as a full URL")
 	}
 }
+
+// A Set can leave a class out entirely. The sensitive-data set leaves out domains because a
+// hostname is not private data; the untrusted-content set keeps them, because a domain a
+// page names is exactly what a redirected action looks like.
+func TestExcludedClassIsNeitherRegisteredNorMatched(t *testing.T) {
+	both := feat([]string{"hmac:host"}, []string{"hmac:url"})
+
+	plain := New(Options{})
+	plain.Ingest("ev_a", both, nil)
+	if got := plain.Match(both); len(got) != 2 {
+		t.Fatalf("test premise broken: a plain Set should match both classes, got %+v", got)
+	}
+
+	s := New(Options{Exclude: map[string]bool{ClassDomain: true}})
+	res := s.Ingest("ev_a", both, nil)
+	if res.Stored != 1 {
+		t.Errorf("Stored = %d, want 1: the excluded class must not be registered", res.Stored)
+	}
+	got := s.Match(both)
+	if len(got) != 1 || got[0].MatchClass != ClassURL {
+		t.Errorf("edges = %+v, want only the url edge", got)
+	}
+	if got := s.Match(feat([]string{"hmac:host"}, nil)); len(got) != 0 {
+		t.Errorf("a domain-only action matched in a Set that excludes domains: %+v", got)
+	}
+}
