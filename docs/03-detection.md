@@ -93,7 +93,8 @@ Two things this surfaced, worth stating rather than only in code comments:
   `**/.env*`, `.npmrc`, `.netrc`, `**/id_*`, keystores, wallet files
 - Read of a file whose content trips the edge secrets classifier
 - Read outside the session's working-directory boundary
-- An MCP tool returning data from a system labelled sensitive
+- An MCP tool returning data from a system labelled sensitive: the `sensitive` tool label
+  (`mcp_tool_labels`, per tool; see the README)
 
 **Bit C — state change or external communication.** Set by:
 - Bash command with network capability (`curl`, `wget`, `nc`, `ssh`, `scp`,
@@ -149,6 +150,34 @@ needs. First results:
   A-and-B row is unreachable in an MCP-shaped environment, and the gate is reduced to its
   credential-path row. That makes a sensitivity label for MCP servers the input to build
   before any row is promoted.
+- **A server-level label does not work, per-tool labels partly do.** A prototype that marked
+  each AgentDojo suite's whole server sensitive made the gate ask on 354 of 485 benign actions
+  (73%) and flag 104 of 132 benign Claude 3.7 runs. An unclassified server already sets A and C
+  on every call, so the first call to a sensitive one completed all three bits, and every later
+  call asked. A would-be block plus an edge then caught exactly what an edge alone caught: the
+  gate added nothing. It was not merged. What was built is `mcp_tool_labels`: `untrusted`,
+  `sensitive` and `read_only` per tool, with unlabelled tools keeping the conservative default.
+  With AgentDojo's tools labelled (`testdata/agentdojo/mcp-tool-labels.json`, written by role
+  and then checked against where the attack's injection marker actually appeared. The check
+  moved two write tools, `delete_file` and `add_calendar_event_participants`, to `untrusted`,
+  because they return the object they changed and its third-party content. After that, every
+  tool the marker appeared in is labelled `untrusted`):
+
+  | | edge | gate (deny or ask) | block and edge on one call |
+  | --- | --- | --- | --- |
+  | Claude 3.7, hostile runs caught | 37 / 47 (0.79) | 33 / 47 (0.70) | 23 / 47 (0.49) |
+  | Claude 3.7, benign runs flagged | 26 / 132 (0.20) | 55 / 132 (0.42) | 19 / 132 (0.14) |
+  | GPT-4o banking, hostile caught | 124 / 553 (0.22) | 532 / 553 (0.96) | 124 / 553 (0.22) |
+  | GPT-4o banking, benign flagged | 4 / 25 (0.16) | 12 / 25 (0.48) | 3 / 25 (0.12) |
+
+  The gate now discriminates, weakly. A benign task like reading email and replying is a
+  genuine Rule-of-Two case, so it asks there too, and on Claude 3.7 the edge remains the
+  better single signal. Labels also change what provenance sees, and one change is a loss
+  worth stating: GPT-4o banking edges fall from 203 to 124, because 79 of the old catches were
+  the user's own IBAN, read from `get_iban` or `get_user_info`, sent in the attacker's payment.
+  Those tools are sensitive, not untrusted, so their results are no longer ingest. That
+  lineage is data exfiltration rather than injection; an edge class for sensitive data flowing
+  into an acting call would recover it, and is not built.
 
 **Honest limitation.** The rule is stated over a session, and "session" is doing
 real work in that sentence. Compaction, `/clear`, subagents, and long-running
