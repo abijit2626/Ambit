@@ -164,6 +164,11 @@ type MCP struct {
 	// Trust is the operator-assigned label for the server. Only "internal"
 	// relaxes anything; see docs/02 on annotations being one-directional.
 	Trust string `json:"trust,omitempty"`
+	// Classified is true when the operator labelled this tool (config mcp_tool_labels),
+	// and Labels are those labels. A classified tool's Rule-of-Two bits come from its
+	// labels alone; an unclassified one gets the server-level default. Rich event only.
+	Classified bool     `json:"classified,omitempty"`
+	Labels     []string `json:"labels,omitempty"`
 
 	// The fields below are populated only on mcp_list events, by mcp-interpose.
 	// They live on this block rather than one of their own so that a Wazuh rule

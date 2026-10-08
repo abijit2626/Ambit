@@ -368,6 +368,10 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 			trust = "internal"
 		}
 		t.MCP = &event.MCP{Server: server, Tool: tool, Trust: trust}
+		if tl, ok := c.cfg.ToolLabels(server, tool); ok {
+			t.MCP.Classified = true
+			t.MCP.Labels = tl.Names
+		}
 	}
 
 	if cmd := p.Command(); cmd != "" {
@@ -538,7 +542,7 @@ const maxTaintLabelsPerEvent = 4
 // everywhere else in the schema already.
 func (c *Collector) taintLabels(t *event.Tool) []string {
 	var out []string
-	if t.MCP != nil && t.MCP.Trust != "internal" {
+	if t.MCP != nil && mcpUntrusted(t.MCP) {
 		out = append(out, "mcp:"+t.MCP.Server)
 	}
 	if t.Name == "WebFetch" || t.Name == "WebSearch" {
@@ -570,6 +574,20 @@ func (c *Collector) taintLabels(t *event.Tool) []string {
 		out = out[:maxTaintLabelsPerEvent]
 	}
 	return out
+}
+
+// mcpUntrusted reports whether an MCP call's input counts as untrusted: by its labels
+// when the operator classified the tool, otherwise by the server-level default.
+func mcpUntrusted(m *event.MCP) bool {
+	if m.Classified {
+		for _, l := range m.Labels {
+			if l == config.LabelUntrusted {
+				return true
+			}
+		}
+		return false
+	}
+	return m.Trust != "internal"
 }
 
 // webUntrusted reports whether a WebFetch/WebSearch result's domain is not on

@@ -18,7 +18,7 @@
 // long session. That breadth is the known problem shadow mode exists to solve with
 // measured data, not something to paper over here.
 //
-// Two of docs/03's bullets are not implemented, and are not silently dropped:
+// One of docs/03's bullets is not implemented, and is not silently dropped:
 //
 //   - "Any tool annotated openWorldHint: true" needs MCP annotations joined
 //     onto tool CALL events. Only the interposer's LISTING events carry
@@ -27,10 +27,12 @@
 //     treat every non-internal-server MCP tool as both ingest and egress — is
 //     what ClassifyTool implements instead, so no signal is lost, only its
 //     precision.
-//   - "An MCP tool returning data from a system labelled sensitive" needs a
-//     sensitivity classification beyond the existing trust label. No such
-//     classification exists in configuration; adding one speculatively, ahead
-//     of a real need for it, is not this package's call to make.
+//
+// The other, "an MCP tool returning data from a system labelled sensitive", is the
+// "sensitive" tool label (config mcp_tool_labels). Labels are per tool, not per server:
+// measured against AgentDojo, a server-level label made the gate ask on 73% of benign
+// actions, because an unclassified server already sets A and C on every call, so the
+// first call to a sensitive one completed all three bits. See docs/03.
 package r2
 
 import (
@@ -128,7 +130,15 @@ func ClassifyTool(in ToolInput) Bits {
 		b.C = true // ...and the round trip is itself the egress action.
 	}
 
-	if in.MCP != nil && in.MCP.Trust != "internal" {
+	if in.MCP != nil && in.MCP.Classified {
+		// The operator labelled this tool, which is the one thing allowed to replace the
+		// default below: bit A only for a tool whose result carries outside content, B
+		// for one that reads private data (docs/03's "MCP tool returning data from a
+		// system labelled sensitive"), C unless it is labelled read-only.
+		b.A = b.A || hasLabel(in.MCP.Labels, "untrusted")
+		b.B = b.B || hasLabel(in.MCP.Labels, "sensitive")
+		b.C = b.C || !hasLabel(in.MCP.Labels, "read_only")
+	} else if in.MCP != nil && in.MCP.Trust != "internal" {
 		// A server merely claiming readOnlyHint earns no relaxation
 		// (docs/02's asymmetry), and annotations are not on call events yet
 		// (see the package doc). The fallback docs/03 itself states: treat
@@ -151,6 +161,15 @@ func ClassifyTool(in ToolInput) Bits {
 // bullet.
 func ClassifyInstructionsLoaded(trustedRepo bool) Bits {
 	return Bits{A: !trustedRepo}
+}
+
+func hasLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if l == want {
+			return true
+		}
+	}
+	return false
 }
 
 func isWebTool(name string) bool {
