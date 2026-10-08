@@ -61,7 +61,7 @@ func TestCorpusTagsMatchWhatTheScenariosActuallyDo(t *testing.T) {
 		return false
 	}
 	for _, sc := range loadCorpus(t) {
-		var hostile, benignAnnotated, expectedMiss, expectedFP int
+		var hostile, benignAnnotated, expectedMiss, expectedFP, expectedGateFP int
 		for _, st := range sc.Steps {
 			if st.Hostile == nil {
 				continue
@@ -77,6 +77,9 @@ func TestCorpusTagsMatchWhatTheScenariosActuallyDo(t *testing.T) {
 				if expectsEdge && *st.Expect.Edge {
 					expectedFP++
 				}
+				if st.Expect != nil && (st.Expect.Decision == "deny" || st.Expect.Decision == "ask") {
+					expectedGateFP++
+				}
 			}
 		}
 		switch {
@@ -91,7 +94,10 @@ func TestCorpusTagsMatchWhatTheScenariosActuallyDo(t *testing.T) {
 		if has(sc, "known-fp") && expectedFP == 0 {
 			t.Errorf("%s: tagged known-fp but records no benign step with expect.edge=true", sc.Name)
 		}
-		if (has(sc, "known-miss") || has(sc, "known-fp")) && !hasNote(sc) {
+		if has(sc, "known-gate-fp") && expectedGateFP == 0 {
+			t.Errorf("%s: tagged known-gate-fp but records no benign step expecting a deny or ask", sc.Name)
+		}
+		if (has(sc, "known-miss") || has(sc, "known-fp") || has(sc, "known-gate-fp")) && !hasNote(sc) {
 			t.Errorf("%s: a known miss or false positive must say why in a note", sc.Name)
 		}
 	}

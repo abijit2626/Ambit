@@ -99,6 +99,9 @@ type Summary struct {
 
 	Sessions SessionSummary `json:"rule_of_two"`
 
+	// Gate is the shadow Rule-of-Two gate, one entry per session scoping.
+	Gate []GateSummary `json:"gate"`
+
 	Handled      int64               `json:"handled"`
 	Crossed      int64               `json:"crossed"`
 	CrossReasons map[string]int64    `json:"cross_reasons"`
@@ -183,6 +186,10 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 		s.Provenance.EdgeEvents += p.EdgeEvents
 	}
 	s.Sessions.MedianCallsToAll = median(callsToAll)
+	s.Gate = []GateSummary{
+		summarizeGate(results, event.ScopingSession, func(st StepResult) event.Decision { return st.Decision }),
+		summarizeGate(results, event.ScopingTurn, func(st StepResult) event.Decision { return st.TurnDecision }),
+	}
 
 	s.Confusion = confuse(evaluated, minConfidence)
 	for _, st := range evaluated {
@@ -215,6 +222,71 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 		s.Sweep = append(s.Sweep, SweepPoint{Floor: f, Confusion: confuse(evaluated, f)})
 	}
 	return s
+}
+
+// GateSummary measures the shadow gate under one session scoping. A blocking verdict (deny
+// or ask) is the positive: it is what would stop or interrupt a developer once enforced.
+// allow_alert never blocks, so it is counted but is not a positive.
+type GateSummary struct {
+	Scoping    string `json:"scoping"`
+	Deny       int    `json:"deny"`
+	Ask        int    `json:"ask"`
+	AllowAlert int    `json:"allow_alert"`
+	// Steps is over labeled PreToolUse actions: a blocking verdict on a benign action is a
+	// developer interrupted for nothing, the cost enforcement would carry.
+	Steps Confusion `json:"steps"`
+	// Runs is over runs with a run-level label: did any blocking verdict fire in the run.
+	Runs Confusion `json:"runs"`
+}
+
+func blocking(d event.Decision) bool {
+	return d == event.DecisionDeny || d == event.DecisionAsk
+}
+
+func summarizeGate(results []*Result, scoping string, pick func(StepResult) event.Decision) GateSummary {
+	g := GateSummary{Scoping: scoping}
+	for _, r := range results {
+		fired := false
+		for _, st := range r.Steps {
+			if !st.Produced || st.Kind != event.KindToolPre {
+				continue
+			}
+			d := pick(st)
+			switch d {
+			case event.DecisionDeny:
+				g.Deny++
+			case event.DecisionAsk:
+				g.Ask++
+			case event.DecisionAllowAlert:
+				g.AllowAlert++
+			}
+			if blocking(d) {
+				fired = true
+			}
+			if r.Scenario.StepsUnlabeled {
+				continue
+			}
+			hostile := st.Hostile != nil && *st.Hostile
+			tally(&g.Steps, blocking(d), hostile)
+		}
+		if h := r.Scenario.Hostile; h != nil {
+			tally(&g.Runs, fired, *h)
+		}
+	}
+	return g
+}
+
+func tally(c *Confusion, positive, truth bool) {
+	switch {
+	case positive && truth:
+		c.TP++
+	case positive && !truth:
+		c.FP++
+	case !positive && truth:
+		c.FN++
+	default:
+		c.TN++
+	}
 }
 
 func confuse(steps []StepResult, floor float64) Confusion {
@@ -402,6 +474,8 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 		}
 	}
 
+	writeGate(w, s.Gate)
+
 	ss := s.Sessions
 	fmt.Fprintf(w, "\nRule of Two (%d sessions)\n", ss.Sessions)
 	fmt.Fprintf(w, "  reached A %d, B %d, C %d, all three %d", ss.A, ss.B, ss.C, ss.All)
@@ -423,6 +497,22 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 		pv.Ingests, pv.Registered, pv.Skipped, pv.Truncated, pv.Evicted, pv.EdgeEvents)
 	if pv.Truncated > 0 || pv.Evicted > 0 {
 		fmt.Fprint(w, "  note: a fingerprint set was truncated or evicted, so some absent edges are weaker evidence than they look\n")
+	}
+}
+
+func writeGate(w io.Writer, gs []GateSummary) {
+	if len(gs) == 0 {
+		return
+	}
+	fmt.Fprint(w, "\nshadow gate (recorded, never returned; deny and ask block, allow_alert does not)\n")
+	fmt.Fprint(w, "  scoping   deny  ask  alert | blocking on actions: TP  FP  FN  TN  precision  recall | runs: TP  FP  FN  TN\n")
+	for _, g := range gs {
+		p, pok := g.Steps.Precision()
+		r, rok := g.Steps.Recall()
+		fmt.Fprintf(w, "  %-8s %5d %4d %6d |                      %3d %3d %3d %3d  %9s  %6s |       %3d %3d %3d %3d\n",
+			g.Scoping, g.Deny, g.Ask, g.AllowAlert,
+			g.Steps.TP, g.Steps.FP, g.Steps.FN, g.Steps.TN, fmtRatio(p, pok), fmtRatio(r, rok),
+			g.Runs.TP, g.Runs.FP, g.Runs.FN, g.Runs.TN)
 	}
 }
 

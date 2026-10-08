@@ -2,6 +2,7 @@ package replay
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -185,5 +186,25 @@ func TestRunIsDeterministic(t *testing.T) {
 		if strings.Contains(a, noise) {
 			t.Errorf("the JSON report carries %q, which varies between runs", noise)
 		}
+	}
+}
+
+func TestRunChecksGateAssertions(t *testing.T) {
+	const theft = `{"hook_event_name":"PostToolUse","session_id":"s","prompt_id":"p1","cwd":"/home/dev/src/r","tool_name":"WebFetch","tool_use_id":"t1","tool_input":{"url":"https://docs.untrusted.test/"},"tool_result":"x"}
+{"payload":{"hook_event_name":"PreToolUse","session_id":"s","prompt_id":"p1","cwd":"/home/dev/src/r","tool_name":"Read","tool_use_id":"t2","tool_input":{"file_path":"/home/dev/.ssh/id_rsa"}},"expect":%s}
+`
+	pass := fmt.Sprintf(theft, `{"decision":"deny","rule":"r2.credential_after_a","turn_decision":"deny"}`)
+	if r := run(t, pass); r.Failed() {
+		t.Fatalf("correct gate assertions failed: %+v", r.Steps)
+	}
+	for _, wrong := range []string{`{"decision":"none"}`, `{"decision":"ask"}`, `{"rule":"r2.trifecta"}`, `{"turn_decision":"none"}`} {
+		if r := run(t, fmt.Sprintf(theft, wrong)); !r.Failed() {
+			t.Errorf("assertion %s passed against a deny", wrong)
+		}
+	}
+	// "none" asserts explicitly that nothing fired.
+	quiet := `{"payload":{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/home/dev/src/r","tool_name":"Read","tool_input":{"file_path":"/home/dev/src/r/a.go"}},"expect":{"decision":"none","turn_decision":"none"}}` + "\n"
+	if r := run(t, quiet); r.Failed() {
+		t.Errorf("decision none failed on a quiet action: %+v", r.Steps)
 	}
 }

@@ -311,7 +311,28 @@ type Policy struct {
 	// Shadow is true when the decision was computed but not returned to the
 	// agent. M2 runs this way; M0 emits DecisionNone and Shadow false.
 	Shadow bool `json:"shadow,omitempty"`
+	// Alternatives are the gate's verdicts under session scopings other than the one
+	// the fields above use, computed side by side so the scoping can be chosen from data
+	// (docs/03, Layer 1). Rich event only: they never cross to the SIEM, where the
+	// field budget is spent on the decision that would actually apply.
+	Alternatives []ScopedVerdict `json:"alternatives,omitempty"`
 }
+
+// ScopedVerdict is the gate's verdict under one named session scoping.
+type ScopedVerdict struct {
+	Scoping  string   `json:"scoping"`
+	Decision Decision `json:"decision"`
+	RuleID   string   `json:"rule_id,omitempty"`
+}
+
+// Session scopings the gate is evaluated under.
+const (
+	// ScopingSession is monotonic per session_id: the current implementation, and the
+	// one the policy fields carry.
+	ScopingSession = "session"
+	// ScopingTurn resets the bits whenever prompt_id changes: candidate 3 in docs/03.
+	ScopingTurn = "turn"
+)
 
 type Scores struct {
 	GoalDrift    *float64 `json:"goal_drift"`

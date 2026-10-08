@@ -198,6 +198,10 @@ func run() error {
 		// Non-zero means some session's fingerprint set was incomplete.
 		"prov_truncated", st.Provenance.Truncated,
 		"prov_evicted", st.Provenance.Evicted,
+		// What the Rule-of-Two gate would have done. None of it was returned.
+		"shadow_deny", st.Shadow.Deny,
+		"shadow_ask", st.Shadow.Ask,
+		"shadow_allow_alert", st.Shadow.AllowAlert,
 	)
 	return err
 }
