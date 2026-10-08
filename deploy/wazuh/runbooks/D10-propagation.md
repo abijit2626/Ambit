@@ -17,7 +17,7 @@ intersection is a scheduled job over the feature columns and lands in M5.
 | 100280 | 0 | An event carries a notable fingerprint (context only, no alert) |
 | 100281 | 10 | The same fingerprint seen **twice** within 3600s |
 | 100282 | 12 | The same fingerprint seen **5+ times** within 7200s |
-| 100283 | 12 | A provenance edge — **inert, see below** |
+| 100283 | 12 | A provenance edge: the action carried a value that untrusted content introduced earlier in the same session |
 
 ## What this alert asserts
 
@@ -45,10 +45,18 @@ spend time on an alert:
   agents' tool results is what a company wiki looks like. This detector's false-positive rate is
   expected to be high, which is why 100281 is level 10 and not 12, and why the scalar tripwire
   exists only because it is nearly free.
-- **Rule 100283 is inert.** A provenance edge is ambitd's own statement that an action derived
-  from untrusted content it ingested earlier — the signal this tripwire approximates. The
-  provenance engine lands in M2, so nothing sets `prov_edge_count` yet and the rule is marked
-  `ambit_pending_emitter`.
+- **Rule 100283 is live, and is evidence, not proof.** A provenance edge is ambitd's own
+  statement that an action carried a value which also appeared in untrusted content it ingested
+  earlier in the same session — the signal this tripwire approximates. It cannot say the value
+  was *copied* from there: the user may have supplied it too (a value the user typed in a
+  prompt is excluded, but one typed after the ingest is not), and the model may have
+  reconstructed it. A paraphrase defeats it entirely, so a quiet 100283 means little.
+  `prov_edge_confidence` ranks the match: 0.95 a full URL or a checksum-valid IBAN
+  (`prov_edge_class` = `iban`: an account number from the earlier content appears in this action,
+  which is either a payment to it or the account itself being sent somewhere), 0.90 an email or
+  opaque token, 0.80 a bare domain, 0.40 a domain the operator trusts for content. Only the strongest edge and the
+  count cross; the edges and the ingest event they point at are in the local spool, resolvable
+  on request via `prov_edge_from`.
 
 ## Triage
 

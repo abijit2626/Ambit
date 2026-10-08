@@ -6,6 +6,9 @@ bin/
 # verify the rules against. The *.jsonl rule above exists to keep event sinks and spools
 # out of the repository, and it silently swallowed these until CI was added.
 !deploy/**/*.jsonl
+# The replay corpus is committed for the same reason: internal/replay's TestCorpus reads it,
+# so ignoring it would make `go test ./...` fail on a fresh clone with "no scenarios found".
+!testdata/**/*.jsonl
 fingerprint.key
 *.key
 !deploy/**/*.key

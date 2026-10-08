@@ -203,12 +203,14 @@ real server. It sees `tools/list` responses, call arguments, and results. Its jo
 server per `.mcp.json` entry, hashes each tool's name, description and input schema
 against an approved baseline (`internal/baseline`), scans the advertised text
 (`internal/toolscan`), and emits `mcp_list` events through `ambitd`. Job 3 — recording
-results as provenance ingest — lands with M2's provenance engine rather than here. The
-reason is double counting: the hook path already carries every MCP call and its result
-with `tool_mcp_server` and `tool_mcp_tool` populated, and the ingest set, the taint
-labels and the edges those results would attach to are M2 structures that do not exist
-yet. Emitting a second copy of each call now would inflate the M0 baseline and give a
-reviewer two records of one action. What the interposer does supply in the meantime is
+results as provenance ingest — is done on the hook path, by `internal/prov`, and
+deliberately not by the interposer. The reason is double counting: the hook path already
+carries every MCP call and its result with `tool_mcp_server` and `tool_mcp_tool`
+populated, and a result from a server the operator has not classified as `internal` sets
+Rule-of-Two bit A, which is the predicate that decides whether a result registers. The
+server's trust label therefore reaches the ingest set as a `mcp:<server>` taint label on
+the first event that introduces it. Emitting a second copy of each result from the wire
+would give a reviewer two records of one action. What the interposer supplies instead is
 a per-server count of the calls it observed, which corroborates its own stream against
 the hook stream the way D7's OTel check corroborates the other two.
 

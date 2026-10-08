@@ -192,6 +192,12 @@ func run() error {
 		"stream_discrepant", ot.Discrepant,
 		"interpose_reports", st.InterposeReports,
 		"interpose_events", st.InterposeEvents,
+		"prov_ingests", st.Provenance.Ingests,
+		"prov_registered", st.Provenance.Registered,
+		"prov_edge_events", st.Provenance.EdgeEvents,
+		// Non-zero means some session's fingerprint set was incomplete.
+		"prov_truncated", st.Provenance.Truncated,
+		"prov_evicted", st.Provenance.Evicted,
 	)
 	return err
 }
