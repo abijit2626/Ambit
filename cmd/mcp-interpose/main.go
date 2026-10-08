@@ -165,6 +165,14 @@ func run() (int, error) {
 		return 1, fmt.Errorf("stdout pipe: %w", err)
 	}
 
+	// On Windows, put this process in a job object that kills whatever is still in it
+	// when we go. The wrapped server is often `npx` or a .cmd shim with the real server
+	// as a grandchild, and an MCP host stops a stdio server with TerminateProcess,
+	// which runs none of our code: without this the grandchildren outlive us.
+	if err := killChildrenOnExit(); err != nil {
+		log.Debug("could not tie the wrapped server's lifetime to ours", "err", err)
+	}
+
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("start %s: %w", args[0], err)
 	}
@@ -175,11 +183,25 @@ func run() (int, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Forward a signal to the wrapped server rather than dying and orphaning it.
+	//
+	// ctx is also cancelled by the deferred stop() when run returns, which is after
+	// the server has exited and been reaped. By then the process is gone, and on
+	// Windows terminate works by PID, which the system may have given to an unrelated
+	// process. exited is closed as soon as Wait returns, and a cancellation that
+	// arrives after it is not a signal.
+	exited := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		if cmd.Process != nil {
-			terminate(cmd.Process)
+		select {
+		case <-ctx.Done():
+		case <-exited:
+			return
 		}
+		select {
+		case <-exited:
+			return
+		default:
+		}
+		terminate(cmd.Process)
 	}()
 
 	proxy := &interpose.Proxy{
@@ -196,6 +218,7 @@ func run() (int, error) {
 	proxyErr := proxy.Run(ctx)
 
 	waitErr := cmd.Wait()
+	close(exited)
 
 	closeCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	analyzer.Close(closeCtx)
