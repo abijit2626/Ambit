@@ -128,11 +128,13 @@ already changing behavior.
 cmd/ambitd/              the endpoint daemon
 cmd/mcp-interpose/       the MCP interposer: one per server, in front of it
 cmd/ambit-replay/        replays trajectories through the real collector and measures it
+cmd/agentdojo-convert/   turns AgentDojo run logs into replay trajectories
 internal/event/          rich internal schema + flattened SIEM-bound schema
 internal/classify/       path zone and bash command classification
 internal/r2/             Rule-of-Two bit classification (shadow mode; see docs/03-detection.md)
 internal/prov/           provenance engine: per-session untrusted-ingest fingerprints, edges (alert-only)
 internal/replay/         trajectory format, runner, precision/recall/saturation report
+internal/agentdojo/      AgentDojo run-log mapping and the ground truth it can stand behind
 internal/features/       keyed fingerprint extraction
 internal/redact/         secret detection and stripping at the edge
 internal/filter/         what crosses to Wazuh
@@ -204,8 +206,30 @@ the same corpus as a regression suite.
 nothing else**, and say nothing about precision on real traffic: it was written alongside the
 engine, by the same author, so it tests what that author thought of. It exists to pin behavior, include attacks adapted to defeat the engine
 (a paraphrased destination, a poisoned instruction file, a secret the redactor strips), and
-to be the thing a real adapter for AgentDojo, SHADE-Arena or ControlArena plugs into. No such
-adapter exists yet.
+to be the thing a real adapter for AgentDojo, SHADE-Arena or ControlArena plugs into.
+
+### Measuring against AgentDojo
+
+`agentdojo-convert` turns AgentDojo run logs into trajectories, and
+`scripts/agentdojo-measure.sh` fetches the logs AgentDojo publishes for real models, converts
+and replays them:
+
+```sh
+./scripts/agentdojo-measure.sh claude-3-7-sonnet-20250219          # one model, every suite
+./scripts/agentdojo-measure.sh gpt-4o-2024-05-13/banking -v        # one suite, every scenario
+AGENTDOJO_REF=089ed468 ./scripts/agentdojo-measure.sh ...          # pin upstream for a reproducible number
+```
+
+Each suite becomes an MCP server nobody has classified, so every tool result goes through
+the untrusted-ingest path a deployment would use. AgentDojo labels runs, not calls, so the
+adapter claims only what it can stand behind: a run whose injected attack succeeded is
+hostile, a run with no injection is benign (and so is every call in it), and every other
+injected run is left unlabeled. That covers failed attacks, DoS attacks, and errored runs,
+which AgentDojo scores `security: true`. Attack runs mark their calls unlabeled, because
+the only per-call label the log allows, "the arguments contain injected text", is the
+signal the engine computes itself. [docs/03-detection.md](docs/03-detection.md#validating-the-detectors)
+has the first results. They are the first numbers here not written by the engine's author,
+and they are not flattering. SHADE-Arena and ControlArena have no adapter yet.
 
 ### Windows
 
@@ -314,7 +338,7 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 | --- | --- | --- |
 | **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Not yet deployed to a cohort. |
 | **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policy. | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. |
-| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`): it records bits, with no gate, no alert and no change to session behavior. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`) with a hand-written starter corpus; shadow verdicts are not built, and edge precision is still unmeasured on real traffic. |
+| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`): it records bits, with no gate, no alert and no change to session behavior. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`), with a hand-written starter corpus and an AgentDojo adapter measured against published runs of real models (docs/03). Shadow verdicts are not built, and precision on a real developer cohort is still unmeasured. |
 | **M3 Enforce** | Policy engine, signed policy bundles, split fail policy, containment-only active response. | Design only. |
 | **M4 Goal drift** | Async scoring of actions against the stated objective. | Design only. |
 | **M5 Fleet correlation** | Cross-session fingerprint set intersection; session-shape analysis. | Design only. |
@@ -365,9 +389,10 @@ team executes a runbook against a sample alert.
   user, or passed in the same call) is excluded, which trades some recall for precision.
   Instruction files taint the session but contribute no fingerprints, because the hook carries
   a path and no content. The set is bounded; `prov_truncated` and `prov_evicted` in the
-  shutdown log say when it was incomplete. Precision is unmeasured on real traffic: the replay
-  harness exists, but its starter corpus is hand-written and no public-corpus adapter has been
-  built. See [docs/03-detection.md](docs/03-detection.md#layer-2--provenance).
+  shutdown log say when it was incomplete. Measured against AgentDojo's published runs, the
+  edge cannot tell an agent legitimately carrying a value between tools from an injected one
+  (a fifth of benign Claude 3.7 runs draw an edge), and it misses account numbers and short
+  values entirely (no Claude 3.7 banking attack was caught). See [docs/03-detection.md](docs/03-detection.md#layer-2--provenance).
 - **Rule-of-Two session scoping is unresolved.** Bits are monotonic per session. A
   session that runs long saturates to all three, and `/clear` is reported to start a new
   session id, which would reset bits B and C that should not reset. Shadow mode exists

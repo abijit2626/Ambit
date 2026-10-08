@@ -1,6 +1,7 @@
 BIN     := ambitd
 BIN2    := mcp-interpose
 BIN3    := ambit-replay
+BIN4    := agentdojo-convert
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
@@ -16,6 +17,7 @@ build:
 	go build $(LDFLAGS) -o bin/$(BIN)$(EXE) ./cmd/ambitd
 	go build $(LDFLAGS) -o bin/$(BIN2)$(EXE) ./cmd/mcp-interpose
 	go build $(LDFLAGS) -o bin/$(BIN3)$(EXE) ./cmd/ambit-replay
+	go build $(LDFLAGS) -o bin/$(BIN4)$(EXE) ./cmd/agentdojo-convert
 
 test:
 	go test ./...
