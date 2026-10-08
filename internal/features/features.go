@@ -166,8 +166,10 @@ func (e *Extractor) Extract(text string) *event.Features {
 		ips[m] = true
 	}
 	for _, m := range reToken.FindAllString(text, -1) {
-		if shannonBits(m) >= MinEntropyBits {
-			hi[m] = true
+		for _, tok := range tokenVariants(m) {
+			if shannonBits(tok) >= MinEntropyBits {
+				hi[tok] = true
+			}
 		}
 	}
 
@@ -214,6 +216,28 @@ func (e *Extractor) digestSet(in map[string]bool) []string {
 	}
 	// Sorted so events are byte-stable and NotableFingerprint is deterministic.
 	sort.Strings(out)
+	return out
+}
+
+// tokenVariants returns the candidates a matched run yields: the run itself, and each
+// '='-separated segment long enough to qualify on its own.
+//
+// reToken's class includes '=' so that base64 padding stays attached, but '=' is also
+// how a value is glued to its key: SERVICE_KEY=<token> in a config file, --token=<token>
+// on a command line. Left whole, that run digests differently from the bare token the
+// ingested page carried, and the provenance intersection misses the most common way a
+// credential actually travels. The whole run is kept as well, so a token that really does
+// contain '=' still matches itself.
+func tokenVariants(run string) []string {
+	if !strings.Contains(run, "=") {
+		return []string{run}
+	}
+	out := []string{run}
+	for _, part := range strings.Split(run, "=") {
+		if part != run && len(part) >= MinEntropyTokenLen {
+			out = append(out, part)
+		}
+	}
 	return out
 }
 
