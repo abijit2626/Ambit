@@ -211,6 +211,16 @@ func (c *Collector) Handle(p *hook.Payload) {
 	}
 
 	c.emit(e)
+
+	// The session is over, so its state goes. Forget documents itself as called on
+	// SessionEnd, and nothing called it: every session an ambitd process ever saw
+	// stayed in memory until the process restarted, which the provenance
+	// fingerprint set (up to 8192 entries per session) turns from a rounding error
+	// into real growth. After emit, not before, so the SessionEnd event itself still
+	// carries the session's final Rule-of-Two state.
+	if p.HookEventName == hook.EvSessionEnd {
+		c.Forget(p.SessionID)
+	}
 }
 
 // emit writes one event to both sinks: the spool gets everything in the rich

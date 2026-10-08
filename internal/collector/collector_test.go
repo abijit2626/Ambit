@@ -705,3 +705,47 @@ func TestR2NewSessionIDStartsClean(t *testing.T) {
 		t.Error("a different session_id must not inherit another session's bits")
 	}
 }
+
+// The daemon is long-lived. A session that ended must not stay in memory until the
+// process restarts, and its Rule-of-Two bits and provenance set must not outlive it.
+func TestSessionEndDropsSessionStateAndStillReportsItsFinalBits(t *testing.T) {
+	c, _, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_ed25519"},
+	})
+	if c.Stats().Sessions != 1 {
+		t.Fatalf("Sessions = %d, want 1", c.Stats().Sessions)
+	}
+
+	c.Handle(&hook.Payload{HookEventName: hook.EvSessionEnd, SessionID: "s1", EndReason: "clear"})
+	if c.Stats().Sessions != 0 {
+		t.Errorf("Sessions = %d after SessionEnd, want 0: the daemon would grow without bound", c.Stats().Sessions)
+	}
+
+	// The SessionEnd event was emitted before the state went, so it still reports the
+	// bit the credential read set.
+	var end struct {
+		R2 struct {
+			B bool `json:"b"`
+		} `json:"r2"`
+	}
+	traj.mu.Lock()
+	raw := traj.lines[len(traj.lines)-1]
+	traj.mu.Unlock()
+	if err := json.Unmarshal(raw, &end); err != nil {
+		t.Fatal(err)
+	}
+	if !end.R2.B {
+		t.Error("the SessionEnd event lost the session's final Rule-of-Two state")
+	}
+
+	// A later event under the same id starts clean.
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/src/myrepo/main.go"},
+	})
+	if got := last(t, traj); got.R2.B {
+		t.Error("Rule-of-Two bit B survived SessionEnd")
+	}
+}
