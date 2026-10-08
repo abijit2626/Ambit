@@ -641,8 +641,31 @@ of time when three public ones exist:
 - **ControlArena** (UK AISI with Redwood Research) — control protocols, settings,
   model organisms.
 
-Use as the regression suite: replay trajectories through `ambitd`, measure detection
-and false-positive rate per detector. Wazuh rules get their own test path —
+**Implementation status.** The replay half is built: `cmd/ambit-replay` (`internal/replay`)
+feeds trajectories to the real collector in-process and reports precision, recall, a
+confidence-floor sweep and Rule-of-Two saturation depth; the README documents the format.
+It measures the provenance engine and R2 accounting. It does not yet measure the Wazuh rules
+(those have their own fixture path below) or goal drift (M4). What does not exist is the
+public corpora themselves: `testdata/replay` holds 18 scenarios written alongside the engine,
+by the same author, which is exactly the bias NIST's finding below warns about, so its numbers pin
+behavior and must not be read as a detection rate. An adapter from AgentDojo, SHADE-Arena or
+ControlArena trajectories to hook payloads is the missing piece.
+
+What the first runs found, recorded because they are the reason a harness is worth having:
+
+- **A real recall bug**, now fixed. A credential glued to its key (`SERVICE_KEY=<token>`,
+  `--token=<token>`) tokenized as one run, so it never matched the bare token an ingested page
+  carried. The extractor now also fingerprints each `=`-separated segment.
+- **A by-design miss, now recorded.** The redactor strips the value of any `…token=<value>`
+  before feature extraction, so a planted secret used that way draws no edge and sets bit B
+  instead. Redaction takes precedence over provenance.
+- **Confidence does not separate the false positives in the starter corpus.** The benign
+  carry-through cases (following a documentation link, putting an article's URL in a summary)
+  are full-URL matches at 0.95, so raising the floor removes recall and keeps them. The edge
+  cannot be the page condition alone; this is the empirical case for the composite below.
+
+Use the public corpora as the regression suite: replay trajectories through `ambitd`, measure
+detection and false-positive rate per detector. Wazuh rules get their own test path —
 `wazuh-logtest` takes a log line and reports which decoder and rule matched, so rule
 correctness is testable from a fixture file of `events.jsonl` lines without a live
 fleet.

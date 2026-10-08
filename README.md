@@ -127,10 +127,12 @@ already changing behavior.
 ```
 cmd/ambitd/              the endpoint daemon
 cmd/mcp-interpose/       the MCP interposer: one per server, in front of it
+cmd/ambit-replay/        replays trajectories through the real collector and measures it
 internal/event/          rich internal schema + flattened SIEM-bound schema
 internal/classify/       path zone and bash command classification
 internal/r2/             Rule-of-Two bit classification (shadow mode; see docs/03-detection.md)
 internal/prov/           provenance engine: per-session untrusted-ingest fingerprints, edges (alert-only)
+internal/replay/         trajectory format, runner, precision/recall/saturation report
 internal/features/       keyed fingerprint extraction
 internal/redact/         secret detection and stripping at the edge
 internal/filter/         what crosses to Wazuh
@@ -149,6 +151,7 @@ deploy/wazuh/            localfile, syscheck, SCA policy (Unix and Windows), log
 deploy/wazuh/rules/      all twelve detectors, six files, validated by go test
 deploy/wazuh/runbooks/   one per detector, for an analyst with no access to our source
 deploy/claude-code/      managed-settings bundle (M0: observation only)
+testdata/replay/         starter trajectory corpus: attacks, adapted attacks, benign sessions
 ```
 
 ```sh
@@ -159,7 +162,50 @@ make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
 make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
+make replay   # replay testdata/replay through the collector; precision, recall, R2 saturation
 ```
+
+### Replay harness
+
+`ambit-replay` feeds trajectories to a fresh in-process collector and reports what the
+provenance engine and Rule-of-Two accounting do with them. It never touches a running
+`ambitd`, the spool, the Wazuh sink or the production fingerprint key, so replaying an
+attack cannot raise an incident. A trajectory is a JSON-lines file of hook payloads, the
+same JSON Claude Code posts, optionally wrapped with ground truth and assertions:
+
+```jsonc
+{"scenario": {"name": "exfil-url", "config": {"trusted_content_domains": ["example.com"]}}}
+{"hook_event_name": "UserPromptSubmit", "session_id": "s1", "user_input": "fix the billing test"}
+{"payload": {"hook_event_name": "PostToolUse", "session_id": "s1", "tool_name": "WebFetch", ...},
+ "expect": {"r2": "A", "taint": "web:"}}
+{"payload": {"hook_event_name": "PreToolUse", "session_id": "s1", "tool_name": "Bash", ...},
+ "hostile": true, "expect": {"edge": true, "edge_class": "url", "edge_from": 3}}
+```
+
+`hostile` is ground truth about the *action*: would an analyst want it paged. It is not
+"this came from untrusted input", because docs/03 names an agent summarizing a page and
+carrying its URLs across as a false positive, and following a link is the same mechanism. An unannotated `PreToolUse` is benign,
+so a corpus of ordinary sessions needs no annotation. `expect` describes what the pipeline
+does today, known misses and false positives included, so a change in either direction
+fails until someone looks. Unknown keys in a header, step or assertion are errors: a
+misspelled assertion that asserts nothing is the failure a regression suite exists to stop.
+
+```sh
+make replay                                   # the corpus, human-readable
+./bin/ambit-replay -json testdata/replay      # byte-stable report, diffable across commits
+./bin/ambit-replay -min-confidence 0.9 ...    # count an edge only at or above a floor
+./bin/ambit-replay -min-recall 0.6 -max-fpr 0.25 ...   # exit 2 if the run misses a gate
+```
+
+A gate on a metric the corpus cannot compute fails rather than passes. `go test ./...` runs
+the same corpus as a regression suite.
+
+**The starter corpus is 18 hand-written scenarios. Its numbers describe those scenarios and
+nothing else**, and say nothing about precision on real traffic: it was written alongside the
+engine, by the same author, so it tests what that author thought of. It exists to pin behavior, include attacks adapted to defeat the engine
+(a paraphrased destination, a poisoned instruction file, a secret the redactor strips), and
+to be the thing a real adapter for AgentDojo, SHADE-Arena or ControlArena plugs into. No such
+adapter exists yet.
 
 ### Windows
 
@@ -268,7 +314,7 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 | --- | --- | --- |
 | **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Not yet deployed to a cohort. |
 | **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policy. | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. |
-| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`): it records bits, with no gate, no alert and no change to session behavior. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. Shadow verdicts and the replay harness are not built, so edge precision is unmeasured on real traffic. |
+| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`): it records bits, with no gate, no alert and no change to session behavior. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`) with a hand-written starter corpus; shadow verdicts are not built, and edge precision is still unmeasured on real traffic. |
 | **M3 Enforce** | Policy engine, signed policy bundles, split fail policy, containment-only active response. | Design only. |
 | **M4 Goal drift** | Async scoring of actions against the stated objective. | Design only. |
 | **M5 Fleet correlation** | Cross-session fingerprint set intersection; session-shape analysis. | Design only. |
@@ -319,8 +365,9 @@ team executes a runbook against a sample alert.
   user, or passed in the same call) is excluded, which trades some recall for precision.
   Instruction files taint the session but contribute no fingerprints, because the hook carries
   a path and no content. The set is bounded; `prov_truncated` and `prov_evicted` in the
-  shutdown log say when it was incomplete. Precision is unmeasured until the replay harness
-  exists. See [docs/03-detection.md](docs/03-detection.md#layer-2--provenance).
+  shutdown log say when it was incomplete. Precision is unmeasured on real traffic: the replay
+  harness exists, but its starter corpus is hand-written and no public-corpus adapter has been
+  built. See [docs/03-detection.md](docs/03-detection.md#layer-2--provenance).
 - **Rule-of-Two session scoping is unresolved.** Bits are monotonic per session. A
   session that runs long saturates to all three, and `/clear` is reported to start a new
   session id, which would reset bits B and C that should not reset. Shadow mode exists
