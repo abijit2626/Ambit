@@ -536,8 +536,10 @@ the blast radius of our own outage survivable.
 
 ## Tamper resistance, honestly
 
-`ambitd` runs as the user on a machine adversary A1 fully controls. It can be
-killed. The mitigations are not "make it unkillable":
+`ambitd` runs as a system service (root or SYSTEM; `scripts/install-system.sh`), so a
+developer without admin rights cannot stop it, and it is restarted when it exits. But
+adversary A1 fully controls the machine, and a developer with admin rights can still
+kill or remove it. The mitigations are not "make it unkillable":
 
 1. **Policy above the attacker's reach.** Managed settings cannot be overridden by
    CLI args, project settings, or user settings. The sandbox, the egress allowlist,
