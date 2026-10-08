@@ -154,3 +154,67 @@ func TestLoadOrCreateFingerprintKeyRejectsShortKey(t *testing.T) {
 		t.Error("a short key must be rejected rather than silently weakening every digest")
 	}
 }
+
+// The events sink goes to the SIEM and the spool never leaves the machine, so the two
+// must never be the same file, however the path is spelled.
+func TestValidateRejectsAliasedSinkAndSpool(t *testing.T) {
+	old := caseInsensitiveFS
+	defer func() { caseInsensitiveFS = old }()
+
+	dir := t.TempDir()
+	real := filepath.Join(dir, "events.jsonl")
+	if err := os.WriteFile(real, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.jsonl")
+	hasLink := os.Symlink(real, link) == nil
+
+	cases := []struct {
+		name          string
+		events, spool string
+		fold          bool
+		wantErr       bool
+	}{
+		{"identical", real, real, false, true},
+		{"redundant separators and dot segments", real, filepath.Join(dir, ".", "sub", "..", "events.jsonl"), false, true},
+		{"different case on a case-insensitive file system", filepath.Join(dir, "Events.jsonl"), filepath.Join(dir, "EVENTS.JSONL"), true, true},
+		{"different case on a case-sensitive file system", filepath.Join(dir, "a.jsonl"), filepath.Join(dir, "A.jsonl"), false, false},
+		{"distinct files", real, filepath.Join(dir, "trajectory.jsonl"), true, false},
+	}
+	if hasLink {
+		cases = append(cases, struct {
+			name          string
+			events, spool string
+			fold          bool
+			wantErr       bool
+		}{"a symlink to the sink", real, link, false, true})
+	}
+	for _, c := range cases {
+		caseInsensitiveFS = c.fold
+		cfg := Default()
+		cfg.EventsPath, cfg.TrajectoryPath = c.events, c.spool
+		cfg.derive()
+		err := cfg.Validate()
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: Validate() = %v, wantErr %v", c.name, err, c.wantErr)
+		}
+	}
+}
+
+// mcp-interpose runs as the developer, so on Windows its default baseline store is in the
+// developer's profile and not in the machine-wide directory that ambitd made private.
+func TestDefaultBaselineDir(t *testing.T) {
+	home := func() (string, error) { return filepath.Join("home", "dev"), nil }
+	if got, want := defaultBaselineDir("windows", home), filepath.Join("home", "dev", ".ambit", "baselines"); got != want {
+		t.Errorf("windows default = %q, want %q", got, want)
+	}
+	noHome := func() (string, error) { return "", errors.New("no home") }
+	if got, want := defaultBaselineDir("windows", noHome), defaultPath("baselines"); got != want {
+		t.Errorf("windows without a home directory = %q, want the machine-wide default %q", got, want)
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		if got := defaultBaselineDir(goos, home); got != defaultPath("baselines") {
+			t.Errorf("%s default = %q, want the data directory's baselines", goos, got)
+		}
+	}
+}
