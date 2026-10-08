@@ -20,7 +20,7 @@
     100280-100299  ambit_provenance_rules.xml  D10 (80-89), D8 (90-99)
     100300-100309  ambit_egress_rules.xml      D9
     100310-100319  ambit_telemetry_rules.xml   D7
-    100320-100329  reserved: R2 gate alerts (M3)
+    100320-100329  ambit_gate_rules.xml        R2 gate shadow verdicts (M2; enforced verdicts are M3)
     100330-100339  reserved: goal-drift scoring (M4)
 
   rules_test.go holds the enforced copy of this map, so a rule outside its file's range

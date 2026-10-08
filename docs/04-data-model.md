@@ -94,7 +94,8 @@ spools.
 
   "r2": { "a": true, "b": true, "c": false, "set_by": "01JD..." },
   "policy": { "decision": "deny", "reason": "...", "rule_ids": [...],
-              "bundle_version": "...", "latency_us": 1840 },
+              "bundle_version": "r2-gate.v1", "latency_us": 4, "shadow": true,
+              "alternatives": [ { "scoping": "turn", "decision": "", "rule_id": "" } ] },
   "scores": { "goal_drift": null, "drift_scorer_v": null }
 }
 ```
@@ -166,9 +167,10 @@ Snake_case, scalar values only, no arrays of objects, no nesting beyond what a
   "r2_c": false,
 
   "policy_decision": "deny",
-  "policy_reason": "R2-third-bit: egress after untrusted ingest and secret read",
-  "policy_rule_id": "r2.egress.deny",
-  "policy_bundle_version": "2026-09-20.3",
+  "policy_reason": "outbound network from Bash after untrusted input and sensitive data",
+  "policy_rule_id": "r2.egress_after_ab",
+  "policy_bundle_version": "r2-gate.v1",
+  "policy_shadow": true,
 
   "goal_drift_score": null
 }
@@ -210,6 +212,7 @@ SIEM.
 | `r2.{a,b,c}` | `r2_a`, `r2_b`, `r2_c` | prefix-collapse | `set_by` dropped |
 | `policy.rule_ids[]` | `policy_rule_id` | first / highest-precedence rule | Additional rule IDs lost; the deciding rule is the one that matters for triage |
 | `policy.latency_us` | **not emitted** | — | Operational metric, not security signal; stays local |
+| `policy.alternatives[]` | **not emitted** | — | The gate's verdict under other session scopings (per-turn today), kept local for choosing the scoping; the SIEM carries the verdict that would apply |
 
 **The recurring loss is "array of objects → the one that matters most, plus a
 count."** That is an acceptable trade for a SIEM-bound event and an unacceptable one

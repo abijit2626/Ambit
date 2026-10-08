@@ -72,6 +72,7 @@ var allocated = map[string][][2]int{
 	"ambit_provenance_rules.xml": {{100280, 100299}}, // D10, D8
 	"ambit_egress_rules.xml":     {{100300, 100309}}, // D9
 	"ambit_telemetry_rules.xml":  {{100310, 100319}}, // D7
+	"ambit_gate_rules.xml":       {{100320, 100329}}, // R2 gate (shadow verdicts)
 }
 
 // externalParents are rule IDs owned by Wazuh's shipped ruleset, not by us: syscheck FIM
@@ -302,7 +303,9 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 		byID[r.ID] = r
 	}
 
-	runbookRE := regexp.MustCompile(`runbook_D\d+`)
+	// runbook_D<n> for the detectors, runbook_R2 for the Rule-of-Two gate: any named
+	// runbook, which TestEveryReferencedRunbookExists then requires to exist.
+	runbookRE := regexp.MustCompile(`runbook_[A-Za-z]+\d+`)
 	for _, r := range rules {
 		name := fmt.Sprintf("rule_%d", r.ID)
 		t.Run(name, func(t *testing.T) {
@@ -316,7 +319,7 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 			// neither a runbook nor a technique; everything that alerts needs both.
 			if r.Level > 0 {
 				if !runbookRE.MatchString(r.Groups) {
-					t.Errorf("groups %q name no runbook; every alerting rule carries runbook_Dn per docs/03-detection.md", r.Groups)
+					t.Errorf("groups %q name no runbook; every alerting rule carries a runbook group (runbook_Dn, runbook_R2) per docs/03-detection.md", r.Groups)
 				}
 				if len(r.Mitre.IDs) == 0 {
 					t.Error("no MITRE technique: external firms expect a technique id on every alert")
@@ -603,7 +606,9 @@ func TestFixturesCarryNoCleartextSecrets(t *testing.T) {
 }
 
 func TestEveryReferencedRunbookExists(t *testing.T) {
-	runbookRE := regexp.MustCompile(`runbook_(D\d+)`)
+	// Every runbook_* group, not only the D-numbered detectors: a rule naming a runbook
+	// this pattern did not recognise would pass with no runbook behind it.
+	runbookRE := regexp.MustCompile(`runbook_([A-Za-z]+\d+)`)
 	wanted := map[string]int{}
 	for _, r := range loadRules(t) {
 		for _, m := range runbookRE.FindAllStringSubmatch(r.Groups, -1) {
@@ -829,6 +834,22 @@ func TestRulesStayQuietWhereTheyShould(t *testing.T) {
 			why: "most outbound commands derive from nothing the session ingested; paging on them would make the rule noise",
 		},
 		{
+			name: "the composite gate rule does not fire on a would-be block with no edge",
+			rule: 100323,
+			pick: func(ev map[string]any) bool {
+				return ev["policy_decision"] == "deny" && ev["prov_edge_count"] == nil
+			},
+			why: "the page condition is the block AND the edge; a deny alone is level 8, not 13",
+		},
+		{
+			name: "the gate's deny rule does not fire on an ordinary tool call",
+			rule: 100320,
+			pick: func(ev map[string]any) bool {
+				return ev["kind"] == "tool_pre" && ev["policy_decision"] == nil
+			},
+			why: "a tool call the gate had no opinion on is the overwhelming majority of the stream",
+		},
+		{
 			name: "D6's system-zone rule does not fire on a home-zone config change",
 			rule: 100253,
 			pick: func(ev map[string]any) bool {
@@ -913,6 +934,43 @@ func TestProvenanceEdgeRuleHasARealEmitter(t *testing.T) {
 	if generated == 0 {
 		t.Errorf("rule 100283 matches no generated fixture (%d synthetic): ambitd is not producing provenance edges, "+
 			"or the fixtures are stale; run `make fixtures`", synthetic)
+	}
+}
+
+// TestGateRulesHaveARealEmitter requires each R2 gate rule to match a line the pipeline
+// generated, not only the hand-written reference line: the synthetic line proves the syntax,
+// and only a generated one proves ambitd produces what the rule reads.
+func TestGateRulesHaveARealEmitter(t *testing.T) {
+	rules := loadRules(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+	fixtures := loadFixtures(t)
+	for _, id := range []int{100320, 100321, 100322, 100323} {
+		r, ok := byID[id]
+		if !ok {
+			t.Fatalf("rule %d not found", id)
+		}
+		generated := 0
+		for i, ev := range fixtures {
+			if isSynthetic(ev) {
+				continue
+			}
+			got, err := matches(r, ev, byID)
+			if err != nil {
+				t.Fatalf("rule %d, fixture %d: %v", id, i+1, err)
+			}
+			if got {
+				generated++
+				if ev["policy_shadow"] != true {
+					t.Errorf("rule %d matched fixture %d with policy_shadow %v; every gate verdict is shadow in M2", id, i+1, ev["policy_shadow"])
+				}
+			}
+		}
+		if generated == 0 {
+			t.Errorf("rule %d matches no generated fixture; the gate is not emitting what it reads, or the fixtures are stale (`make fixtures`)", id)
+		}
 	}
 }
 
