@@ -155,6 +155,7 @@ deploy/wazuh/            localfile, syscheck, SCA policy (Unix and Windows), log
 deploy/wazuh/rules/      all twelve detectors, six files, validated by go test
 deploy/wazuh/runbooks/   one per detector, for an analyst with no access to our source
 deploy/claude-code/      managed-settings bundle (M0: observation only)
+deploy/service/          ambitd as a system service: systemd unit, LaunchDaemon (Windows: a scheduled task)
 testdata/replay/         starter trajectory corpus: attacks, adapted attacks, benign sessions
 ```
 
@@ -165,6 +166,7 @@ make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
 ./scripts/runbook-rehearsal.sh -o <new dir>   # analyst packets and an answer key for the M1 runbook rehearsal
+sudo ./scripts/install-system.sh --binary bin/ambitd-linux-amd64   # ambitd as a system service, for a cohort
 make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 make replay   # replay testdata/replay through the collector; precision, recall, R2 saturation
@@ -389,8 +391,9 @@ team executes a runbook against a sample alert.
 - **Deploy the M0 SCA policy for a cohort, not the full one.** The full policy asserts
   enforcement keys (bypass mode, sandbox, egress allowlist) that the observation-only M0
   bundle deliberately omits, so deploying both makes D12 fire on every endpoint. The `_m0`
-  policy files assert only what the M0 bundle sets. Nothing supervises `ambitd` either: there
-  is no service unit, and that is still a blocker for a cohort. Both are in
+  policy files assert only what the M0 bundle sets. For a cohort, install `ambitd` as a
+  system service with `scripts/install-system.sh` or `.ps1`: from boot, restarted when it
+  exits. The installers are not yet run on a real macOS or Windows machine. Both are in
   [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,

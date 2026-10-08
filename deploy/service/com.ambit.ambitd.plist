@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd daemon for ambitd as a system service on macOS. Installed by
+  scripts/install-system.sh to /Library/LaunchDaemons/com.ambit.ambitd.plist.
+
+  A LaunchDaemon, not a LaunchAgent: it runs as root from boot, before anyone logs in,
+  and KeepAlive restarts it whenever it exits. The config file is optional; ambitd
+  applies its defaults when it is absent. Data goes to /usr/local/var/ambit, which
+  ambitd creates private to root. launchd does not rotate the log file.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ambit.ambitd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/ambitd</string>
+    <string>-config</string>
+    <string>/usr/local/etc/ambit/config.json</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/ambit/ambitd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/ambit/ambitd.log</string>
+</dict>
+</plist>
