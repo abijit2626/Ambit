@@ -423,6 +423,14 @@ team executes a runbook against a sample alert.
   (a fifth of benign Claude 3.7 runs draw an edge), and it misses short values entirely. It
   sees checksum-valid IBANs, but not account numbers that are not IBANs, which includes
   AgentDojo's attacker account (no Claude 3.7 banking attack was caught). See [docs/03-detection.md](docs/03-detection.md#layer-2--provenance).
+- **Sensitive-data edges are spool-only and match payloads by field name.** An acting call
+  carrying a value a sensitive read returned is recorded as `provenance.exfil`, with no
+  flattened field or rule yet. Only the call's payload is matched, not its addressing fields
+  (`recipient`, `to`, `url` and similar), because addressing a known contact was as common in
+  benign AgentDojo runs as in hostile ones. On GPT-4o banking it flags 136 of 553 successful
+  attacks on the attacker's own payment against 1 of 25 benign runs. A tool that names its
+  payload field like an address hides it, and a short value in a body (a security code)
+  matches no fingerprint class.
 - **Rule-of-Two session scoping is unresolved.** Bits are monotonic per session. A
   session that runs long saturates to all three, and `/clear` is reported to start a new
   session id, which would reset bits B and C that should not reset. Shadow mode exists
