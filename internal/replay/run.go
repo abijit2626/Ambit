@@ -58,6 +58,11 @@ type StepResult struct {
 	// R2 is the session's cumulative Rule-of-Two bits after the event, a subset of "ABC".
 	R2    string   `json:"r2"`
 	Taint []string `json:"taint,omitempty"`
+	// Decision and Rule are the gate's session-scoped shadow verdict; TurnDecision is the
+	// same action judged under per-prompt-turn scoping. Empty means no verdict.
+	Decision     event.Decision `json:"decision,omitempty"`
+	Rule         string         `json:"rule,omitempty"`
+	TurnDecision event.Decision `json:"turn_decision,omitempty"`
 	// Hostile is the step's ground truth, if annotated.
 	Hostile *bool `json:"hostile,omitempty"`
 	// Failures are assertions that did not hold.
@@ -185,6 +190,15 @@ func fillFromEvent(sr *StepResult, e *event.Event, stepOfEvent map[string]int, s
 	sr.Kind = e.Kind
 	sr.R2 = bits(e.R2)
 	sr.Taint = e.Provenance.Taint
+	sr.Decision = e.Policy.Decision
+	if len(e.Policy.RuleIDs) > 0 {
+		sr.Rule = e.Policy.RuleIDs[0]
+	}
+	for _, alt := range e.Policy.Alternatives {
+		if alt.Scoping == event.ScopingTurn {
+			sr.TurnDecision = alt.Decision
+		}
+	}
 	sr.Edges = len(e.Provenance.Edges)
 	if sr.Edges > 0 {
 		// The collector sorts strongest first, and the flattened event relies on that.
@@ -294,7 +308,25 @@ func check(st *Step, sr *StepResult) []string {
 			fail("expected a taint label with prefix %q, got %v", ex.Taint, sr.Taint)
 		}
 	}
+	if ex.Decision != "" && ex.Decision != decisionName(sr.Decision) {
+		fail("expected session verdict %q, got %q", ex.Decision, decisionName(sr.Decision))
+	}
+	if ex.Rule != "" && ex.Rule != sr.Rule {
+		fail("expected verdict rule %q, got %q", ex.Rule, sr.Rule)
+	}
+	if ex.TurnDecision != "" && ex.TurnDecision != decisionName(sr.TurnDecision) {
+		fail("expected turn verdict %q, got %q", ex.TurnDecision, decisionName(sr.TurnDecision))
+	}
 	return f
+}
+
+// decisionName spells the empty decision "none", so an assertion can say "nothing fired"
+// explicitly rather than by leaving the field out, which asserts nothing.
+func decisionName(d event.Decision) string {
+	if d == event.DecisionNone {
+		return "none"
+	}
+	return string(d)
 }
 
 // sortedKeys returns a map's keys in order, for stable output.

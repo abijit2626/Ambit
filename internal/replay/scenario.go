@@ -114,6 +114,12 @@ type Expect struct {
 	R2 *string `json:"r2"`
 	// Taint asserts that the event carries a taint label with this prefix.
 	Taint string `json:"taint"`
+	// Decision asserts the Rule-of-Two gate's session-scoped shadow verdict: "deny",
+	// "ask", "allow_alert", or "none" for no verdict. Rule asserts the rule id that fired.
+	Decision string `json:"decision"`
+	Rule     string `json:"rule"`
+	// TurnDecision asserts the verdict under per-prompt-turn scoping, same values.
+	TurnDecision string `json:"turn_decision"`
 }
 
 // Step is one hook event in a scenario.

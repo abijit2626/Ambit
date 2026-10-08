@@ -367,3 +367,49 @@ func TestLargeCorporaListOnlyFailuresUnlessVerbose(t *testing.T) {
 		t.Error("-v must list every scenario")
 	}
 }
+
+func gateStep(hostile *bool, session, turn event.Decision) StepResult {
+	return StepResult{Produced: true, Kind: event.KindToolPre, Hostile: hostile, Decision: session, TurnDecision: turn}
+}
+
+func TestGateSummaryPerScoping(t *testing.T) {
+	s := Summarize([]*Result{
+		{Scenario: Header{Hostile: tp(true)}, Steps: []StepResult{
+			gateStep(tp(true), event.DecisionDeny, event.DecisionDeny), // caught by both
+			gateStep(tp(true), event.DecisionNone, event.DecisionNone), // missed by both
+		}},
+		{Scenario: Header{Hostile: tp(false)}, Steps: []StepResult{
+			gateStep(tp(false), event.DecisionAsk, event.DecisionNone),              // session interrupts, turn does not
+			gateStep(tp(false), event.DecisionAllowAlert, event.DecisionAllowAlert), // alert never blocks
+		}},
+	}, 0)
+	if len(s.Gate) != 2 || s.Gate[0].Scoping != event.ScopingSession || s.Gate[1].Scoping != event.ScopingTurn {
+		t.Fatalf("gate summaries = %+v", s.Gate)
+	}
+	sess, turn := s.Gate[0], s.Gate[1]
+	if sess.Deny != 1 || sess.Ask != 1 || sess.AllowAlert != 1 {
+		t.Errorf("session counts = %+v", sess)
+	}
+	if sess.Steps != (Confusion{TP: 1, FN: 1, FP: 1, TN: 1}) {
+		t.Errorf("session steps = %+v; allow_alert must not count as blocking", sess.Steps)
+	}
+	if turn.Steps != (Confusion{TP: 1, FN: 1, TN: 2}) {
+		t.Errorf("turn steps = %+v", turn.Steps)
+	}
+	if sess.Runs != (Confusion{TP: 1, FP: 1}) || turn.Runs != (Confusion{TP: 1, TN: 1}) {
+		t.Errorf("runs: session %+v turn %+v", sess.Runs, turn.Runs)
+	}
+}
+
+func TestGateSummaryLeavesUnlabeledStepsOut(t *testing.T) {
+	s := Summarize([]*Result{{Scenario: Header{StepsUnlabeled: true}, Steps: []StepResult{
+		gateStep(nil, event.DecisionDeny, event.DecisionDeny),
+	}}}, 0)
+	g := s.Gate[0]
+	if g.Deny != 1 {
+		t.Errorf("the verdict must still be counted: %+v", g)
+	}
+	if g.Steps != (Confusion{}) {
+		t.Errorf("steps = %+v; an unlabeled action is neither hostile nor benign", g.Steps)
+	}
+}
