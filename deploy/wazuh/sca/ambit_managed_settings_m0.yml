@@ -1,0 +1,135 @@
+# M0. SCA policy for the observation-only managed-settings bundle: a SUBSET of
+# ambit_managed_settings.yml. This is detector D12 while nothing is enforced.
+#
+# WHY A SECOND FILE. deploy/claude-code/managed-settings.m0.json deliberately sets no
+# permission rules and no sandbox, because M0's exit criterion is zero developer-visible
+# behavior change. The full policy asserts exactly those keys:
+#
+#   10002  permissions.disableBypassPermissionsMode is "disable"
+#   10003  sandbox enabled, failIfUnavailable true, allowUnsandboxedCommands false
+#   10004  sandbox.network.allowManagedDomainsOnly is true
+#
+# Deploy the full policy against the M0 bundle and all three fail on every endpoint. Rule
+# 100270 (level 12) fires on any failing check of policy ambit_managed_settings, and 100271
+# (level 13) when it persists, so a cohort would be alerting from its first scan, and the one
+# D12 result the M1 exit criterion needs (a reverted key fires D12) would be lost in it.
+# This file keeps the five checks the M0 bundle satisfies and drops those three.
+#
+# DEPLOY EXACTLY ONE of the two files per agent. This one declares the SAME policy id and
+# the SAME check ids as the full policy, on purpose: the manager rules match
+# sca.policy_id ^ambit_managed_settings$ and sca.check.id, so they are shared and nothing
+# on the manager changes. Two files with one id on one agent is a conflict.
+#
+# SWITCH TO THE FULL POLICY when the enforcement keys ship in managed settings (M3, after the
+# shadow -> ask -> deny ladder in the README Roadmap). Until then 10002-10004 are not
+# failing; they are not asserted.
+#
+# Every check below is copied verbatim from ambit_managed_settings.yml, and
+# deploy/wazuh/sca_test.go fails if one drifts, and also evaluates each against the M0
+# bundle so a check this bundle cannot satisfy cannot be added here.
+#
+# HONEST LIMITATION, repeated from docs/02: SCA regex-matches file TEXT. It is not a
+# JSON-aware assertion. Treat this policy as a tripwire on a known-good file, not as a
+# parser.
+
+policy:
+  id: "ambit_managed_settings"
+  file: "ambit_managed_settings_m0.yml"
+  name: "ambit: Claude Code managed settings assertions (M0, observation only)"
+  description: "Asserts the observation-only managed-settings bundle and ambitd are present and correct. A subset of the full policy."
+  references:
+    - https://code.claude.com/docs/en/managed-settings
+    - https://code.claude.com/docs/en/sandboxing
+  regex_type: "pcre2"
+
+requirements:
+  title: "Claude Code is installed on this endpoint"
+  description: "Skip the whole policy where Claude Code is not deployed, so unrelated endpoints do not report a wall of failures. The rules must include evidence that does not depend on the managed-settings bundle, or deleting the bundle would make the policy not applicable and 10001 would never fail; a per-user install shows up as a .claude directory in a home directory."
+  condition: any
+  rules:
+    - 'd:/Library/Application Support/ClaudeCode'
+    - 'd:/etc/claude-code'
+    - 'c:sh -c "command -v claude; ls -d /home/*/.claude /Users/*/.claude /root/.claude 2>/dev/null" -> r:claude'
+
+checks:
+  - id: 10001
+    title: "Managed settings bundle is present"
+    description: "Managed settings sit at the highest precedence: no other level, including command-line arguments, overrides a managed permission rule."
+    rationale: "Without the bundle, every control below is unenforced and user or project settings decide policy."
+    remediation: "Redeploy the managed-settings bundle via MDM or server-managed settings."
+    compliance:
+      - ambit: ["anchor"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json'
+      - 'f:/etc/claude-code/managed-settings.json'
+
+  - id: 10005
+    title: "The PreToolUse hook points at ambitd on loopback"
+    description: "A managed PreToolUse hook must target 127.0.0.1, which is where ambitd listens."
+    rationale: "If the hook is absent, ambitd sees nothing and the event stream silently stops while the endpoint still heartbeats. If it points anywhere but loopback, tool-call decisions have left the machine."
+    remediation: "Restore the managed hooks block."
+    compliance:
+      - ambit: ["D7"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"url"\s*:\s*"http://127\.0\.0\.1:\d+/hook"'
+      - 'f:/etc/claude-code/managed-settings.json -> r:"url"\s*:\s*"http://127\.0\.0\.1:\d+/hook"'
+
+  - id: 10006
+    title: "OpenTelemetry destination is pinned to loopback on the OTLP/HTTP port"
+    description: "OTEL_EXPORTER_OTLP_ENDPOINT must point at 127.0.0.1:4318."
+    rationale: >
+      Set in managed settings, developer-set telemetry variables are removed, which
+      is what makes OTel a tamper-resistant second stream independent of the hook
+      path. The port matters: 4318 is OTLP/HTTP and 4317 is gRPC, and an endpoint
+      on the wrong port exports into nothing while still looking configured.
+    remediation: "Set the OTEL_* env block in managed settings with endpoint http://127.0.0.1:4318."
+    compliance:
+      - ambit: ["D7"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1:4318'
+      - 'f:/etc/claude-code/managed-settings.json -> r:OTEL_EXPORTER_OTLP_ENDPOINT.*127\.0\.0\.1:4318'
+
+  - id: 10008
+    title: "OTLP protocol is http/json"
+    description: "OTEL_EXPORTER_OTLP_PROTOCOL must be http/json."
+    rationale: >
+      ambitd's receiver decodes OTLP/JSON only. A grpc or http/protobuf setting
+      means Claude Code exports in an encoding ambitd cannot read, so the second
+      stream is silently absent. ambitd answers 415 and reports degraded health,
+      but this check catches the misconfiguration before it reaches an endpoint.
+    remediation: "Set OTEL_EXPORTER_OTLP_PROTOCOL to http/json in managed settings."
+    compliance:
+      - ambit: ["D7"]
+    condition: any
+    rules:
+      - 'f:/Library/Application Support/ClaudeCode/managed-settings.json -> r:"OTEL_EXPORTER_OTLP_PROTOCOL"\s*:\s*"http/json"'
+      - 'f:/etc/claude-code/managed-settings.json -> r:"OTEL_EXPORTER_OTLP_PROTOCOL"\s*:\s*"http/json"'
+
+  - id: 10007
+    title: "ambitd process is running"
+    description: "The endpoint daemon must be alive."
+    rationale: >
+      This check runs on the WAZUH AGENT's schedule, in a different process from
+      the one it is watching, which is the whole point when the adversary can kill
+      processes. It is deliberately weak on its own: p: confirms a process by name
+      and says nothing about whether it is functioning, so a wedged ambitd passes.
+      The companion signal is a stale ambitd_health heartbeat with this check
+      passing. See docs/03-detection.md on D7's two halves.
+
+      The daemon is named ambitd rather than agentd for this check's sake. Wazuh
+      ships its own wazuh-agentd process on every monitored endpoint, and the SCA
+      documentation does not state whether p: matches a process name exactly or by
+      substring. Under substring matching, 'p:agentd' would have matched
+      wazuh-agentd and passed on every endpoint running the Wazuh agent, including
+      ones where our daemon is dead - silently defeating this check. A distinct
+      name removes the ambiguity rather than relying on an unstated matching rule.
+    remediation: "Start the ambitd service and investigate why it stopped."
+    compliance:
+      - ambit: ["D7", "D11"]
+      - mitre_technique: ["T1562.001"]
+    condition: all
+    rules:
+      - 'p:ambitd'

@@ -13,19 +13,21 @@ for it.
 
 Each one will otherwise cost the cohort a week to discover.
 
-1. **The SCA policy contradicts the M0 bundle.** `sca/ambit_managed_settings.yml` asserts
-   `disableBypassPermissionsMode`, the sandbox keys and `allowManagedDomainsOnly`
-   (checks 10002, 10003, 10004). `deploy/claude-code/managed-settings.m0.json` contains none of
-   them, deliberately: M0 allows no behavior change. Rule 100270 (level 12) fires on any failing
-   check of this policy (given the unconfirmed SCA parent SID below), and 100271 (level 13) when it persists. Deploy both as they stand and
-   every cohort endpoint alerts three times per scan from day one, which buries the one D12
-   result the M1 criterion needs. The Windows policy has the same problem with check 10002.
+1. **Deploy the M0 SCA policy, not the full one.** `sca/ambit_managed_settings.yml` asserts
+   `disableBypassPermissionsMode`, the sandbox keys and `allowManagedDomainsOnly` (checks 10002,
+   10003, 10004). `deploy/claude-code/managed-settings.m0.json` contains none of them,
+   deliberately: M0 allows no behavior change. Rule 100270 (level 12) fires on any failing check
+   of the policy (given the unconfirmed SCA parent SID below), and 100271 (level 13) when it
+   persists, so the full policy against the M0 bundle alerts three times per scan on every
+   endpoint from day one. The Windows policy has the same problem with check 10002.
 
-   Decide before rollout: (a) ship an M0 policy that asserts only what the M0 bundle sets
-   (checks 10001, 10005, 10006, 10007, 10008), keeping the full policy for the enforcement
-   milestone; (b) deploy the enforcement keys, which breaks the zero-change criterion; or
-   (c) leave 10002–10004 out of the cohort's agent config. (a) is the recommendation. It is not
-   built yet.
+   The fix is in the repository: `sca/ambit_managed_settings_m0.yml` and
+   `sca/ambit_managed_settings_windows_m0.yml` keep the checks the M0 bundle satisfies (10001,
+   10005, 10006, 10007, 10008) and drop the rest. They share the policy id and check ids, so no
+   manager rule changes. Deploy exactly one policy file per agent, and move to the full one only
+   when the enforcement keys ship in managed settings. `deploy/wazuh/sca_test.go` keeps the M0
+   files verbatim subsets, checks each against the M0 bundle, and fails if the bundle gains a
+   key that makes the full policy pass.
 
 2. **Nothing supervises `ambitd`.** The repository ships no launchd job, systemd unit or
    Windows service. `scripts/dev-local.sh` starts it with `nohup` under the user's own settings,
@@ -95,7 +97,7 @@ Each one will otherwise cost the cohort a week to discover.
    `agents_disconnection_time` 15m, `agents_disconnection_alert_time` 5m.
 5. Confirm archiving is off (`logall` and `logall_json` both `no`).
 6. Put the agent group in place: `ossec-localfile.xml` (events only, never `trajectory.jsonl`),
-   `ossec-syscheck.xml`, and the SCA policy chosen under blocker 1.
+   `ossec-syscheck.xml`, and the M0 SCA policy (blocker 1).
 
 ## Roll out to the cohort
 
@@ -139,7 +141,7 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
 | A deliberately mutated server triggers D4 within a session | On a test endpoint, change an approved server's tool description (a test server you control, not a vendor's), start a session | Rule 100234 (level 12) in the same session, or 100237 if the server announced the change |
 | Killing `ambitd` fires D7 | Stop the daemon, leave the agent running | Rule 100314 via SCA check 10007, within the SCA scan interval |
 | Stopping the Wazuh agent fires rule 504 | Stop the agent | Rule 504 after `agents_disconnection_alert_time` |
-| Reverting a managed-settings key fires D12 | Edit a key the deployed SCA policy asserts, for example the hook URL (check 10005) | Rule 100270. This is only observable once blocker 1 is closed |
+| Reverting a managed-settings key fires D12 | Edit a key the deployed SCA policy asserts, for example the hook URL (check 10005) | Rule 100270. Use the M0 policy (blocker 1): against the full one, this result would be buried in permanent failures |
 | Someone outside the team executes a runbook against a sample alert | `./scripts/runbook-rehearsal.sh -o <new dir>`, hand over `analyst/` only, collect `FEEDBACK.md` | They reach a decision using only the alert and the runbook, with no question to the team |
 
 For the last row, the packet alerts are built offline. For a rehearsal that counts, produce the

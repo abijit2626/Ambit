@@ -386,11 +386,12 @@ team executes a runbook against a sample alert.
 
 ## Known limitations
 
-- **The SCA policy and the M0 managed-settings bundle disagree.** The policy asserts
+- **Deploy the M0 SCA policy for a cohort, not the full one.** The full policy asserts
   enforcement keys (bypass mode, sandbox, egress allowlist) that the observation-only M0
-  bundle deliberately omits, so deploying both makes D12 fire on every endpoint. Nothing
-  supervises `ambitd` either: there is no service unit. Both are blockers for a cohort, listed
-  with the rest in [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
+  bundle deliberately omits, so deploying both makes D12 fire on every endpoint. The `_m0`
+  policy files assert only what the M0 bundle sets. Nothing supervises `ambitd` either: there
+  is no service unit, and that is still a blocker for a cohort. Both are in
+  [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
   and validates rule fields against a closed schema. See
