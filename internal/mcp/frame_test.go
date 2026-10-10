@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// recorder logs writes, flushes and observations in the order they happen, which
-// is the only way to test the property that matters: forward first, analyze second.
 type recorder struct {
 	buf    bytes.Buffer
 	order  []string
@@ -32,13 +30,8 @@ func (r *recorder) Flush() error {
 	return nil
 }
 
-// TestRelayIsByteExact is the inertness property at the transport layer. An
-// interposer that reorders, reformats or re-serializes frames is not a passthrough,
-// and a client debugging a wrapped server would have no way to tell our
-// transformation from the server's behavior.
 func TestRelayIsByteExact(t *testing.T) {
-	// Deliberately ugly input: odd spacing, unicode, an empty line, a frame with
-	// no trailing newline. All of it must come out unchanged.
+
 	in := "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n" +
 		"{ \"jsonrpc\" : \"2.0\" ,  \"id\" : 2 }\n" +
 		"\n" +
@@ -107,8 +100,6 @@ func TestRelayReturnsWriteError(t *testing.T) {
 	}
 }
 
-// TestRelayHandlesFrameLargerThanBuffer guards the case a hostile or chatty server
-// makes likely: a frame far larger than the read buffer. It must be forwarded whole.
 func TestRelayHandlesFrameLargerThanBuffer(t *testing.T) {
 	big := `{"jsonrpc":"2.0","result":"` + strings.Repeat("x", 512<<10) + `"}`
 	var out bytes.Buffer
@@ -148,7 +139,6 @@ func TestMessageClassification(t *testing.T) {
 		t.Errorf("IDKey = %q, want \"7\"", req.IDKey())
 	}
 
-	// A client is free to send a string id, or to put whitespace around it.
 	spaced, err := Parse([]byte(`{"jsonrpc":"2.0","id" : "abc" ,"method":"tools/list"}`))
 	if err != nil {
 		t.Fatalf("parse spaced: %v", err)
@@ -192,12 +182,6 @@ func TestParseInitialize(t *testing.T) {
 	}
 }
 
-// TestRelayObserveFirstRecordsBeforeForwarding is the client-direction contract. A
-// request observed only after being written to the server can be beaten to the
-// analyzer by its own response, and a response with no recorded request cannot be
-// recognized at all: MCP responses carry no method name. That failure gets more
-// likely the faster the server is, which is the worst shape a detection gap can
-// have, so the ordering is pinned by a test rather than left to luck.
 func TestRelayObserveFirstRecordsBeforeForwarding(t *testing.T) {
 	r := &recorder{}
 	if err := Relay(r, strings.NewReader("{\"id\":1}\n"), ObserveFirst, func(f Frame) {
@@ -209,7 +193,7 @@ func TestRelayObserveFirstRecordsBeforeForwarding(t *testing.T) {
 	if len(r.order) != len(want) || r.order[0] != want[0] || r.order[1] != want[1] {
 		t.Errorf("order = %v, want %v", r.order, want)
 	}
-	// Observing first must not withhold the frame.
+
 	if strings.TrimSpace(r.buf.String()) != `{"id":1}` {
 		t.Errorf("frame not forwarded: %q", r.buf.String())
 	}

@@ -34,8 +34,7 @@ func TestLoadOverlaysOntoDefaults(t *testing.T) {
 	if cfg.HookAddr != "127.0.0.1:9999" || cfg.SampleRate != 0.02 {
 		t.Errorf("overlay not applied: %+v", cfg)
 	}
-	// Absent fields keep their defaults rather than becoming zero values, which
-	// would silently disable the heartbeat.
+
 	if cfg.HealthSeconds != 60 {
 		t.Errorf("HealthSeconds = %d, want the default 60", cfg.HealthSeconds)
 	}
@@ -125,14 +124,11 @@ func TestLoadOrCreateFingerprintKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Windows reports 0666 or 0444 whatever was asked for; there, privacy is the
-	// directory ACL, which internal/fsperm tests.
+
 	if perm := st.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("key file mode = %o, want 600", perm)
 	}
 
-	// A second call must return the SAME key. Regenerating would break equality
-	// matching against every previously stored fingerprint.
 	again, err := LoadOrCreateFingerprintKey(path, func() ([]byte, error) {
 		t.Error("generator called for an existing key; rotating would break all stored fingerprints")
 		return nil, errors.New("must not be called")
@@ -155,8 +151,6 @@ func TestLoadOrCreateFingerprintKeyRejectsShortKey(t *testing.T) {
 	}
 }
 
-// The events sink goes to the SIEM and the spool never leaves the machine, so the two
-// must never be the same file, however the path is spelled.
 func TestValidateRejectsAliasedSinkAndSpool(t *testing.T) {
 	old := caseInsensitiveFS
 	defer func() { caseInsensitiveFS = old }()
@@ -201,8 +195,6 @@ func TestValidateRejectsAliasedSinkAndSpool(t *testing.T) {
 	}
 }
 
-// mcp-interpose runs as the developer, so on Windows its default baseline store is in the
-// developer's profile and not in the machine-wide directory that ambitd made private.
 func TestDefaultBaselineDir(t *testing.T) {
 	home := func() (string, error) { return filepath.Join("home", "dev"), nil }
 	if got, want := defaultBaselineDir("windows", home), filepath.Join("home", "dev", ".ambit", "baselines"); got != want {

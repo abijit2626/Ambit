@@ -8,7 +8,6 @@ import (
 
 const testSelf = "S-1-5-21-1004336348-1177238915-682003330-1001"
 
-// What `icacls /inheritance:r /grant:r` as written in fsperm_windows.go produces.
 var privateSDDL = "O:" + testSelf + "D:PAI(A;OICI;FA;;;" + testSelf + ")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 
 func TestAuditAcceptsAPrivateDirectory(t *testing.T) {
@@ -26,8 +25,6 @@ func TestAuditAcceptsAPrivateDirectory(t *testing.T) {
 	}
 }
 
-// The usual way a directory ends up shared is that it was created under
-// C:\ProgramData and inherited its parent's entries.
 func TestAuditRefusesBroadAccess(t *testing.T) {
 	for name, sddl := range map[string]string{
 		"Users":               "O:BAD:PAI(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1200a9;;;BU)",
@@ -37,7 +34,7 @@ func TestAuditRefusesBroadAccess(t *testing.T) {
 		"Interactive":         "O:BAD:PAI(A;OICI;0x1200a9;;;IU)",
 		"Domain Users":        "O:BAD:PAI(A;OICI;0x1200a9;;;S-1-5-21-1-2-3-513)",
 		"Domain Users code":   "O:BAD:PAI(A;OICI;0x1200a9;;;DU)",
-		"inherit-only entry":  "O:BAD:PAI(A;OICIIO;GR;;;BU)", // applies to what is created inside
+		"inherit-only entry":  "O:BAD:PAI(A;OICIIO;GR;;;BU)",
 		"conditional entry":   "O:BAD:PAI(XA;OICI;FA;;;BU;(@User.Title==\"x\"))",
 	} {
 		err := audit(`C:\ProgramData\ambit`, sddl, testSelf)
@@ -47,7 +44,6 @@ func TestAuditRefusesBroadAccess(t *testing.T) {
 	}
 }
 
-// A null DACL grants everyone full access; it is the absence of an "D:" section.
 func TestAuditRefusesNoAccessList(t *testing.T) {
 	for _, sddl := range []string{"O:BA", "O:BAD:NO_ACCESS_CONTROL"} {
 		if err := audit(`C:\x`, sddl, testSelf); !errors.Is(err, ErrNotPrivate) {
@@ -56,8 +52,6 @@ func TestAuditRefusesNoAccessList(t *testing.T) {
 	}
 }
 
-// The owner can rewrite the ACL, so a closed ACL on somebody else's directory is not
-// private. This is the squatted C:\ProgramData\ambit.
 func TestAuditRefusesAForeignOwner(t *testing.T) {
 	sddl := "O:S-1-5-21-1004336348-1177238915-682003330-1999D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 	err := audit(`C:\ProgramData\ambit`, sddl, testSelf)

@@ -1,36 +1,3 @@
-<#
-.SYNOPSIS
-Set up ambitd against your own Claude Code sessions, on your own Windows machine.
-
-.DESCRIPTION
-The Windows counterpart of dev-local.sh.
-
-Why: the M0 exit criterion that blocks everything downstream is the MEASURED
-INTERESTING FRACTION - what share of real tool calls are security-relevant enough
-to cross to Wazuh. The design estimates 2-5%. If your real work comes back at 30%,
-the filter criteria in docs/04-data-model.md tighten before M1. You are the cheapest
-source of that number: this needs no Wazuh, no MDM and no cohort.
-
-This uses USER-SCOPE settings (%USERPROFILE%\.claude\settings.json), not managed
-settings. Nothing here is machine-wide and nothing needs admin. It is safe because
-ambitd is inert: every hook response is {}, which means "no opinion", so Claude Code's
-permission pipeline behaves exactly as it would with no hook installed.
-
-.PARAMETER Status
-Show what has been collected so far, including the interesting fraction.
-
-.PARAMETER Uninstall
-Stop ambitd and restore your original settings.json.
-
-.PARAMETER Binary
-Use a prebuilt ambitd.exe instead of building one with Go.
-
-.EXAMPLE
-powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1
-
-.EXAMPLE
-powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Status
-#>
 [CmdletBinding()]
 param(
     [switch]$Status,
@@ -46,10 +13,6 @@ param(
     )
 )
 
-# This file is ASCII on purpose. Windows PowerShell 5.1 reads a script without a byte
-# order mark as the system code page, so a single typographic dash would corrupt a
-# string literal.
-
 $ErrorActionPreference = 'Stop'
 
 $Root       = Split-Path -Parent $PSScriptRoot
@@ -63,17 +26,10 @@ $HookUrl    = "http://127.0.0.1:$HookPort/hook"
 function Write-Bold($text) { Write-Host $text -ForegroundColor White }
 function Write-Warn($text) { Write-Host $text -ForegroundColor Yellow }
 
-# Windows PowerShell 5.1's Set-Content -Encoding UTF8 writes a byte order mark, which
-# Go's encoding/json rejects ("invalid character 'i' looking for beginning of value").
-# ambitd reads this config and Claude Code reads settings.json, so neither file may
-# have one.
 function Write-TextNoBom($path, $text) {
     [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-# ConvertFrom-Json returns PSCustomObject trees, which cannot be edited in place the way
-# the JSON they came from can. This turns them into ordered dictionaries and arrays so
-# the merge below behaves identically on Windows PowerShell 5.1 and PowerShell 7.
 function ConvertTo-Plain($o) {
     if ($null -eq $o) { return $null }
     if ($o -is [System.Management.Automation.PSCustomObject]) {
@@ -94,11 +50,6 @@ function ConvertTo-Plain($o) {
     return $o
 }
 
-# ambitd holds the spool and the sink open for writing while it runs. Windows refuses to
-# open a file for reading unless the reader tolerates the existing writer, and
-# [System.IO.File]::ReadLines and Select-String-style defaults do not (FileShare.Read
-# denies other writers), so -Status would fail exactly when ambitd is running, which is
-# when anyone runs it. This opens with ReadWrite and Delete sharing.
 function Open-SharedReader($path) {
     $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
     $fs = New-Object System.IO.FileStream($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
@@ -118,8 +69,6 @@ function Test-Healthy {
     }
 }
 
-# --- status -------------------------------------------------------------------
-
 function Show-Status {
     Write-Bold 'ambitd local status'
     Write-Host ''
@@ -132,10 +81,6 @@ function Show-Status {
         return
     }
 
-    # One pass over the spool, matching the two top-level fields with a pattern rather
-    # than parsing every line: `source` and `kind` come first in the rich schema, ahead
-    # of every nested object, so the first match is the top-level value. A full parse of
-    # a day of events would take minutes.
     $total = 0
     $kinds = @{}
     $sources = @{}
@@ -152,9 +97,6 @@ function Show-Status {
             $src = if ($s.Success) { $s.Groups[1].Value } else { '?' }
             if ($kinds.ContainsKey($kind)) { $kinds[$kind]++ } else { $kinds[$kind] = 1 }
             if ($sources.ContainsKey($src)) { $sources[$src]++ } else { $sources[$src] = 1 }
-            # Only HOOK-sourced tool events count toward the fraction. OTel records also
-            # map to tool kinds, and counting them would inflate the denominator with the
-            # same tool calls observed a second time by the corroborating stream.
             if (($kind -eq 'tool_pre' -or $kind -eq 'tool_post') -and $src -eq 'hook') { $toolTotal++ }
         }
     } finally {
@@ -179,7 +121,6 @@ function Show-Status {
             try { $d = $line | ConvertFrom-Json } catch { continue }
             if ($d.kind -ne 'tool_pre' -and $d.kind -ne 'tool_post') { continue }
             $toolCrossed++
-            # Infer why, in the same order the filter decides.
             $why = 'sampled_or_other'
             if ($d.policy_decision) { $why = 'policy_decision' }
             elseif ($d.prov_edge_count) { $why = 'provenance_edge' }
@@ -226,8 +167,6 @@ function Show-Status {
     Write-Host '  ALL EVENT KINDS'
     $kinds.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { Write-Host ('    {0,-24} {1}' -f $_.Key, $_.Value) }
 
-    # The sink stores paths as keyed digests, so none of these may appear. JSON escapes
-    # a backslash as two, so the profile path is checked in both spellings.
     Write-Host ''
     Write-Host '  Leak check on the Wazuh-bound sink (should all be clean):'
     $profilePath = $env:USERPROFILE
@@ -240,8 +179,6 @@ function Show-Status {
         }
     }
 }
-
-# --- uninstall ----------------------------------------------------------------
 
 function Invoke-Uninstall {
     Write-Bold 'Removing the local ambitd setup'
@@ -262,24 +199,11 @@ function Invoke-Uninstall {
 if ($Status) { Show-Status; return }
 if ($Uninstall) { Invoke-Uninstall; return }
 
-# --- install ------------------------------------------------------------------
-
-# Creating the directory ourselves means ambitd will find it already there. ambitd never
-# changes an existing directory, and refuses one that other accounts can read or that
-# another account owns, so this script has to make it private. Under the default
-# %USERPROFILE% it already is; AMBIT_DIR can point anywhere, and the spool holds prompt
-# text. SYSTEM and Administrators keep access so a Wazuh agent (which runs as SYSTEM)
-# can tail events.jsonl.
-#
-# Every directory this creates is restricted, parents included, and all of them are
-# removed again if restricting fails. Leaving a half-done directory behind would be worse
-# than failing: a re-run would find it, skip this block, and ambitd would then be handed
-# a directory with the inherited ACL.
 if (-not (Test-Path $AmbitDir)) {
     $created = @()
     $probe = $AmbitDir
     while ($probe -and -not (Test-Path $probe)) {
-        $created = @($probe) + $created   # outermost first
+        $created = @($probe) + $created
         $parent = Split-Path -Parent $probe
         if ($parent -eq $probe) { break }
         $probe = $parent
@@ -299,10 +223,6 @@ if (-not (Test-Path $AmbitDir)) {
 }
 
 Write-Bold 'Building ambitd'
-# A running ambitd.exe is locked and cannot be overwritten, so stop it before the build.
-# Stop-Process returns when termination has been requested, not when Windows has released
-# the executable, so wait for the exit and then retry the copy: without both, re-running
-# this script while ambitd is up fails with "being used by another process".
 $old = @(Get-AmbitProcess)
 $old | Stop-Process -Force -ErrorAction SilentlyContinue
 foreach ($p in $old) { [void]$p.WaitForExit(10000) }
@@ -324,7 +244,6 @@ if ($Binary) {
         for ($try = 1; ; $try++) {
             & go build -ldflags '-X main.version=dev-local' -o $Bin ./cmd/ambitd
             if ($LASTEXITCODE -eq 0) { break }
-            # The previous ambitd.exe may still be locked for a moment after it exits.
             if ($try -ge 5) { throw "go build failed (exit $LASTEXITCODE)" }
             Start-Sleep -Milliseconds 500
         }
@@ -335,14 +254,6 @@ if ($Binary) {
 Write-Host "  $Bin"
 
 Write-Bold 'Writing config'
-# home is detected by ambitd; trusted_repo_paths marks which CLAUDE.md files are
-# expected, so an instruction file from anywhere else shows up as a D8 candidate.
-#
-# baseline_dir is under $AmbitDir deliberately. mcp-interpose runs as you, not as a
-# service, so a baseline store under ProgramData would be unwritable and every listing
-# would report as degraded rather than compared. This script does not touch .mcp.json:
-# wrapping a server is a deliberate edit you make yourself. See the README for the
-# .mcp.json shape.
 $hostSlug = ($env:COMPUTERNAME -replace '[^A-Za-z0-9]', '').ToLower()
 if ($hostSlug.Length -gt 16) { $hostSlug = $hostSlug.Substring(0, 16) }
 $cfg = [ordered]@{
@@ -371,9 +282,6 @@ $settingsDir = Split-Path -Parent $ClaudeSettings
 if (-not (Test-Path $settingsDir)) { New-Item -ItemType Directory -Path $settingsDir | Out-Null }
 if (-not (Test-Path $ClaudeSettings)) { Write-TextNoBom $ClaudeSettings '{}' }
 
-# Never overwrite an existing backup. Re-running this script would otherwise replace
-# the pristine copy with an already-modified one, and -Uninstall would then "restore"
-# settings that still contain the hooks.
 if (Test-Path $Backup) {
     Write-Host "  backup already exists, keeping it: $Backup"
 } else {
@@ -386,10 +294,6 @@ if ([string]::IsNullOrWhiteSpace($raw)) { $raw = '{}' }
 $settings = ConvertTo-Plain ($raw | ConvertFrom-Json)
 if ($null -eq $settings) { $settings = [ordered]@{} }
 
-# Events with no matcher support take a bare hooks list.
-#
-# This list is $hookEvents, not $events: PowerShell variable names are case-insensitive,
-# so $events would silently overwrite $Events, the path of the Wazuh-bound sink.
 $noMatcher = @('UserPromptSubmit')
 $hookEvents = @(
     'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
@@ -406,7 +310,6 @@ foreach ($ev in $hookEvents) {
     if ($hooks.Contains($ev) -and $null -ne $hooks[$ev]) {
         foreach ($e in @($hooks[$ev])) { [void]$existing.Add($e) }
     }
-    # Idempotent: do not stack duplicate entries on re-run.
     $already = $false
     foreach ($e in $existing) {
         if ($e -is [System.Collections.IDictionary] -and $e.Contains('hooks')) {
@@ -432,8 +335,6 @@ $envBlock = $settings['env']
 $envBlock['CLAUDE_CODE_ENABLE_TELEMETRY'] = '1'
 $envBlock['OTEL_METRICS_EXPORTER'] = 'otlp'
 $envBlock['OTEL_LOGS_EXPORTER'] = 'otlp'
-# http/json, not grpc or http/protobuf: ambitd's receiver decodes OTLP/JSON with the
-# standard library. Port 4318 is OTLP/HTTP; 4317 is gRPC.
 $envBlock['OTEL_EXPORTER_OTLP_PROTOCOL'] = 'http/json'
 $envBlock['OTEL_EXPORTER_OTLP_ENDPOINT'] = "http://127.0.0.1:$OtlpPort"
 
@@ -443,8 +344,6 @@ Write-Host "  added $($hookEvents.Count) hook events + OTel env"
 Write-Bold 'Starting ambitd'
 $logOut = Join-Path $AmbitDir 'ambitd.out.log'
 $logErr = Join-Path $AmbitDir 'ambitd.log'
-# Quotes are added by hand: Start-Process joins -ArgumentList with spaces and does not
-# quote, so a profile path containing a space would otherwise split into two arguments.
 $null = Start-Process -FilePath $Bin -ArgumentList @('-config', "`"$Config`"") `
     -WindowStyle Hidden -RedirectStandardOutput $logOut -RedirectStandardError $logErr -PassThru
 

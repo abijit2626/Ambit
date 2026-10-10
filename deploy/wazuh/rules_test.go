@@ -1,22 +1,3 @@
-// Package wazuh holds no code: it exists so the Wazuh rules, the fixtures they are
-// tested against and the runbooks they reference can be validated by `go test ./...`
-// like anything else in this repository.
-//
-// The reason this exists is that a broken Wazuh rule does not fail loudly. It simply
-// never matches, and a detector that never fires is indistinguishable from a fleet
-// with nothing to report. `wazuh-logtest` is the real check and the README says to run
-// it, but it needs a Wazuh install, so it is not run in CI and not run by a contributor
-// changing a field name. These tests are what catch that change: they read the
-// flattened schema out of internal/event by reflection, so renaming a field breaks the
-// build rather than silently retiring a rule.
-//
-// What these tests do NOT do: implement Wazuh. They model the small subset of matching
-// the rules in this directory use — decoded_as json, if_sid chaining, and field regexes
-// — well enough to prove each rule can match a real event. Correlation semantics
-// (frequency, timeframe, ignore) are checked structurally only. Where the model and
-// Wazuh could disagree, the tests assert the rules stay inside the subset where they
-// cannot, which is why an unanchored-literal rule on an array field is a test of its
-// own.
 package wazuh
 
 import (
@@ -38,50 +19,22 @@ const (
 	fixturesPath = "fixtures/events.sample.jsonl"
 	runbooksDir  = "runbooks"
 
-	// fieldBudget mirrors internal/event's per-kind budget. A fixture wider than the
-	// events the schema is allowed to produce would be testing something that cannot
-	// reach the decoder.
 	fieldBudget = 55
 
-	// Groups that exempt a rule from the "must match a real fixture" requirement, for
-	// the two reasons a rule can legitimately match nothing today.
-	//
-	// groupPendingEmitter: the field is in the flattened schema but nothing populates it
-	// yet — the policy engine (M3), the provenance engine (M2), goal-drift scoring (M4),
-	// or agent_entrypoint, which is specified and has no emitter anywhere. Such a rule
-	// must match NOTHING in the real fixtures: if it matches, the emitter exists and the
-	// marker is stale, which is worse than missing because it hides a working detector.
-	//
-	// groupWazuhSourced: the input is a Wazuh-internal alert — a syscheck FIM event or an
-	// SCA result — not one of our JSON events. Our fixtures cannot contain one by
-	// construction, so wazuh-logtest against a real alert is the only check.
 	groupPendingEmitter = "ambit_pending_emitter"
 	groupWazuhSourced   = "ambit_wazuh_sourced"
 )
 
-// allocated maps each rule file to the ID ranges it may use. The full map with its
-// reasoning lives in rules/ambit_mcp_rules.xml; this is the enforced copy.
-//
-// Wazuh refuses a ruleset with duplicate ids at manager start, so a collision takes the
-// whole manager down rather than degrading one detector. That makes the allocation worth
-// testing rather than documenting.
 var allocated = map[string][][2]int{
-	"ambit_agent_rules.xml":      {{100200, 100229}}, // D1, D2, D3
-	"ambit_mcp_rules.xml":        {{100230, 100249}}, // D4, D5
-	"ambit_integrity_rules.xml":  {{100250, 100279}}, // D6, D11, D12
-	"ambit_provenance_rules.xml": {{100280, 100299}}, // D10, D8
-	"ambit_egress_rules.xml":     {{100300, 100309}}, // D9
-	"ambit_telemetry_rules.xml":  {{100310, 100319}}, // D7
-	"ambit_gate_rules.xml":       {{100320, 100329}}, // R2 gate (shadow verdicts)
+	"ambit_agent_rules.xml":      {{100200, 100229}},
+	"ambit_mcp_rules.xml":        {{100230, 100249}},
+	"ambit_integrity_rules.xml":  {{100250, 100279}},
+	"ambit_provenance_rules.xml": {{100280, 100299}},
+	"ambit_egress_rules.xml":     {{100300, 100309}},
+	"ambit_telemetry_rules.xml":  {{100310, 100319}},
+	"ambit_gate_rules.xml":       {{100320, 100329}},
 }
 
-// externalParents are rule IDs owned by Wazuh's shipped ruleset, not by us: syscheck FIM
-// alerts and SCA results. A rule chaining from one of these is reading an event our
-// fixtures cannot contain, so it must declare groupWazuhSourced.
-//
-// These values are UNVERIFIED against the shipped ruleset and are
-// listed here so the set is at least explicit: a wrong parent SID does not error, the
-// rule simply never fires.
 var externalParents = map[int]string{
 	550:   "syscheck: integrity checksum changed",
 	553:   "syscheck: file deleted",
@@ -124,7 +77,6 @@ func (r rule) isCorrelation() bool { return r.IfMatchedSI != "" }
 
 func (r rule) hasGroup(name string) bool { return strings.Contains(r.Groups, name) }
 
-// parentIDs parses if_sid, which Wazuh allows as a comma-separated list.
 func (r rule) parentIDs(t *testing.T) []int {
 	t.Helper()
 	return parseIDList(t, r.IfSID)
@@ -148,10 +100,6 @@ func parseIDList(t *testing.T, raw string) []int {
 	return out
 }
 
-// readsExternalEvent reports whether the rule ultimately reads a Wazuh-owned event.
-//
-// The chain has to be followed rather than only the immediate parent: a correlation over
-// an SCA-sourced rule is still SCA-sourced, and its own parent is one of ours.
 func readsExternalEvent(r rule, byID map[int]rule, t *testing.T) bool {
 	t.Helper()
 	return readsExternalDepth(r, byID, t, 0)
@@ -176,7 +124,6 @@ func readsExternalDepth(r rule, byID map[int]rule, t *testing.T, depth int) bool
 	return false
 }
 
-// loadRules reads every rule file in the directory.
 func loadRules(t *testing.T) []rule {
 	t.Helper()
 	paths, err := filepath.Glob(rulesGlob)
@@ -227,9 +174,6 @@ func loadFixtures(t *testing.T) []map[string]any {
 	return out
 }
 
-// schemaFields returns the flattened schema's field names, and which of them are
-// arrays, by reflection over event.SIEMEvent. Reflection rather than a hand-kept list
-// is the point: a renamed field then fails this test instead of quietly retiring a rule.
 func schemaFields() (all map[string]bool, arrays map[string]bool) {
 	all, arrays = map[string]bool{}, map[string]bool{}
 	st := reflect.TypeOf(event.SIEMEvent{})
@@ -245,14 +189,11 @@ func schemaFields() (all map[string]bool, arrays map[string]bool) {
 			arrays[name] = true
 		}
 	}
-	// Fields Wazuh itself supplies on an alert rather than the event. Listed rather
-	// than pattern-matched so adding one is a decision.
+
 	for _, extra := range []string{
 		"agent.name", "agent.id", "agent.ip",
 		"sca.policy_id", "sca.check.id", "sca.check.title", "sca.check.result",
-		// syscheck (FIM) alert fields. "file" is the path in a syscheck alert;
-		// syscheck.audit.* comes from whodata, which is what answers "which process
-		// wrote this". All UNVERIFIED at the field-name level.
+
 		"file", "syscheck.path", "syscheck.audit.process.name", "syscheck.uname_after",
 		"full_log", "decoder.name",
 	} {
@@ -288,7 +229,7 @@ func TestRuleIDsAreUniqueAndInRange(t *testing.T) {
 			t.Errorf("rule %d is in %s, whose allocated ranges are %v", r.ID, base, ranges)
 		}
 	}
-	// Every allocated file should exist, or the map is describing rules nobody wrote.
+
 	for base := range allocated {
 		if !files[base] {
 			t.Errorf("the allocation map names %s but no such rule file was loaded", base)
@@ -303,8 +244,6 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 		byID[r.ID] = r
 	}
 
-	// runbook_D<n> for the detectors, runbook_R2 for the Rule-of-Two gate: any named
-	// runbook, which TestEveryReferencedRunbookExists then requires to exist.
 	runbookRE := regexp.MustCompile(`runbook_[A-Za-z]+\d+`)
 	for _, r := range rules {
 		name := fmt.Sprintf("rule_%d", r.ID)
@@ -315,8 +254,7 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 			if r.Level < 0 || r.Level > 16 {
 				t.Errorf("level %d is outside 0-16", r.Level)
 			}
-			// A level-0 rule raises no alert and exists only as a parent, so it needs
-			// neither a runbook nor a technique; everything that alerts needs both.
+
 			if r.Level > 0 {
 				if !runbookRE.MatchString(r.Groups) {
 					t.Errorf("groups %q name no runbook; every alerting rule carries a runbook group (runbook_Dn, runbook_R2) per docs/03-detection.md", r.Groups)
@@ -328,8 +266,7 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 			if r.Level == 0 && r.DecodedAs == "" && r.IfSID == "" {
 				t.Error("a level-0 rule that matches nothing and chains from nothing is dead")
 			}
-			// Parents must exist, or the child silently never fires. A parent may be
-			// one of ours or one of Wazuh's; anything else is a typo.
+
 			for _, raw := range []string{r.IfSID, r.IfMatchedSI} {
 				for _, id := range parseIDList(t, raw) {
 					_, ours := byID[id]
@@ -339,8 +276,7 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 					}
 				}
 			}
-			// A rule reading a Wazuh-internal alert must say so, because that is what
-			// excuses it from fixture coverage.
+
 			external := readsExternalEvent(r, byID, t)
 			if external && !r.hasGroup(groupWazuhSourced) {
 				t.Errorf("reads a Wazuh-owned event but does not declare %s", groupWazuhSourced)
@@ -374,8 +310,6 @@ func TestRuleFieldsExistInTheSchema(t *testing.T) {
 	}
 }
 
-// TestDescriptionInterpolationsExist catches the other half of a rename: an alert
-// description referring to $(some_old_field) renders the literal text to the analyst.
 func TestDescriptionInterpolationsExist(t *testing.T) {
 	all, _ := schemaFields()
 	interp := regexp.MustCompile(`\$\(([^)]+)\)`)
@@ -388,14 +322,6 @@ func TestDescriptionInterpolationsExist(t *testing.T) {
 	}
 }
 
-// TestArrayFieldRulesUseUnanchoredLiterals is the test that keeps an unverified
-// assumption from becoming a silent failure.
-//
-// How a <field> regex matches a multi-valued field — against each value, or against
-// one joined string — was not verified against a live manager. An
-// unanchored literal matches under either behavior; an anchored one matches under at
-// most one. So rules on array fields must stay unanchored, and this test enforces it
-// rather than trusting a comment.
 func TestArrayFieldRulesUseUnanchoredLiterals(t *testing.T) {
 	_, arrays := schemaFields()
 	for _, r := range loadRules(t) {
@@ -412,18 +338,8 @@ func TestArrayFieldRulesUseUnanchoredLiterals(t *testing.T) {
 	}
 }
 
-// matches models the subset of Wazuh matching these rules use, for one event.
-//
-// Deliberately narrow: presence via the \.+ idiom, otherwise the pattern as a regexp,
-// with array values joined by commas. Anchors behave identically in OS_Regex and Go
-// regexp for the literal patterns used here; anything more exotic would need the real
-// wazuh-logtest, which the README tells an operator to run.
 func matches(r rule, ev map[string]any, byID map[int]rule) (bool, error) {
-	// A correlation rule fires on N matches of its parent within a timeframe, which
-	// this model does not simulate. Refusing is deliberate: silently ignoring
-	// if_matched_sid would make such a rule look unconditional and match every event,
-	// which is the opposite of the truth and would hide a real failure behind a
-	// green test.
+
 	if r.isCorrelation() {
 		return false, fmt.Errorf("rule %d is a correlation rule; matching is not modelled", r.ID)
 	}
@@ -438,8 +354,7 @@ func matches(r rule, ev map[string]any, byID map[int]rule) (bool, error) {
 			return false, err
 		}
 		if _, external := externalParents[id]; external {
-			// A syscheck or SCA alert is not one of our JSON events, and pretending to
-			// evaluate one against a fixture would produce a confident wrong answer.
+
 			return false, fmt.Errorf("rule %d reads a Wazuh-internal alert; matching is not modelled", r.ID)
 		}
 		parent, ok := byID[id]
@@ -459,7 +374,7 @@ func matches(r rule, ev map[string]any, byID map[int]rule) (bool, error) {
 		value := renderValue(raw)
 		pattern := strings.TrimSpace(f.Pattern)
 		if pattern == `\.+` {
-			// The Wazuh idiom for "present with any value".
+
 			if value == "" {
 				return false, nil
 			}
@@ -503,9 +418,6 @@ func renderValue(raw any) string {
 	}
 }
 
-// TestEveryRuleMatchesAFixture is the central test. A rule that matches nothing in a
-// fixture set generated from the real pipeline is a rule that will match nothing in
-// production, and it will say so by never alerting.
 func TestEveryRuleMatchesAFixture(t *testing.T) {
 	rules := loadRules(t)
 	fixtures := loadFixtures(t)
@@ -516,9 +428,7 @@ func TestEveryRuleMatchesAFixture(t *testing.T) {
 
 	for _, r := range rules {
 		t.Run(fmt.Sprintf("rule_%d", r.ID), func(t *testing.T) {
-			// A correlation rule fires on N matches of its parent, which this model
-			// does not simulate; its parent is covered by its own subtest, and the
-			// structural checks are in TestEveryRuleIsWellFormed.
+
 			if r.isCorrelation() {
 				t.Skip("correlation rule: parent coverage is asserted separately")
 			}
@@ -546,10 +456,6 @@ func TestEveryRuleMatchesAFixture(t *testing.T) {
 	}
 }
 
-// TestSummaryAndPerToolEventsAreDistinguishable pins the discriminator the rules rely
-// on. If a per-tool event ever carried mcp_tool_count, or a summary carried
-// mcp_baseline_state, every drift would raise two alerts and no rule could tell the
-// roll-up from the finding.
 func TestSummaryAndPerToolEventsAreDistinguishable(t *testing.T) {
 	var summaries, perTool int
 	for i, ev := range loadFixtures(t) {
@@ -592,9 +498,7 @@ func TestFixturesCarryNoCleartextSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read fixtures: %v", err)
 	}
-	// The fixtures are committed to the repository and pasted into wazuh-logtest by
-	// whoever verifies the rules, so they are held to the same standard as the sink
-	// they came from.
+
 	for _, banned := range []string{
 		"/home/dev", ".ssh", "id_ed25519", "id_rsa", ".aws",
 		"Ignore all previous", "exfil.attacker.test", "billing",
@@ -606,8 +510,7 @@ func TestFixturesCarryNoCleartextSecrets(t *testing.T) {
 }
 
 func TestEveryReferencedRunbookExists(t *testing.T) {
-	// Every runbook_* group, not only the D-numbered detectors: a rule naming a runbook
-	// this pattern did not recognise would pass with no runbook behind it.
+
 	runbookRE := regexp.MustCompile(`runbook_([A-Za-z]+\d+)`)
 	wanted := map[string]int{}
 	for _, r := range loadRules(t) {
@@ -630,9 +533,6 @@ func TestEveryReferencedRunbookExists(t *testing.T) {
 	}
 }
 
-// TestRunbooksCoverTheRequiredSections checks the structure docs/03-detection.md
-// requires, because the one thing an external analyst cannot do is improvise the parts
-// that need us.
 func TestRunbooksCoverTheRequiredSections(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join(runbooksDir, "*.md"))
 	if err != nil {
@@ -663,13 +563,6 @@ func TestRunbooksCoverTheRequiredSections(t *testing.T) {
 	}
 }
 
-// TestOrdinaryDriftDoesNotPage is the false-positive control, and the reason the
-// fixtures include a description change that is merely different rather than hostile.
-//
-// The common real cause of drift is a package upgrade shipping better descriptions. If
-// that pages an analyst, the rule gets an exception carved out and then it protects
-// nothing. So: an ordinary drift must raise the level-12 D4 alert and must not satisfy
-// any D5 rule or the level-13 combination rule.
 func TestOrdinaryDriftDoesNotPage(t *testing.T) {
 	rules := loadRules(t)
 	byID := map[int]rule{}
@@ -687,7 +580,6 @@ func TestOrdinaryDriftDoesNotPage(t *testing.T) {
 		}
 		checked++
 
-		// Drift is still drift: the D4 alert must fire.
 		ok, err := matches(byID[100234], ev, byID)
 		if err != nil {
 			t.Fatalf("fixture %d: %v", i+1, err)
@@ -696,10 +588,6 @@ func TestOrdinaryDriftDoesNotPage(t *testing.T) {
 			t.Errorf("fixture %d is a drift event but rule 100234 does not match it", i+1)
 		}
 
-		// Nothing that reads a D5 finding may fire, including the level-13 rule that
-		// combines drift with concealed instructions. Correlation rules are excluded
-		// because they fire on repeated matches of a parent, and that parent is
-		// checked here in its own right.
 		for _, r := range rules {
 			if !strings.Contains(r.Groups, "ambit_d5") || r.isCorrelation() {
 				continue
@@ -719,10 +607,6 @@ func TestOrdinaryDriftDoesNotPage(t *testing.T) {
 	}
 }
 
-// TestPendingRulesMatchNothingYet is the other half of the pending-emitter marker. A rule
-// marked pending that in fact matches a real event is worse than an unmarked one: the
-// marker tells a reader the detector is inert, so a working detector would be ignored and
-// its alerts dismissed as impossible.
 func TestPendingRulesMatchNothingYet(t *testing.T) {
 	rules := loadRules(t)
 	byID := map[int]rule{}
@@ -756,21 +640,11 @@ func TestPendingRulesMatchNothingYet(t *testing.T) {
 	}
 }
 
-// isSynthetic reports whether a fixture line was hand-written rather than generated. The
-// synthetic lines exist to exercise M2-shaped events, so a pending rule is expected to
-// match them — that is what they are for — and only the generated lines answer the
-// question "does an emitter exist today".
 func isSynthetic(ev map[string]any) bool {
 	id, _ := ev["event_id"].(string)
 	return strings.HasPrefix(id, "01JSYNTH") || ev["kind"] == "sink_gap"
 }
 
-// TestRulesStayQuietWhereTheyShould pins the negative expectations that matter, one per
-// detector whose quiet case is easy to get wrong. Each entry is a real fixture shape and
-// a rule that must not fire on it.
-//
-// Without this, a rule that matched everything would pass every other test in this file:
-// "matches at least one fixture" is satisfied by matching all of them.
 func TestRulesStayQuietWhereTheyShould(t *testing.T) {
 	rules := loadRules(t)
 	byID := map[int]rule{}
@@ -781,7 +655,7 @@ func TestRulesStayQuietWhereTheyShould(t *testing.T) {
 	cases := []struct {
 		name string
 		rule int
-		// pick selects the fixture this rule must not match.
+
 		pick func(map[string]any) bool
 		why  string
 	}{
@@ -887,14 +761,6 @@ func TestRulesStayQuietWhereTheyShould(t *testing.T) {
 	}
 }
 
-// TestProvenanceEdgeRuleHasARealEmitter is the other direction of the pending-emitter
-// check, for the one rule that used to carry the marker because the provenance engine
-// did not exist. It must now match a line the real pipeline generated and not only the
-// hand-written one: the synthetic line proves the rule's syntax, and only a generated
-// line proves ambitd can produce what the rule reads.
-//
-// If this fails after a schema change, regenerate the fixtures; if it still fails, the
-// engine has stopped emitting edges and the rule has silently gone back to being inert.
 func TestProvenanceEdgeRuleHasARealEmitter(t *testing.T) {
 	rules := loadRules(t)
 	byID := map[int]rule{}
@@ -923,7 +789,7 @@ func TestProvenanceEdgeRuleHasARealEmitter(t *testing.T) {
 			continue
 		}
 		generated++
-		// The edge's source must be present, or an analyst has nothing to open.
+
 		if from, _ := ev["prov_edge_from"].(string); from == "" {
 			t.Errorf("generated fixture %d matched but carries no prov_edge_from", i+1)
 		}
@@ -937,9 +803,6 @@ func TestProvenanceEdgeRuleHasARealEmitter(t *testing.T) {
 	}
 }
 
-// TestGateRulesHaveARealEmitter requires each R2 gate rule to match a line the pipeline
-// generated, not only the hand-written reference line: the synthetic line proves the syntax,
-// and only a generated one proves ambitd produces what the rule reads.
 func TestGateRulesHaveARealEmitter(t *testing.T) {
 	rules := loadRules(t)
 	byID := map[int]rule{}
@@ -974,20 +837,8 @@ func TestGateRulesHaveARealEmitter(t *testing.T) {
 	}
 }
 
-// TestDeployArtifactsAreWellFormed parses every XML and JSON file under deploy/.
-//
-// This exists because the failure it catches has already happened twice in this
-// repository, both times in a comment rather than in the configuration itself: a `--`
-// inside an XML comment is invalid XML, and Wazuh refuses a file it cannot parse — which
-// can take down the whole ossec.conf include, not just the rule that carried the typo.
-// Go's XML parser rejects the same sequence, so a test is enough and no Wazuh install is
-// needed.
-//
-// The SCA policy is YAML and is not checked here: validating it would mean adding a
-// dependency to a repository that deliberately has none, and `wazuh-logtest` and the SCA
-// engine both read it on deployment.
 func TestDeployArtifactsAreWellFormed(t *testing.T) {
-	// ".." is the deploy directory: this package sits in deploy/wazuh.
+
 	root := ".."
 	var xmlFiles, jsonFiles int
 
@@ -1006,8 +857,7 @@ func TestDeployArtifactsAreWellFormed(t *testing.T) {
 				t.Errorf("%s: %v", path, readErr)
 				return nil
 			}
-			// Token-scan rather than Unmarshal: it reaches comments and every other
-			// construct, where Unmarshal into a narrow struct can skip past them.
+
 			dec := xml.NewDecoder(strings.NewReader(string(raw)))
 			for {
 				_, tokErr := dec.Token()

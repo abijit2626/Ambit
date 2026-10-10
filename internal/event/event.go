@@ -1,18 +1,7 @@
-// Package event defines the two representations of an agent event.
-//
-// The rich Event is what ambitd computes and spools locally. The flat
-// SIEMEvent in flat.go is what crosses to Wazuh. Keeping them separate is
-// deliberate: Wazuh's JSON decoder cannot represent an array of objects, and a
-// wide event risks the "Too many fields for JSON decoder" rejection, which is
-// silent detection loss. See docs/04-data-model.md.
 package event
 
-// SchemaVersion is the current version of both representations. They move
-// together so a consumer can trust one number.
 const SchemaVersion = 2
 
-// Kind enumerates event kinds. The set matches docs/04-data-model.md; the
-// filter in internal/filter keys on these to decide what crosses to Wazuh.
 type Kind string
 
 const (
@@ -35,11 +24,6 @@ const (
 	KindGoalDriftScore     Kind = "goal_drift_score"
 )
 
-// MCP baseline states, D4's vocabulary. They live here rather than in
-// internal/baseline because they are schema: they cross to Wazuh in cleartext as
-// mcp_baseline_state, a Wazuh rule matches on the literal strings, and
-// internal/baseline builds its State type from these so there is one definition to
-// keep in step with the ruleset.
 const (
 	MCPStateNew             = "new"
 	MCPStatePending         = "pending"
@@ -50,7 +34,6 @@ const (
 	MCPStateUnavailable     = "unavailable"
 )
 
-// Source identifies which collector produced the event.
 type Source string
 
 const (
@@ -60,9 +43,6 @@ const (
 	SourceAmbitd    Source = "ambitd"
 )
 
-// Decision is a policy verdict. In M0 the policy engine does not exist and
-// every event carries DecisionNone: ambitd is observe-only and must not change
-// how any session behaves. See the Roadmap in README.md.
 type Decision string
 
 const (
@@ -74,8 +54,6 @@ const (
 	DecisionFailOpen   Decision = "fail_open"
 )
 
-// Event is the rich internal representation. It stays local: spooled to the
-// trajectory sink and pulled on request during investigation.
 type Event struct {
 	EventID    string `json:"event_id"`
 	TS         string `json:"ts"`
@@ -161,79 +139,40 @@ type MCP struct {
 	Tool         string      `json:"tool"`
 	Annotations  Annotations `json:"annotations"`
 	MetadataHash string      `json:"metadata_hash,omitempty"`
-	// Trust is the operator-assigned label for the server. Only "internal"
-	// relaxes anything; see docs/02 on annotations being one-directional.
+
 	Trust string `json:"trust,omitempty"`
-	// Classified is true when the operator labelled this tool (config mcp_tool_labels),
-	// and Labels are those labels. A classified tool's Rule-of-Two bits come from its
-	// labels alone; an unclassified one gets the server-level default. Rich event only.
+
 	Classified bool     `json:"classified,omitempty"`
 	Labels     []string `json:"labels,omitempty"`
 
-	// The fields below are populated only on mcp_list events, by mcp-interpose.
-	// They live on this block rather than one of their own so that a Wazuh rule
-	// can correlate a listing against later calls with same_field on
-	// tool_mcp_server — the listing and the call describe the same server, and
-	// splitting them across two field namespaces would make that correlation
-	// impossible to express.
-
-	// BaselineState is D4's verdict for this tool: new, pending, approved, drift,
-	// drift_unapproved, removed, or unavailable. See internal/baseline.
 	BaselineState string `json:"baseline_state,omitempty"`
-	// PrevMetadataHash is what the baseline held before this observation. Present
-	// only on drift, where a runbook needs both sides.
+
 	PrevMetadataHash string `json:"prev_metadata_hash,omitempty"`
-	// ChangedFields names what differed: description, input_schema, annotations
-	// and so on. "The description changed" is actionable for an analyst who cannot
-	// see our source tree; "the hash changed" is not.
+
 	ChangedFields []string `json:"changed_fields,omitempty"`
-	// ScanClasses are D5's finding classes. ScanRules are the specific pattern
-	// ids, kept local: they are how a false-positive rate gets attributed to one
-	// pattern during M1 tuning. Neither carries the matched text.
+
 	ScanClasses []string `json:"scan_classes,omitempty"`
 	ScanRules   []string `json:"scan_rules,omitempty"`
-	// ToolCount is the size of the advertised surface, on the per-server summary.
+
 	ToolCount int `json:"tool_count,omitempty"`
-	// Worst is the listing's worst per-tool verdict, set on the per-server summary
-	// only, and deliberately NOT projected into the flattened schema.
-	//
-	// The reason is the rule engine. A Wazuh rule tests field presence and equality
-	// and cannot easily test absence, so if the summary and the per-tool events both
-	// carried baseline_state, every drift would raise two alerts and no rule could
-	// tell the roll-up from the finding. Keeping the roll-up under a different name,
-	// local to the spool, means mcp_baseline_state appears on exactly the events that
-	// describe one tool. A listing-level view is a correlation over those.
+
 	Worst string `json:"worst,omitempty"`
-	// NewCount, DriftCount and RemovedCount summarize the listing. They stay local:
-	// the per-tool events that cross carry the same information addressably, and a
-	// rule that wants a count can use frequency over those.
+
 	NewCount     int `json:"new_count,omitempty"`
 	DriftCount   int `json:"drift_count,omitempty"`
 	RemovedCount int `json:"removed_count,omitempty"`
-	// Trigger says what produced the listing: a routine tools_list, a re-list
-	// after the server announced a change, the announcement itself, or shutdown.
+
 	Trigger string `json:"trigger,omitempty"`
-	// Approved reports whether an operator has approved this server's baseline.
-	// A pointer because absent means "not an mcp_list event", which is not the
-	// same as "not approved".
+
 	Approved *bool `json:"approved,omitempty"`
-	// Complete is false when the listing was one page of a paginated response, in
-	// which case an absent tool is on another page rather than removed.
+
 	Complete *bool `json:"complete,omitempty"`
-	// ServerVersion is the server's own claim about itself, from initialize. Local
-	// only, and never used to classify trust.
+
 	ServerVersion string `json:"server_version,omitempty"`
-	// CallsObserved is how many tools/call requests the interposer saw for this
-	// server. It corroborates the interposer stream against the hook stream — the
-	// same shape of signal as D7's OTel discrepancy check — and is local-only
-	// until M1 specifies that third signal and gives it a flat field.
+
 	CallsObserved int64 `json:"calls_observed,omitempty"`
 }
 
-// Annotations mirrors MCP tool annotations. Pointers because "absent" and
-// "false" mean different things: the spec says these are hints and clients
-// should not trust them from an untrusted server, so a missing readOnlyHint
-// must never be read as false and used to relax policy.
 type Annotations struct {
 	ReadOnlyHint    *bool `json:"readOnlyHint,omitempty"`
 	DestructiveHint *bool `json:"destructiveHint,omitempty"`
@@ -245,8 +184,7 @@ type Bash struct {
 	Argv0         string `json:"argv0"`
 	CommandClass  string `json:"command_class"`
 	CommandDigest string `json:"command_digest"`
-	// Command holds the raw command only when retention policy opts in. In M0
-	// it is always empty.
+
 	Command string `json:"command,omitempty"`
 }
 
@@ -262,7 +200,7 @@ type Features struct {
 	Emails    []string `json:"emails,omitempty"`
 	IPs       []string `json:"ips,omitempty"`
 	HiEntropy []string `json:"hi_entropy,omitempty"`
-	// IBANs are checksum-valid IBANs, normalized to the compact form before digesting.
+
 	IBANs      []string    `json:"ibans,omitempty"`
 	Shingles   []string    `json:"shingles,omitempty"`
 	SecretHits []SecretHit `json:"secret_hits,omitempty"`
@@ -283,14 +221,9 @@ type Provenance struct {
 	Taint      []string `json:"taint,omitempty"`
 	IngestRefs []string `json:"ingest_refs,omitempty"`
 	Edges      []Edge   `json:"edges,omitempty"`
-	// Exfil are sensitive-data edges: this action can act or reach outside (Rule-of-Two
-	// bit C) and its input carries a value that an earlier result of a sensitive read
-	// (bit B) returned. Edges answer "did untrusted content steer this action"; Exfil
-	// answers "is private data leaving in it". Rich event only until its precision is
-	// established: there is no flattened field and no rule (docs/03, Layer 2).
+
 	Exfil []Edge `json:"exfil,omitempty"`
-	// FPNotable is the single high-specificity fingerprint selected for the
-	// scalar Wazuh tripwire that stands in for D10; see docs/03.
+
 	FPNotable string `json:"fp_notable,omitempty"`
 	FPRole    string `json:"fp_role,omitempty"`
 }
@@ -306,10 +239,9 @@ type R2 struct {
 	A bool `json:"a"`
 	B bool `json:"b"`
 	C bool `json:"c"`
-	// SetBy references the event that most recently set a bit.
+
 	SetBy string `json:"set_by,omitempty"`
-	// Transition is true when this event set a bit that was previously unset.
-	// The filter uses it so steady-state events do not all cross to Wazuh.
+
 	Transition bool `json:"transition,omitempty"`
 }
 
@@ -319,29 +251,21 @@ type Policy struct {
 	RuleIDs       []string `json:"rule_ids,omitempty"`
 	BundleVersion string   `json:"bundle_version,omitempty"`
 	LatencyUS     int64    `json:"latency_us,omitempty"`
-	// Shadow is true when the decision was computed but not returned to the
-	// agent. M2 runs this way; M0 emits DecisionNone and Shadow false.
+
 	Shadow bool `json:"shadow,omitempty"`
-	// Alternatives are the gate's verdicts under session scopings other than the one
-	// the fields above use, computed side by side so the scoping can be chosen from data
-	// (docs/03, Layer 1). Rich event only: they never cross to the SIEM, where the
-	// field budget is spent on the decision that would actually apply.
+
 	Alternatives []ScopedVerdict `json:"alternatives,omitempty"`
 }
 
-// ScopedVerdict is the gate's verdict under one named session scoping.
 type ScopedVerdict struct {
 	Scoping  string   `json:"scoping"`
 	Decision Decision `json:"decision"`
 	RuleID   string   `json:"rule_id,omitempty"`
 }
 
-// Session scopings the gate is evaluated under.
 const (
-	// ScopingSession is monotonic per session_id: the current implementation, and the
-	// one the policy fields carry.
 	ScopingSession = "session"
-	// ScopingTurn resets the bits whenever prompt_id changes: candidate 3 in docs/03.
+
 	ScopingTurn = "turn"
 )
 
@@ -350,8 +274,6 @@ type Scores struct {
 	DriftScorerV string   `json:"drift_scorer_v,omitempty"`
 }
 
-// PromptInfo carries prompt metadata. The text itself is held separately and
-// never crosses to Wazuh; see docs/04 on prompt_submit being metadata-only.
 type PromptInfo struct {
 	Text       string `json:"text,omitempty"`
 	TextDigest string `json:"text_digest"`

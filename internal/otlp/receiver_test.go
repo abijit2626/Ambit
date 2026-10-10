@@ -47,8 +47,6 @@ func start(t *testing.T, sr *sinkRecorder) (string, *Server) {
 	return "http://" + ln.Addr().String(), s
 }
 
-// A realistic OTLP/JSON logs payload shaped like Claude Code's tool_decision
-// event, including resource attributes that must be merged onto each record.
 const logsPayload = `{
   "resourceLogs": [{
     "resource": {"attributes": [
@@ -108,8 +106,7 @@ func TestDecodeLogs(t *testing.T) {
 	if first.Attr("tool_name") != "Bash" {
 		t.Errorf("tool_name = %q", first.Attr("tool_name"))
 	}
-	// Resource attributes must be merged onto every record, or user and org
-	// attribution is lost for all but the first.
+
 	if first.Attr("user.id") != "u_1a2b" || first.Attr("organization.id") != "o_9x8y" {
 		t.Errorf("resource attributes not merged: %v", first.Attrs)
 	}
@@ -124,7 +121,7 @@ func TestDecodeLogs(t *testing.T) {
 	if second.Attr("mcp_server.name") != "github" {
 		t.Errorf("mcp_server.name = %q", second.Attr("mcp_server.name"))
 	}
-	// Non-string AnyValue variants must survive stringification.
+
 	if second.Attr("success") != "true" {
 		t.Errorf("boolValue = %q, want \"true\"", second.Attr("success"))
 	}
@@ -175,9 +172,6 @@ func TestDecodeAnyValueVariants(t *testing.T) {
 	}
 }
 
-// TestDecodeMetricsAndTracesAreSummarized documents the scope decision: the count
-// is what the discrepancy detector needs, and the hook stream already carries
-// tool-call detail with better fidelity.
 func TestDecodeMetricsAndTracesAreSummarized(t *testing.T) {
 	for _, sig := range []Signal{SignalMetrics, SignalTraces} {
 		recs, err := Decode(sig, []byte(`{"resourceMetrics":[{"scopeMetrics":[]}]}`))
@@ -188,8 +182,7 @@ func TestDecodeMetricsAndTracesAreSummarized(t *testing.T) {
 			t.Errorf("%s: got %d records, want 1 summary record", sig, len(recs))
 		}
 	}
-	// Malformed JSON must still be reported, so a misconfigured exporter is not
-	// silently counted as healthy.
+
 	if _, err := Decode(SignalMetrics, []byte("{not json")); err == nil {
 		t.Error("malformed metrics payload should return an error")
 	}
@@ -207,8 +200,7 @@ func TestServeLogsEndpoint(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	// An empty JSON object is a valid Export*ServiceResponse with no partial
-	// success; anything else makes the exporter think something went wrong.
+
 	var body map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("response is not JSON: %v", err)
@@ -224,10 +216,6 @@ func TestServeLogsEndpoint(t *testing.T) {
 	}
 }
 
-// TestProtobufIsRejectedLoudly is the important one. A silent decode failure
-// would look like "OTel is configured" while nothing was ever received — exactly
-// the blind spot the second stream exists to close. 415 also tells the exporter
-// this will never work rather than inviting a retry loop.
 func TestProtobufIsRejectedLoudly(t *testing.T) {
 	sr := &sinkRecorder{}
 	url, srv := start(t, sr)
@@ -261,8 +249,6 @@ func TestJSONContentTypeWithCharset(t *testing.T) {
 	}
 }
 
-// TestMalformedPayloadReturns200: an OTLP client retries on an error response,
-// and a retry loop on a payload we cannot parse is worse than dropping it.
 func TestMalformedPayloadReturns200(t *testing.T) {
 	sr := &sinkRecorder{}
 	url, srv := start(t, sr)

@@ -16,7 +16,7 @@ func TestPrivateDirCreatesNestedDirectories(t *testing.T) {
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		t.Fatalf("directory not created: %v", err)
 	}
-	// The directory has to stay usable by its owner after it is locked down.
+
 	f := filepath.Join(dir, "x")
 	if err := os.WriteFile(f, []byte("ok"), 0o600); err != nil {
 		t.Fatalf("owner cannot write into the private directory: %v", err)
@@ -60,8 +60,6 @@ func TestPrivateDirUnixModeOfCreatedParents(t *testing.T) {
 	}
 }
 
-// An existing directory belongs to whoever made it. Locking down C:\ProgramData
-// because an operator pointed events_path at it would break every other program.
 func TestPrivateDirLeavesExistingDirectoryAlone(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("covered by the Windows ACL test")
@@ -82,9 +80,6 @@ func TestPrivateDirLeavesExistingDirectoryAlone(t *testing.T) {
 	}
 }
 
-// A failed restriction must not leave the directory behind. It would have the inherited
-// ACL, and the next run, finding it already there, would take it for somebody else's and
-// use it as it is.
 func TestPrivateDirRemovesWhatItCreatedWhenRestrictingFails(t *testing.T) {
 	old := restrictDir
 	defer func() { restrictDir = old }()
@@ -106,8 +101,6 @@ func TestPrivateDirRemovesWhatItCreatedWhenRestrictingFails(t *testing.T) {
 	}
 }
 
-// Every directory created along the way is restricted, not just the last one. A parent
-// created with the inherited ACL stays that way, because a later run finds it existing.
 func TestPrivateDirRestrictsEveryDirectoryItCreates(t *testing.T) {
 	old := restrictDir
 	defer func() { restrictDir = old }()
@@ -124,7 +117,6 @@ func TestPrivateDirRestrictsEveryDirectoryItCreates(t *testing.T) {
 		t.Errorf("restricted %v, want %v (outermost first, and not the pre-existing root)", got, want)
 	}
 
-	// A directory that was already there is not restricted again.
 	got = nil
 	if err := PrivateDir(dir); err != nil {
 		t.Fatal(err)

@@ -35,8 +35,7 @@ func TestParseHeaderBareAndWrappedSteps(t *testing.T) {
 	if sc.Steps[0].N != 1 || sc.Steps[1].N != 2 {
 		t.Errorf("step numbers = %d, %d; want 1, 2 (steps, not lines)", sc.Steps[0].N, sc.Steps[1].N)
 	}
-	// The comment and blank line are skipped but still count toward line numbers, so an
-	// error message points at the real line.
+
 	if sc.Steps[0].Line != 4 || sc.Steps[1].Line != 5 {
 		t.Errorf("lines = %d, %d; want 4, 5", sc.Steps[0].Line, sc.Steps[1].Line)
 	}
@@ -96,8 +95,6 @@ func TestParseRejectsWhatWouldSilentlyAssertNothing(t *testing.T) {
 	}
 }
 
-// A payload field Claude Code adds later must not break a recording, matching production.
-// Strictness applies to the harness's own keys and nowhere else.
 func TestParseToleratesUnknownPayloadFields(t *testing.T) {
 	parse(t, `{"hook_event_name":"SessionStart","session_id":"s","a_field_from_a_newer_claude_code":1}`+"\n")
 	parse(t, `{"payload":{"hook_event_name":"SessionStart","session_id":"s","newer":{"x":1}}}`+"\n")

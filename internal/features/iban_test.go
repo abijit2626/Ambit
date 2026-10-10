@@ -4,10 +4,9 @@ import (
 	"testing"
 )
 
-// Registry examples, one per length class worth covering.
 var validIBANs = []string{
 	"GB29NWBK60161331926819",
-	"DE89370400440532013000", // entropy 2.94: the high-entropy class misses this one
+	"DE89370400440532013000",
 	"CH9300762011623852957",
 	"NL91ABNA0417164300",
 	"BE68539007547034",
@@ -28,9 +27,7 @@ func TestValidIBANRejects(t *testing.T) {
 	for s, why := range map[string]string{
 		"US133000000121212121212": "the US issues no IBANs (AgentDojo's attacker account)",
 		"DE89370400440532013001":  "one digit changed, so the check digits fail",
-		// These two pass mod-97 and fail only on length, so they test the length rule.
-		// Cases that merely add or drop a character fail the checksum first and would
-		// pass even with the length check removed.
+
 		"DE5137040044053201300":    "valid check digits, but a German IBAN is 22 characters, not 21",
 		"GB31NWBK601613319268190":  "valid check digits, but a British IBAN is 22 characters, not 23",
 		"AB12CDEFGHIJKLMNOP":       "not a country",
@@ -60,8 +57,6 @@ func TestIBANsFindsPrintedCompactAndLowercaseForms(t *testing.T) {
 	}
 }
 
-// The printed form ends where the IBAN ends, but a following four-letter word looks like
-// one more group. The match has to be trimmed back to the valid prefix, not dropped.
 func TestIBANsTrimsATrailingWordThatLooksLikeAGroup(t *testing.T) {
 	got := ibans("BE68 5390 0754 7034 from")
 	if !got["BE68539007547034"] {
@@ -74,7 +69,7 @@ func TestIBANsIgnoresLookalikes(t *testing.T) {
 		"order AB12CDEF34567890XYZ shipped",
 		"transfer to US133000000121212121212",
 		"commit 4c3a7442fa155e11cd1059373070330be9d7771a",
-		"build DE12 3456 7890 1234 5678 90 failed", // IBAN-shaped, checksum fails
+		"build DE12 3456 7890 1234 5678 90 failed",
 	} {
 		if got := ibans(text); len(got) != 0 {
 			t.Errorf("%q: matched %v", text, keys(got))
@@ -82,8 +77,6 @@ func TestIBANsIgnoresLookalikes(t *testing.T) {
 	}
 }
 
-// One account must be one fingerprint, however it was typed, or a page that prints it with
-// spaces and a payment that sends it compact would never match.
 func TestExtractDigestsEveryFormOfAnIBANTheSame(t *testing.T) {
 	e := New(testKey)
 	a := e.Extract("pay DE89 3704 0044 0532 0130 00")
@@ -96,7 +89,6 @@ func TestExtractDigestsEveryFormOfAnIBANTheSame(t *testing.T) {
 	}
 }
 
-// The reason the class exists: this IBAN is below the high-entropy floor.
 func TestExtractCatchesAnIBANTheHighEntropyClassMisses(t *testing.T) {
 	e := New(testKey)
 	f := e.Extract("DE89370400440532013000")

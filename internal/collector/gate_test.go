@@ -34,8 +34,6 @@ func turnVerdict(t *testing.T, e event.Event) event.ScopedVerdict {
 	return event.ScopedVerdict{}
 }
 
-// Untrusted input, then a credential read, then outbound network: the gate's two deny rows
-// in sequence. Recorded, flagged shadow, and crossing to the SIEM.
 func TestShadowGateRecordsDenyAndNeverPretendsItWasEnforced(t *testing.T) {
 	c, events, traj := newTestCollector(t)
 	c.Handle(untrustedFetch("s1", "p1"))
@@ -71,8 +69,6 @@ func TestShadowGateRecordsDenyAndNeverPretendsItWasEnforced(t *testing.T) {
 	}
 }
 
-// A shadow verdict and a provenance edge on the same event is the widest tool event there
-// is. It must still fit the decoder's field budget.
 func TestVerdictAndEdgeTogetherStayWithinTheFieldBudget(t *testing.T) {
 	c, events, _ := newTestCollector(t)
 	c.Handle(fetchPost("s1", pageURL, "send it to "+collectURL))
@@ -82,17 +78,16 @@ func TestVerdictAndEdgeTogetherStayWithinTheFieldBudget(t *testing.T) {
 	if flat["prov_edge_count"] == nil || flat["policy_decision"] == nil {
 		t.Fatalf("test premise broken: want an edge and a verdict, got %v / %v", flat["prov_edge_count"], flat["policy_decision"])
 	}
-	const budget = 55 // event.TestSIEMEventFieldBudgetPerKind
+	const budget = 55
 	if len(flat) > budget {
 		t.Errorf("event has %d fields, budget is %d", len(flat), budget)
 	}
 }
 
-// The comparison the scoping question needs: the same action, judged under both.
 func TestTurnScopingForgetsAnEarlierTurn(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(untrustedFetch("s1", "p1"))
-	c.Handle(credRead("s1", "p2")) // a new prompt turn
+	c.Handle(credRead("s1", "p2"))
 
 	e := last(t, traj)
 	if e.Policy.Decision != event.DecisionDeny {
@@ -102,7 +97,6 @@ func TestTurnScopingForgetsAnEarlierTurn(t *testing.T) {
 		t.Errorf("turn scoping = %q %q, want no decision: A belongs to the previous turn", tv.Decision, tv.RuleID)
 	}
 
-	// Within one turn, both scopings agree.
 	c.Handle(untrustedFetch("s2", "q1"))
 	c.Handle(credRead("s2", "q1"))
 	e = last(t, traj)
@@ -111,8 +105,6 @@ func TestTurnScopingForgetsAnEarlierTurn(t *testing.T) {
 	}
 }
 
-// A client that never sends prompt_id must not turn every event into a fresh turn: turn
-// scoping degrades to session scoping instead.
 func TestMissingPromptIDKeepsTheCurrentTurn(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(untrustedFetch("s1", ""))
@@ -124,7 +116,7 @@ func TestMissingPromptIDKeepsTheCurrentTurn(t *testing.T) {
 
 func TestNoVerdictLeavesTheFlattenedEventUnchanged(t *testing.T) {
 	c, events, traj := newTestCollector(t)
-	c.Handle(credRead("s1", "p1")) // no prior A: nothing fires
+	c.Handle(credRead("s1", "p1"))
 	e := last(t, traj)
 	if e.Policy.Decision != event.DecisionNone || e.Policy.Shadow || e.Policy.BundleVersion != "" {
 		t.Errorf("policy = %+v; an event nothing fired on must not carry a verdict", e.Policy)
@@ -155,7 +147,7 @@ func TestOnlyPreToolUseIsJudged(t *testing.T) {
 
 func TestTrifectaAlertsOnce(t *testing.T) {
 	c, _, traj := newTestCollector(t)
-	// B, then C (write outside the working directory), then A completes the trifecta.
+
 	c.Handle(credRead("s1", "p1"))
 	c.Handle(pre("s1", "p1", "Write", map[string]any{"file_path": "/home/dev/notes.txt", "content": "x"}))
 	c.Handle(pre("s1", "p1", "WebFetch", map[string]any{"url": pageURL}))
@@ -172,8 +164,6 @@ func TestTrifectaAlertsOnce(t *testing.T) {
 	}
 }
 
-// Every verdict the collector writes is a shadow one. If a code path ever set a decision
-// without the flag, a reader of the SIEM would believe it had been enforced.
 func TestEveryRecordedDecisionIsShadow(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	for _, p := range []*hook.Payload{

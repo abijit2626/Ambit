@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for mcp-interpose, asserting the properties that are silent
-# when they break.
-#
-#   1. Interposing is invisible. The client's byte stream is identical to running
-#      the wrapped server directly — same output, same exit code.
-#   2. A first listing is inventoried (D4 "new") and a poisoned description is
-#      classed (D5), reaching the SIEM-bound sink as mcp_list events.
-#   3. After approval, a changed description reports drift, names the field that
-#      changed, and carries both hashes.
-#   4. No server metadata text reaches the SIEM-bound sink.
-#   5. With ambitd down, the wrapped server still works and the interposer says so.
 set -euo pipefail
 
 AMBITD=${AMBITD:-./bin/ambitd}
@@ -19,11 +8,7 @@ D=$(mktemp -d)
 trap 'kill "${PID:-}" 2>/dev/null || true; rm -rf "$D"' EXIT
 
 fail=0
-# check reports a pre-computed condition. want/absent run the grep themselves, so a
-# failing assertion cannot abort the script under set -e — which would otherwise turn
-# one failed check into a silent early exit that looks like a pass.
 check() {
-  # check <description> <condition-exit-code>
   if [ "$2" -eq 0 ]; then
     echo "  ok:   $1"
   else
@@ -32,16 +17,12 @@ check() {
   fi
 }
 want() {
-  # want <description> <pattern> <file>
   if grep -qF "$2" "$3" 2>/dev/null; then check "$1" 0; else check "$1" 1; fi
 }
 absent() {
-  # absent <description> <pattern> <file>
   if grep -qF "$2" "$3" 2>/dev/null; then check "$1" 1; else check "$1" 0; fi
 }
 
-# A minimal MCP server over stdio. POISON=1 changes one tool description, which is
-# the rug pull this test detects.
 cat > "$D/fake-server.sh" <<'SERVER'
 #!/usr/bin/env bash
 set -eu
@@ -67,7 +48,6 @@ done
 SERVER
 chmod +x "$D/fake-server.sh"
 
-# The scripted client session.
 cat > "$D/session.jsonl" <<'SESSION'
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"claude-code","version":"2.1.271"}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
@@ -89,7 +69,6 @@ EOF
 
 echo "1. interposing is invisible"
 
-# The wrapped server, run directly: the reference output.
 if "$D/fake-server.sh" < "$D/session.jsonl" > "$D/direct.out"; then direct_status=0; else direct_status=$?; fi
 
 "$AMBITD" -config "$D/config.json" >"$D/ambitd.log" 2>&1 &
@@ -128,9 +107,6 @@ want "a changed description after approval reports drift" '"mcp_baseline_state":
 want "drift names the field that changed" '"mcp_changed_fields":["description"]' "$D/events.jsonl"
 want "drift carries the approved hash as well as the current one" '"mcp_prev_metadata_hash":"sha256:' "$D/events.jsonl"
 want "the poisoned description produced D5 classes" '"mcp_scan_classes":[' "$D/events.jsonl"
-# The tool that did not change must not be in the SIEM sink: docs/04 budgets mcp_list
-# at one event per server per session plus whatever says something. The spool keeps
-# it either way — that is the investigation corpus.
 absent "an unchanged approved tool stayed out of the SIEM sink" '"tool_mcp_tool":"search"' "$D/events.jsonl"
 want "the unchanged tool is still in the local spool" '"tool":"search"' "$D/trajectory.jsonl"
 

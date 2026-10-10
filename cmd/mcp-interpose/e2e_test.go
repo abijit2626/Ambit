@@ -17,17 +17,6 @@ import (
 	"time"
 )
 
-// These tests run the real interposer as a child process, in front of a real child
-// process, over real pipes. They are the portable form of scripts/interpose-smoke.sh:
-// that script needs bash, sed and cmp, and a Windows endpoint has none of them on its
-// PATH, so "interposing is invisible" would otherwise go unchecked there.
-//
-// The test binary plays three roles, chosen by its first argument, so the test needs
-// no script interpreter and no second build:
-//
-//	<bin> interpose ...       the interposer itself (runs main)
-//	<bin> fake-mcp-server     a minimal MCP server over stdio
-//	anything else             the tests
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -35,14 +24,12 @@ func TestMain(m *testing.M) {
 			os.Exit(runFakeServer(os.Stdin, os.Stdout))
 		case "interpose":
 			os.Args = append(os.Args[:1], os.Args[2:]...)
-			main() // exits
+			main()
 		}
 	}
 	os.Exit(m.Run())
 }
 
-// runFakeServer answers initialize, tools/list and tools/call. AMBIT_FAKE_POISON=1
-// changes one tool description (the rug pull); AMBIT_FAKE_EXIT=n sets its exit code.
 func runFakeServer(in io.Reader, out io.Writer) int {
 	desc := "Publish a page to the wiki"
 	if os.Getenv("AMBIT_FAKE_POISON") == "1" {
@@ -79,8 +66,6 @@ const session = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"client
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search","arguments":{"q":"onboarding"}}}
 `
 
-// deadAddr returns a loopback address nothing is listening on, standing in for an
-// ambitd that is not running.
 func deadAddr(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -151,9 +136,6 @@ func runProc(t *testing.T, env []string, args ...string) result {
 	return result{stdout.Bytes(), stderr.String(), code}
 }
 
-// The property the README states and the smoke test asserts: with the interposer in
-// the path the client sees the same bytes it would have seen without it, even when
-// ambitd is down.
 func TestInterposingIsInvisible(t *testing.T) {
 	cfg := writeConfig(t)
 
@@ -170,13 +152,12 @@ func TestInterposingIsInvisible(t *testing.T) {
 	if direct.code != via.code {
 		t.Errorf("exit code %d through the interposer, %d direct", via.code, direct.code)
 	}
-	// Reports to a dead ambitd must be loud somewhere that is not the protocol.
+
 	if strings.Contains(string(via.stdout), "interposer") || strings.Contains(string(via.stdout), "ambitd") {
 		t.Errorf("interposer diagnostics leaked onto stdout, which belongs to the protocol: %q", via.stdout)
 	}
 }
 
-// The client is entitled to the same outcome it would have seen without us.
 func TestWrappedServerExitCodeIsPreserved(t *testing.T) {
 	cfg := writeConfig(t)
 	env := []string{"AMBIT_FAKE_EXIT=3"}
@@ -218,12 +199,9 @@ func TestApproveAndShowRoundTrip(t *testing.T) {
 	}
 }
 
-// terminate must actually stop a wrapped server that is blocked reading its stdin.
-// On Unix that is SIGTERM; on Windows, where there is no SIGTERM, it is a process-tree
-// kill, which is the path os.Process.Signal cannot take.
 func TestTerminateStopsABlockedServer(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "fake-mcp-server")
-	stdin, err := cmd.StdinPipe() // held open: the server blocks reading it
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +212,7 @@ func TestTerminateStopsABlockedServer(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
-	time.Sleep(200 * time.Millisecond) // let it reach its read
+	time.Sleep(200 * time.Millisecond)
 	terminate(cmd.Process)
 
 	select {

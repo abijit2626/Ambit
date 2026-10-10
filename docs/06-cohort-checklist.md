@@ -66,8 +66,8 @@ Each one will otherwise cost the cohort a week to discover.
 
 5. **Fingerprint keys are per endpoint unless you provision them.** `ambitd` creates its key if
    none exists at `fingerprint_key_path`. M0 and M1 only compare digests within one endpoint,
-   so this works, but it is not the "per-org key" the config comment describes. If you want one
-   org key, deliver it before the first start.
+   so this works, but each endpoint then has its own key rather than one for the org. If you want
+   one org key, deliver it before the first start.
 
 6. **Three Wazuh behaviors are unconfirmed and fail silently** (syscheck parent SIDs, the SCA
    parent SID, and how a `<field>` regex matches an array). The Windows agent adds four more.

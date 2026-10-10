@@ -17,7 +17,7 @@ func TestZone(t *testing.T) {
 		want string
 		why  string
 	}{
-		// Credential, wherever it lives.
+
 		{"/home/dev/.ssh/id_ed25519", event.ZoneCredential, "ssh private key"},
 		{"/home/dev/.aws/credentials", event.ZoneCredential, "aws credentials"},
 		{"/home/dev/src/myrepo/.env", event.ZoneCredential, "dotenv in the working directory is still a credential"},
@@ -28,35 +28,28 @@ func TestZone(t *testing.T) {
 		{"/home/dev/.config/gcloud/application_default_credentials.json", event.ZoneCredential, "gcloud adc"},
 		{"/home/dev/.kube/config", event.ZoneCredential, "kubeconfig holds tokens"},
 
-		// The precedence rule that matters most: credential must outrank
-		// untrusted, or the highest-severity signal hides behind a lower one.
 		{"/home/dev/src/myrepo/node_modules/evil/.env", event.ZoneCredential, "dotenv inside a dependency tree is still credential"},
 		{"/home/dev/src/myrepo/node_modules/pkg/key.pem", event.ZoneCredential, "key inside a dependency tree"},
 
-		// Not credentials, and flagging them would add noise.
 		{"/home/dev/.ssh/id_ed25519.pub", event.ZoneHome, "public key is not a secret"},
 		{"/home/dev/.ssh/known_hosts", event.ZoneHome, "known_hosts is not a secret"},
 		{"/home/dev/.ssh/config", event.ZoneHome, "ssh config is not a secret"},
 
-		// System.
 		{"/etc/passwd", event.ZoneSystem, "system tree"},
 		{"/usr/lib/libc.so", event.ZoneSystem, "system tree"},
 		{"/System/Library/Frameworks/Foo", event.ZoneSystem, "macOS system tree"},
 
-		// Untrusted.
 		{"/home/dev/src/myrepo/node_modules/left-pad/index.js", event.ZoneUntrusted, "dependency source"},
 		{"/home/dev/src/myrepo/vendor/github.com/x/y.go", event.ZoneUntrusted, "vendored source"},
 		{"/home/dev/go/pkg/mod/example.com/z@v1/f.go", event.ZoneUntrusted, "module cache"},
 		{"/home/dev/Downloads/installer.sh", event.ZoneUntrusted, "downloads"},
 		{"/opt/thirdparty/blob.js", event.ZoneUntrusted, "operator-configured untrusted fragment"},
 
-		// Workdir and home.
 		{"/home/dev/src/myrepo/main.go", event.ZoneWorkdir, "ordinary source file"},
 		{"/home/dev/src/myrepo/deep/nested/file.ts", event.ZoneWorkdir, "nested source file"},
 		{"/home/dev/notes.txt", event.ZoneHome, "home but not workdir"},
 		{"/home/dev/src/other/main.go", event.ZoneHome, "different repo under home"},
 
-		// Outside everything.
 		{"/tmp/scratch", event.ZoneUnknown, "neither home nor workdir nor system"},
 		{"", event.ZoneUnknown, "empty path"},
 	}
@@ -68,9 +61,6 @@ func TestZone(t *testing.T) {
 	}
 }
 
-// TestZoneWorkdirBoundaryIsSegmentWise guards against a prefix-match bug where
-// a sibling directory sharing a name prefix is read as being inside the
-// working directory.
 func TestZoneWorkdirBoundaryIsSegmentWise(t *testing.T) {
 	z := NewZoner("/home/dev", "/home/dev/src/repo", nil)
 	if got := z.Zone("/home/dev/src/repo-other/main.go"); got == event.ZoneWorkdir {
@@ -83,8 +73,7 @@ func TestZoneWorkdirBoundaryIsSegmentWise(t *testing.T) {
 
 func TestZoneNormalizesTraversalAndSeparators(t *testing.T) {
 	z := testZoner()
-	// A traversal that resolves into the credential zone must be caught after
-	// cleaning, not evaluated as written.
+
 	if got := z.Zone("/home/dev/src/myrepo/../../.ssh/id_rsa"); got != event.ZoneCredential {
 		t.Errorf("traversal into .ssh = %q, want credential", got)
 	}
@@ -111,9 +100,6 @@ func TestHighestZone(t *testing.T) {
 	}
 }
 
-// The Windows cases run on every host: normalize turns the path into one form before
-// anything is compared, so a Linux CI run exercises exactly what a Windows endpoint
-// will see.
 func TestZoneWindowsPaths(t *testing.T) {
 	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
 	cases := []struct {
@@ -121,7 +107,7 @@ func TestZoneWindowsPaths(t *testing.T) {
 		want string
 		why  string
 	}{
-		// Credential.
+
 		{`C:\Users\dev\.ssh\id_ed25519`, event.ZoneCredential, "ssh private key"},
 		{`C:\Users\dev\.aws\credentials`, event.ZoneCredential, "aws credentials"},
 		{`c:\users\DEV\.AWS\Credentials`, event.ZoneCredential, "case does not matter on Windows"},
@@ -135,17 +121,14 @@ func TestZoneWindowsPaths(t *testing.T) {
 		{`\\?\C:\Users\dev\.ssh\id_rsa`, event.ZoneCredential, "extended-length prefix names the same file"},
 		{`C:\Users\dev\src\myrepo\..\..\.ssh\id_rsa`, event.ZoneCredential, "backslash traversal is cleaned, not evaluated as written"},
 
-		// Not credentials.
 		{`C:\Users\dev\.ssh\id_ed25519.pub`, event.ZoneHome, "public key"},
 		{`C:\Users\dev\.ssh\config`, event.ZoneHome, "ssh config"},
 
-		// System.
 		{`C:\Windows\System32\drivers\etc\hosts`, event.ZoneSystem, "windows tree"},
 		{`C:\Program Files\Git\bin\git.exe`, event.ZoneSystem, "program files"},
 		{`C:\Program Files (x86)\Foo\foo.dll`, event.ZoneSystem, "program files (x86)"},
 		{`d:\windows\notepad.exe`, event.ZoneSystem, "any drive letter"},
 
-		// Untrusted, workdir, home.
 		{`C:\Users\dev\src\myrepo\node_modules\pkg\index.js`, event.ZoneUntrusted, "dependency tree"},
 		{`C:\Users\dev\Downloads\setup.exe`, event.ZoneUntrusted, "downloads"},
 		{`C:\Users\dev\src\myrepo\main.go`, event.ZoneWorkdir, "inside the working directory"},
@@ -162,8 +145,6 @@ func TestZoneWindowsPaths(t *testing.T) {
 	}
 }
 
-// WSL and Git Bash spell the same Windows paths differently. Claude Code can report
-// either, and the zone must not depend on which shell the developer happened to use.
 func TestZoneWindowsPathsFromWSLAndGitBash(t *testing.T) {
 	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
 	cases := []struct {
@@ -176,9 +157,9 @@ func TestZoneWindowsPathsFromWSLAndGitBash(t *testing.T) {
 		{"/c/Users/dev/.aws/credentials", event.ZoneCredential},
 		{"/c/Users/dev/src/myrepo/main.go", event.ZoneWorkdir},
 		{"/C/Program Files/Git/bin/git.exe", event.ZoneSystem},
-		// A single-letter directory that is not a Windows root is not a drive.
+
 		{"/c/projects/x.go", event.ZoneUnknown},
-		// The UNC form is kept distinct from a plain rooted path.
+
 		{`\\fileserver\share\.ssh\id_rsa`, event.ZoneCredential},
 	}
 	for _, c := range cases {
@@ -209,9 +190,6 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
-// Win32 opens `.npmrc.`, `.npmrc ` and `key.pem::$DATA` as `.npmrc` and `key.pem`. A
-// zone check that compares the spelling it was given would let an injected agent read
-// credentials through a spelling the file system accepts and the check does not know.
 func TestZoneWindowsNameCanonicalization(t *testing.T) {
 	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
 	for _, p := range []string{
@@ -232,7 +210,7 @@ func TestZoneWindowsNameCanonicalization(t *testing.T) {
 			t.Errorf("Zone(%q) = %q, want credential", p, got)
 		}
 	}
-	// Canonicalizing must not invent credentials.
+
 	for _, p := range []string{
 		`C:\Users\dev\src\myrepo\main.go.`,
 		`C:\Users\dev\src\myrepo\notes.txt:stream`,
@@ -243,8 +221,6 @@ func TestZoneWindowsNameCanonicalization(t *testing.T) {
 	}
 }
 
-// path.Clean treats `C:` as an ordinary directory, so extra `..` used to climb out of
-// the drive and leave a relative path that zoned as unknown.
 func TestZoneWindowsDriveRootIsACeiling(t *testing.T) {
 	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, nil)
 	cases := []struct {
@@ -276,9 +252,6 @@ func TestZoneWindowsDriveRootIsACeiling(t *testing.T) {
 	}
 }
 
-// A leading // is a UNC root on Windows and the root directory on Unix. Reading it as
-// UNC on Unix meant //home/dev/notes.txt fell out of the home and workdir zones, which
-// is a free pass past the outside-workdir accounting for anything that writes it.
 func TestZoneLeadingDoubleSlash(t *testing.T) {
 	old := hostIsWindows
 	defer func() { hostIsWindows = old }()
@@ -291,7 +264,7 @@ func TestZoneLeadingDoubleSlash(t *testing.T) {
 		"//home/dev/.ssh/id_rsa":         event.ZoneCredential,
 		"///home/dev/notes.txt":          event.ZoneHome,
 		"//etc/passwd":                   event.ZoneSystem,
-		`\\fileserver\share\.ssh\id_rsa`: event.ZoneCredential, // backslashes are UNC on every host
+		`\\fileserver\share\.ssh\id_rsa`: event.ZoneCredential,
 	} {
 		if got := z.Zone(p); got != want {
 			t.Errorf("unix host: Zone(%q) = %q, want %q", p, got, want)
@@ -310,9 +283,6 @@ func TestZoneLeadingDoubleSlash(t *testing.T) {
 	}
 }
 
-// bin/, system/ and Library/ are ordinary directories inside a project and under a home
-// directory. Only the start of a path, or a path that is neither ours nor home, names
-// the OS.
 func TestZoneSystemFragmentsDoNotSwallowProjectDirectories(t *testing.T) {
 	z := NewZoner("/Users/dev", "/Users/dev/src/myrepo", nil)
 	for p, want := range map[string]string{
@@ -343,8 +313,6 @@ func TestZoneSystemFragmentsDoNotSwallowProjectDirectories(t *testing.T) {
 	}
 }
 
-// Operator-supplied untrusted fragments are compared with forward slashes, so one
-// written with backslashes has to be converted or it never matches.
 func TestZoneExtraUntrustedAcceptsBackslashes(t *testing.T) {
 	z := NewZoner(`C:\Users\dev`, `C:\Users\dev\src\myrepo`, []string{`C:\Users\dev\thirdparty`, `\vendor-code\`})
 	for _, p := range []string{

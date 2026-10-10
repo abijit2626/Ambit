@@ -7,15 +7,8 @@ import (
 	"net/http"
 )
 
-// maxReportBytes bounds an inbound report. A listing of several hundred tools with
-// long descriptions is still well inside this; the bound exists because the
-// endpoint accepts input from a process the agent spawns.
 const maxReportBytes = 8 << 20
 
-// NewHandler returns the ambitd-side endpoint for interposer reports.
-//
-// sink must not block: it is called on the HTTP handler's goroutine, which shares
-// a listener with the hook path and its latency budget.
 func NewHandler(sink func(*Report), log *slog.Logger) http.Handler {
 	if log == nil {
 		log = slog.Default()
@@ -38,9 +31,7 @@ func NewHandler(sink func(*Report), log *slog.Logger) http.Handler {
 			return
 		}
 		if rep.SchemaV != ReportSchemaVersion {
-			// Loud rather than best-effort: a version skew that silently produced
-			// empty findings would look exactly like a server with nothing to
-			// report.
+
 			log.Warn("interpose report schema mismatch",
 				"got", rep.SchemaV, "want", ReportSchemaVersion, "server", rep.Server)
 		}

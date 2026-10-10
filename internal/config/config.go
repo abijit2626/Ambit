@@ -1,10 +1,3 @@
-// Package config loads ambitd configuration.
-//
-// Configuration deliberately does NOT arrive over the Wazuh channel. Wazuh's
-// centralized configuration exists and would be convenient, but using it would
-// let anyone with manager access — including an MSSP — rewrite what ambitd
-// observes and, from M3, what it denies. Separate path, separate trust root. See
-// docs/02-architecture.md.
 package config
 
 import (
@@ -22,111 +15,58 @@ import (
 	"github.com/abijit2626/ambit/internal/fsperm"
 )
 
-// Config is ambitd's full configuration.
 type Config struct {
-	// HookAddr is the loopback address the hook endpoint binds. Must match the
-	// url in the managed-settings hook entry.
 	HookAddr string `json:"hook_addr"`
 
-	// OTLPAddr is the loopback address the OTLP/HTTP receiver binds. 4318 is the
-	// OTLP/HTTP default; 4317 is gRPC and would be the wrong port for a receiver
-	// that only speaks http/json.
 	OTLPAddr string `json:"otlp_addr"`
-	// OTLPEnabled turns the second stream on. Off means Claude Code's telemetry
-	// has nowhere to go, so the managed bundle must not set OTEL_* either —
-	// pointing an exporter at a dead port is a misconfiguration, not a no-op.
+
 	OTLPEnabled bool `json:"otlp_enabled"`
 
-	// EventsPath is the Wazuh-bound sink: filtered, flattened events, tailed by
-	// the Wazuh agent with log_format json.
 	EventsPath string `json:"events_path"`
-	// TrajectoryPath is the local spool: every event, rich schema, never
-	// indexed. The investigation corpus.
+
 	TrajectoryPath string `json:"trajectory_path"`
 
-	// EventsMaxBytes and EventsMaxFiles bound the Wazuh-bound sink.
 	EventsMaxBytes int64 `json:"events_max_bytes"`
 	EventsMaxFiles int   `json:"events_max_files"`
-	// TrajectoryMaxBytes and TrajectoryMaxFiles bound the spool. Larger than the
-	// events sink because it holds everything.
+
 	TrajectoryMaxBytes int64 `json:"trajectory_max_bytes"`
 	TrajectoryMaxFiles int   `json:"trajectory_max_files"`
 
-	// BaselineDir holds mcp-interpose's per-server metadata baselines, one file
-	// per server. It sits under an ambit directory so Wazuh FIM can watch it:
-	// the store is written by a process running as the developer, so a rewrite has
-	// to be observable rather than prevented. See internal/baseline.
-	//
-	// The default is per user on Windows (see defaultBaselineDir), because the
-	// machine-wide directory ambitd uses is private to its creator, SYSTEM and
-	// Administrators and a developer's mcp-interpose could not write to it.
 	BaselineDir string `json:"baseline_dir"`
 
-	// FingerprintKeyPath holds the per-org HMAC key. The key stays ours and is
-	// never shared with a monitoring firm: they need equality matching, not
-	// resolution.
 	FingerprintKeyPath string `json:"fingerprint_key_path"`
 
-	// EndpointID and Org identify this endpoint in the fleet.
 	EndpointID string `json:"endpoint_id"`
 	UserID     string `json:"user_id"`
 	OrgID      string `json:"org_id"`
 
-	// Home overrides the detected home directory, for testing. Left unset, ambitd uses
-	// each session's own home, read from the transcript path Claude Code reports, and
-	// falls back to the home of the account ambitd runs as. That fallback is wrong for a
-	// system service, whose account is root or SYSTEM rather than the developer.
 	Home string `json:"home"`
-	// detectedHome is what derive filled Home with, so HomeIsDetected can tell a
-	// detected home from one an operator or a test set.
+
 	detectedHome string
-	// ExtraUntrustedPaths are operator-configured path fragments treated as
-	// untrusted content.
+
 	ExtraUntrustedPaths []string `json:"extra_untrusted_paths"`
-	// TrustedRepoPaths are path prefixes whose CLAUDE.md files are trusted. An
-	// instruction file outside these is a D8 candidate.
+
 	TrustedRepoPaths []string `json:"trusted_repo_paths"`
-	// TrustedMCPServers are explicitly classified servers. A server not listed
-	// here is treated as untrusted; a server's own annotations never move it
-	// onto this list.
+
 	TrustedMCPServers []string `json:"trusted_mcp_servers"`
-	// MCPToolLabels classify individual MCP tools: server name, then a tool name or a
-	// path.Match glob ("get_*"), then labels. See ToolLabels for what they mean and
-	// docs/03-detection.md Layer 1 for why the classification is per tool rather than
-	// per server.
+
 	MCPToolLabels map[string]map[string][]string `json:"mcp_tool_labels"`
-	// TrustedContentDomains are registrable domains (e.g. "example.com", not a
-	// full URL and not a subdomain unless the subdomain IS the registrable
-	// domain) whose WebFetch/WebSearch results do not set Rule-of-Two bit A. A
-	// domain not listed here is untrusted, matching the safe-default posture
-	// of TrustedMCPServers and TrustedRepoPaths: absence of classification
-	// makes an event interesting, never the reverse. See docs/03-detection.md
-	// Layer 1.
+
 	TrustedContentDomains []string `json:"trusted_content_domains"`
 
-	// SampleRate is the fraction of uninteresting tool events that cross anyway,
-	// so the SIEM holds enough ordinary traffic to baseline against.
 	SampleRate float64 `json:"sample_rate"`
-	// DriftThreshold is unused in M0; goal-drift scoring arrives in M4.
+
 	DriftThreshold float64 `json:"drift_threshold"`
 
-	// HealthInterval is how often ambitd emits an ambitd_health event. This is
-	// the heartbeat half of D7: SCA's p:ambitd check cannot tell a wedged daemon
-	// from a healthy one, so a stale heartbeat with the process present is what
-	// distinguishes them.
 	HealthInterval time.Duration `json:"-"`
 	HealthSeconds  int           `json:"health_seconds"`
 
-	// LatencyBudget is the hook response target.
 	LatencyBudget   time.Duration `json:"-"`
 	LatencyBudgetMS int           `json:"latency_budget_ms"`
 
-	// Enforce must be false in M0. It exists so the milestone boundary is
-	// explicit in configuration rather than implied by which binary is deployed.
 	Enforce bool `json:"enforce"`
 }
 
-// Default returns the M0 defaults.
 func Default() Config {
 	return Config{
 		HookAddr:           "127.0.0.1:7777",
@@ -151,9 +91,7 @@ func defaultPath(name string) string {
 	case "darwin":
 		return "/usr/local/var/ambit/" + name
 	case "windows":
-		// ProgramData is the machine-wide, non-roaming data location. The directory
-		// is created private (see fsperm), because ProgramData itself is readable by
-		// every local user.
+
 		base := os.Getenv("ProgramData")
 		if base == "" {
 			base = `C:\ProgramData`
@@ -163,14 +101,6 @@ func defaultPath(name string) string {
 	return "/var/lib/ambit/" + name
 }
 
-// defaultBaselineDir is where mcp-interpose keeps its baselines when the config does
-// not say. On Unix that is the ambit data directory. On Windows it is
-// %USERPROFILE%\.ambit\baselines: ambitd runs as a service and its data directory under
-// ProgramData is restricted to the account that created it, SYSTEM and Administrators,
-// while mcp-interpose runs as whichever developer started the MCP server. A shared
-// baselines directory there would be unwritable for every developer but the first (or
-// for all of them, if an administrator or ambitd made it), and on a machine with several
-// developers the first would own it. The Wazuh FIM entries watch C:\Users\*\.ambit\baselines.
 func defaultBaselineDir(goos string, userHome func() (string, error)) string {
 	if goos == "windows" {
 		if home, err := userHome(); err == nil && home != "" {
@@ -180,8 +110,6 @@ func defaultBaselineDir(goos string, userHome func() (string, error)) string {
 	return defaultPath("baselines")
 }
 
-// Load reads a config file, falling back to defaults for absent fields. A
-// missing file is not an error: the defaults are a working M0 configuration.
 func Load(path string) (Config, error) {
 	cfg := Default()
 	if path == "" {
@@ -212,13 +140,10 @@ func (c *Config) derive() {
 	}
 }
 
-// HomeIsDetected reports whether Home is the running account's home rather than one the
-// configuration set. Only then may a session's own home replace it.
 func (c Config) HomeIsDetected() bool {
 	return c.Home == "" || (c.detectedHome != "" && c.Home == c.detectedHome)
 }
 
-// Validate rejects configurations that would break a documented invariant.
 func (c *Config) Validate() error {
 	if err := validateToolLabels(c.MCPToolLabels); err != nil {
 		return err
@@ -236,9 +161,7 @@ func (c *Config) Validate() error {
 		return errors.New("config: events_path and trajectory_path are required")
 	}
 	if samePath(c.EventsPath, c.TrajectoryPath) {
-		// They carry different representations with different retention and
-		// different audiences: the events sink goes to Wazuh and onward to a
-		// monitoring firm, the spool never leaves.
+
 		return errors.New("config: events_path and trajectory_path must differ")
 	}
 	if c.SampleRate < 0 || c.SampleRate > 1 {
@@ -250,7 +173,6 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// TrustedMCPSet returns the trusted servers as a set.
 func (c *Config) TrustedMCPSet() map[string]bool {
 	m := make(map[string]bool, len(c.TrustedMCPServers))
 	for _, s := range c.TrustedMCPServers {
@@ -259,12 +181,6 @@ func (c *Config) TrustedMCPSet() map[string]bool {
 	return m
 }
 
-// LoadOrCreateFingerprintKey reads the HMAC key, creating one if absent.
-//
-// Rotating this key breaks equality matching against every previously stored
-// fingerprint, so it is created once and left alone. Callers are responsible for
-// backing it up: losing it does not lose events, but it does make historical
-// digests unmatchable against new ones.
 func LoadOrCreateFingerprintKey(path string, gen func() ([]byte, error)) ([]byte, error) {
 	raw, err := os.ReadFile(path)
 	if err == nil {
@@ -280,8 +196,7 @@ func LoadOrCreateFingerprintKey(path string, gen func() ([]byte, error)) ([]byte
 	if err != nil {
 		return nil, fmt.Errorf("generate fingerprint key: %w", err)
 	}
-	// The key's directory may not exist on first run, and a key written into a
-	// directory every local user can read defeats the keyed digests.
+
 	if err := fsperm.PrivateDir(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("create fingerprint key dir: %w", err)
 	}
@@ -291,16 +206,8 @@ func LoadOrCreateFingerprintKey(path string, gen func() ([]byte, error)) ([]byte
 	return key, nil
 }
 
-// caseInsensitiveFS says whether two paths that differ only in case name the same file.
-// True on Windows and, by default, macOS. A variable so a test can exercise it anywhere.
 var caseInsensitiveFS = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 
-// samePath reports whether two configured paths name the same file. Comparing the
-// strings is not enough on Windows, where C:\ProgramData\ambit\events.jsonl and
-// c:/programdata/ambit/Events.jsonl are one file, and not on any host when one path is a
-// link to the other. If the spool aliased the Wazuh-tailed sink, the trajectory events,
-// which carry redacted prompt text, would be shipped to the SIEM and on to the monitoring
-// firm: the thing Validate exists to prevent.
 func samePath(a, b string) bool {
 	ca, cb := filepath.Clean(a), filepath.Clean(b)
 	if ca == cb || (caseInsensitiveFS && strings.EqualFold(ca, cb)) {
@@ -311,36 +218,22 @@ func samePath(a, b string) bool {
 	return errA == nil && errB == nil && os.SameFile(sa, sb)
 }
 
-// Tool labels. A label states what a tool's result or action IS; it is the operator's
-// classification and the one thing allowed to relax the conservative default for an
-// unclassified MCP server (every call untrusted input and an external action), because
-// a server's own annotations never may.
 const (
-	// LabelUntrusted: the tool's result carries content written by someone other than
-	// the user or the operator (email, shared files, web pages, reviews, channel names).
-	// Sets Rule-of-Two bit A and makes the result provenance ingest.
 	LabelUntrusted = "untrusted"
-	// LabelSensitive: the tool reads the user's private data (balances, account numbers,
-	// mailboxes, contacts). Sets bit B.
+
 	LabelSensitive = "sensitive"
-	// LabelReadOnly: the tool changes nothing and reaches nothing outside. Without it a
-	// classified tool sets bit C.
+
 	LabelReadOnly = "read_only"
 )
 
 var knownLabels = map[string]bool{LabelUntrusted: true, LabelSensitive: true, LabelReadOnly: true}
 
-// ToolLabels is the classification of one MCP tool.
 type ToolLabels struct {
 	Untrusted, Sensitive, ReadOnly bool
-	// Names are the labels as written, sorted, for the event.
+
 	Names []string
 }
 
-// ToolLabels returns the labels for server/tool and whether any entry matched. Every
-// matching entry contributes (exact names and globs alike), so the result does not
-// depend on map order. An empty label list is a valid classification: a tool that acts
-// and carries neither untrusted nor sensitive content.
 func (c *Config) ToolLabels(server, tool string) (ToolLabels, bool) {
 	entries, ok := c.MCPToolLabels[server]
 	if !ok {
@@ -369,10 +262,6 @@ func (c *Config) ToolLabels(server, tool string) (ToolLabels, bool) {
 	return tl, true
 }
 
-// validateToolLabels rejects a label nobody defined and a pattern path.Match cannot
-// parse. Both would otherwise fail open: an unknown label sets no bit, and a bad pattern
-// matches nothing, so the tool silently keeps or loses classification the operator
-// believes they gave it.
 func validateToolLabels(m map[string]map[string][]string) error {
 	for server, entries := range m {
 		if server == "" {

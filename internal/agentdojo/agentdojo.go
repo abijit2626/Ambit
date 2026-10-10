@@ -1,50 +1,3 @@
-// Package agentdojo converts AgentDojo run logs into ambit replay trajectories.
-//
-// AgentDojo (Debenedetti et al., ETH Zurich; MIT licensed) runs a tool-using agent
-// through a suite of user tasks, optionally with a prompt injection planted in a tool's
-// data, and saves each run as one JSON file:
-//
-//	runs/<pipeline>/<suite>/<user_task>/<attack_type|none>/<injection_task|none>.json
-//
-// holding the chat (system, user, assistant with tool calls, tool results) and AgentDojo's
-// own verdicts: "utility" (the user's task was done) and "security" (the injection task
-// was done, i.e. the attack succeeded). The upstream repository publishes tens of
-// thousands of these for real models, which makes it the first corpus ambit can be
-// measured against that was not written by the engine's author.
-//
-// # Mapping
-//
-// Each suite becomes one MCP server, "agentdojo-<suite>", that the operator has not
-// classified, so a function call becomes a PreToolUse for mcp__agentdojo-<suite>__<fn>
-// and its result a PostToolUse (PostToolUseFailure when the tool raised). That is how
-// such a toolset would actually reach Claude Code, and it routes every result through
-// the same untrusted-ingest path a deployment would: an unclassified server sets
-// Rule-of-Two bits A and C on every call. A user message becomes UserPromptSubmit, so
-// what the user asked for is declared to the provenance engine. System messages and the
-// assistant's prose have no hook and are dropped.
-//
-// # Ground truth
-//
-// AgentDojo labels runs, not calls, and the adapter takes only what it can stand behind:
-//
-//   - An injected run whose attack succeeded ("security": true, no error, not a DoS
-//     attack) is hostile.
-//   - A run with no injection is benign, and so is every call in it. That includes the
-//     runs AgentDojo makes with an injection task's goal as the USER's request: the user
-//     asked for those actions, so flagging them would be a false positive.
-//   - Every other injected run is left without a run label, because its outcome is
-//     ambiguous: a failed attack may still have taken a hostile step that AgentDojo's
-//     checker did not count; AgentDojo writes "security": true on an API error or a
-//     context overflow, which is not an attack succeeding; and for DoS attacks it sets
-//     security to "not utility", which means something else entirely.
-//
-// Injected runs are marked steps_unlabeled, because AgentDojo says nothing about WHICH
-// call was the attacker's. The only per-call label derivable from the log is "this
-// call's arguments contain text from the injection", and that is the very signal the
-// provenance engine computes, so using it would grade the engine against itself.
-//
-// "security" is never read on a run with no injection. AgentDojo writes true there, and
-// it does not mean anything.
 package agentdojo
 
 import (
@@ -54,8 +7,6 @@ import (
 	"strings"
 )
 
-// Run is one AgentDojo run log. Pointers distinguish an absent or null field from a zero
-// value, because "security": null and "security": false mean different things here.
 type Run struct {
 	SuiteName       string            `json:"suite_name"`
 	PipelineName    string            `json:"pipeline_name"`
@@ -69,7 +20,6 @@ type Run struct {
 	Security        *bool             `json:"security"`
 }
 
-// Message is one chat message. Content is normalized to text by its unmarshaller.
 type Message struct {
 	Role       string         `json:"role"`
 	Content    Content        `json:"content"`
@@ -79,23 +29,16 @@ type Message struct {
 	Error      *string        `json:"error"`
 }
 
-// FunctionCall is a tool call the agent requested.
 type FunctionCall struct {
 	Function string         `json:"function"`
 	Args     map[string]any `json:"args"`
 	ID       *string        `json:"id"`
 }
 
-// Content is a message body. AgentDojo has stored it two ways: the published run logs
-// carry a plain string, and current versions a list of typed blocks
-// ({"type": "text" | "thinking" | "redacted_thinking", "content": ...}). Only text blocks
-// are kept. Thinking is the model's reasoning, which ambit does not monitor and which
-// no hook would carry.
 type Content struct {
 	Text string
 }
 
-// UnmarshalJSON accepts a string, a list of blocks, or null.
 func (c *Content) UnmarshalJSON(b []byte) error {
 	if string(b) == "null" {
 		c.Text = ""
@@ -123,7 +66,6 @@ func (c *Content) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Parse decodes one run log and checks it is one.
 func Parse(b []byte) (*Run, error) {
 	var r Run
 	if err := json.Unmarshal(b, &r); err != nil {
@@ -138,16 +80,11 @@ func Parse(b []byte) (*Run, error) {
 	return &r, nil
 }
 
-// dosAttacks are AgentDojo's denial-of-service attacks (attacks/dos_attacks.py). For
-// these "security" is set to "not utility": the goal is to stop the agent, not to make
-// it act, so there is no hostile action for provenance to find and the label means
-// something else.
 var dosAttacks = map[string]bool{
 	"dos": true, "swearwords_dos": true, "captcha_dos": true,
 	"offensive_email_dos": true, "felony_dos": true,
 }
 
-// Outcome classifies a run for labeling.
 type Outcome string
 
 const (
@@ -160,12 +97,9 @@ const (
 	OutcomeUnscored        Outcome = "unscored"
 )
 
-// Classify returns the run's outcome. See the package comment for why each case is
-// labeled the way it is.
 func (r *Run) Classify() Outcome {
 	if r.InjectionTaskID == nil || *r.InjectionTaskID == "" {
-		// AgentDojo runs each injection task's goal as a plain user task to check it is
-		// achievable; those land under user_task_id "injection_task_N".
+
 		if strings.HasPrefix(r.UserTaskID, "injection_task_") {
 			return OutcomeUserGoal
 		}
@@ -184,7 +118,6 @@ func (r *Run) Classify() Outcome {
 	return OutcomeAttackFailed
 }
 
-// Hostile returns the run-level label, or nil when the run should carry none.
 func (o Outcome) Hostile() *bool {
 	t, f := true, false
 	switch o {
@@ -196,8 +129,6 @@ func (o Outcome) Hostile() *bool {
 	return nil
 }
 
-// Injected reports whether the run had an injection planted, which is what makes its
-// calls unlabeled.
 func (o Outcome) Injected() bool {
 	return o != OutcomeNoAttack && o != OutcomeUserGoal
 }
@@ -219,7 +150,6 @@ func deref(p *string) string {
 	return *p
 }
 
-// Name is a file-safe scenario name, unique per run log within one runs tree.
 func (r *Run) Name() string {
 	return strings.Join([]string{
 		clean(r.PipelineName), clean(r.SuiteName), clean(r.UserTaskID),
@@ -227,17 +157,12 @@ func (r *Run) Name() string {
 	}, "__")
 }
 
-// Server is the MCP server name a suite's tools appear under.
 func (r *Run) Server() string {
 	return "agentdojo-" + strings.ToLower(clean(r.SuiteName))
 }
 
-// cwd is a fixed working directory. AgentDojo environments have no filesystem the agent
-// works in, so any value is synthetic; a fixed one keeps zone classification stable.
 const cwd = "/home/dev/agentdojo"
 
-// payload is the subset of a Claude Code hook payload the adapter writes. Field names
-// match internal/hook.Payload's JSON tags.
 type payload struct {
 	HookEventName string `json:"hook_event_name"`
 	SessionID     string `json:"session_id"`
@@ -246,8 +171,7 @@ type payload struct {
 	UserInput     string `json:"user_input,omitempty"`
 	ToolName      string `json:"tool_name,omitempty"`
 	ToolUseID     string `json:"tool_use_id,omitempty"`
-	// ToolInput is a pointer so that a call with no arguments still renders "tool_input": {}
-	// (Claude Code always sends the field on tool events), while a prompt omits it.
+
 	ToolInput  *map[string]any `json:"tool_input,omitempty"`
 	ToolResult *string         `json:"tool_result,omitempty"`
 	ToolError  string          `json:"tool_error,omitempty"`
@@ -263,8 +187,6 @@ type header struct {
 	} `json:"scenario"`
 }
 
-// Convert renders a run as a replay trajectory: JSON lines, a header then one hook
-// payload per line. It returns the outcome so a caller can report what it converted.
 func Convert(r *Run) ([]byte, Outcome, error) {
 	out := r.Classify()
 
@@ -287,15 +209,14 @@ func Convert(r *Run) ([]byte, Outcome, error) {
 	session := "agentdojo:" + r.Name()
 	server := r.Server()
 	prompts, synth := 0, 0
-	// pending holds the ids of calls not yet answered, in order, so a tool result that carries
-	// no id of its own pairs with the call it answers.
+
 	var pending []string
 
 	steps := 0
 	for i, m := range r.Messages {
 		switch m.Role {
 		case "system":
-			// No hook carries the system prompt.
+
 		case "user":
 			prompts++
 			steps++
@@ -372,8 +293,6 @@ func Convert(r *Run) ([]byte, Outcome, error) {
 	return []byte(b.String()), out, nil
 }
 
-// args never returns nil: a call with no arguments renders "tool_input": {}, as Claude
-// Code sends it, rather than dropping the field.
 func args(a map[string]any) *map[string]any {
 	if a == nil {
 		a = map[string]any{}
