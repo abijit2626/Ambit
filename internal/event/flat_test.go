@@ -8,8 +8,6 @@ import (
 
 func b(v bool) *bool { return &v }
 
-// fullEvent populates every field so the field-count and projection tests see
-// the widest event the schema can produce.
 func fullEvent() *Event {
 	drift := 0.87
 	return &Event{
@@ -28,8 +26,7 @@ func fullEvent() *Event {
 			Name: "Bash", UseID: "toolu_1", InputDigest: "hmac:i", ResultDigest: "hmac:o", ResultBytes: 18422,
 			MCP: &MCP{Server: "github", Tool: "create_issue", MetadataHash: "sha256:m", Trust: "external",
 				Annotations: Annotations{ReadOnlyHint: b(false), DestructiveHint: b(true), IdempotentHint: b(false), OpenWorldHint: b(true)},
-				// Listing fields, set only on mcp_list events in practice. Present here
-				// so the ceiling test bounds them too.
+
 				BaselineState: MCPStateDrift, PrevMetadataHash: "sha256:p",
 				ChangedFields: []string{"description"}, ScanClasses: []string{"hidden_instruction"},
 				ScanRules: []string{"hidden.ignore_previous"}, ToolCount: 12, DriftCount: 1,
@@ -58,8 +55,6 @@ func fullEvent() *Event {
 	}
 }
 
-// fieldCount marshals and counts top-level keys, which is what the decoder
-// sees.
 func fieldCount(t *testing.T, s *SIEMEvent) (int, []string) {
 	t.Helper()
 	raw, err := json.Marshal(s)
@@ -78,22 +73,6 @@ func fieldCount(t *testing.T, s *SIEMEvent) (int, []string) {
 	return len(m), keys
 }
 
-// TestSIEMEventFieldBudgetPerKind is the guard against Wazuh's
-// "Too many fields for JSON decoder" rejection. That failure drops the event,
-// which is silent detection loss, so the budget is a security property and not
-// housekeeping.
-//
-// Measured per event kind, because that is what actually reaches the decoder.
-// Observed: ~50 for tool events (the widest), 25-31 for the rest. The budget
-// leaves room for a few additions before anyone has to think hard. Session-
-// constant fields (agent_*, repo_*, sandbox_*) are deliberately repeated on
-// every event rather than emitted once and joined: a Wazuh rule can only test
-// fields present on the event it is evaluating, so D1 needs agent_entrypoint
-// and permission_mode on the tool event itself. A single event never carries the tool, config and health blocks
-// at once — Flatten only populates each when the corresponding pointer is set —
-// so counting their union measures an event that cannot exist. The union is
-// still bounded by TestSIEMEventFieldCeiling below as a backstop against
-// schema creep.
 func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 	const budget = 55
 
@@ -120,11 +99,6 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 	}
 }
 
-// TestSIEMEventFieldCeiling bounds the synthetic union of every optional block.
-// It cannot occur in practice but it is the cheapest available tripwire on
-// someone adding a dozen fields without thinking about the decoder. Well under
-// the documented default of 256 for analysisd.decoder_order_size, and the
-// margin is the point.
 func TestSIEMEventFieldCeiling(t *testing.T) {
 	const ceiling = 70
 	n, keys := fieldCount(t, Flatten(fullEvent()))
@@ -134,11 +108,6 @@ func TestSIEMEventFieldCeiling(t *testing.T) {
 	t.Logf("union field count: %d (ceiling %d)", n, ceiling)
 }
 
-// TestFlattenNoNestedObjects asserts the decoder constraint that actually
-// drives this schema: "An array of objects is not supported." Arrays of scalars
-// are fine. Nested objects would in fact decode via dot notation, but we hold
-// the flat shape so no rule has to know about it and the field count stays
-// predictable.
 func TestFlattenNoNestedObjects(t *testing.T) {
 	raw, err := json.Marshal(Flatten(fullEvent()))
 	if err != nil {
@@ -175,9 +144,6 @@ func TestFlattenPicksHighestSeverityPath(t *testing.T) {
 	}
 }
 
-// An InstructionsLoaded event carries load_reason and no config_source. D8's description and
-// runbook both rely on the reason being on the SIEM event; it was once dropped here, so the
-// rule printed an empty reason and the runbook described a field that did not exist.
 func TestFlattenCarriesTheInstructionLoadReason(t *testing.T) {
 	e := configEvent()
 	e.Kind = KindInstructionsLoaded
@@ -204,9 +170,6 @@ func TestFlattenPicksHighestConfidenceEdge(t *testing.T) {
 	}
 }
 
-// TestFlattenDropsRawFingerprints is the firehose guard. Feature fingerprints
-// are hundreds per event and must never cross to the SIEM; ambitd intersects
-// locally and emits only derived edges plus the one notable fingerprint.
 func TestFlattenDropsRawFingerprints(t *testing.T) {
 	e := fullEvent()
 	e.Tool.InputFeatures.Domains = []string{"hmac:d1", "hmac:d2"}
@@ -224,11 +187,9 @@ func TestFlattenDropsRawFingerprints(t *testing.T) {
 	}
 }
 
-// TestFlattenNeverCarriesSecretValues asserts only the kind crosses, never the
-// value or the per-kind count.
 func TestFlattenNeverCarriesSecretValues(t *testing.T) {
 	s := Flatten(fullEvent())
-	want := []string{"aws_key", "github_token"} // sorted
+	want := []string{"aws_key", "github_token"}
 	if len(s.SecretHitKinds) != len(want) {
 		t.Fatalf("SecretHitKinds = %v, want %v", s.SecretHitKinds, want)
 	}
@@ -239,9 +200,6 @@ func TestFlattenNeverCarriesSecretValues(t *testing.T) {
 	}
 }
 
-// TestFlattenDropsOperationalFields asserts latency and ingest refs stay local:
-// they are operational or forensic, not security signal, and every field that
-// crosses costs budget.
 func TestFlattenDropsOperationalFields(t *testing.T) {
 	raw, _ := json.Marshal(Flatten(fullEvent()))
 	var m map[string]any
@@ -253,12 +211,9 @@ func TestFlattenDropsOperationalFields(t *testing.T) {
 	}
 }
 
-// TestFlattenPreservesAbsentAnnotations guards the one-directional trust rule:
-// a missing readOnlyHint must stay absent, never become false, because policy
-// must not be able to read "absent" as a claim either way.
 func TestFlattenPreservesAbsentAnnotations(t *testing.T) {
 	e := fullEvent()
-	e.Tool.MCP.Annotations = Annotations{} // server advertised nothing
+	e.Tool.MCP.Annotations = Annotations{}
 	s := Flatten(e)
 	if s.ToolMCPReadonlyHint != nil {
 		t.Errorf("ToolMCPReadonlyHint = %v, want nil when the server advertised no hint", *s.ToolMCPReadonlyHint)
@@ -282,8 +237,6 @@ func indexOf(h, n string) int {
 	return -1
 }
 
-// bashToolEvent is a realistic Bash tool_pre. A Bash call has no MCP block, so
-// carrying both — as fullEvent does — measures an event that cannot exist.
 func bashToolEvent() *Event {
 	e := fullEvent()
 	e.Config = nil
@@ -293,8 +246,6 @@ func bashToolEvent() *Event {
 	return e
 }
 
-// mcpToolEvent is a realistic MCP tool_pre: MCP block, no Bash block, and no
-// filesystem paths.
 func mcpToolEvent() *Event {
 	e := fullEvent()
 	e.Config = nil
@@ -303,9 +254,7 @@ func mcpToolEvent() *Event {
 	e.Tool.Bash = nil
 	e.Tool.Paths = nil
 	e.Tool.Name = "mcp__github__create_issue"
-	// A tool *call* carries no listing verdict: the collector fills server, tool and
-	// trust for a call, and only the interposer's mcp_list events carry the D4 and D5
-	// fields. Clearing them here keeps this case measuring an event that can exist.
+
 	m := e.Tool.MCP
 	m.BaselineState, m.PrevMetadataHash, m.Trigger, m.ServerVersion = "", "", "", ""
 	m.ChangedFields, m.ScanClasses, m.ScanRules = nil, nil, nil
@@ -313,8 +262,6 @@ func mcpToolEvent() *Event {
 	return e
 }
 
-// mcpListEvent is what the interposer produces: an MCP block with the D4 verdict and
-// D5 classes, and none of the bash, path, config or health blocks.
 func mcpListEvent() *Event {
 	e := fullEvent()
 	e.Kind = KindMCPList
@@ -330,7 +277,6 @@ func mcpListEvent() *Event {
 	return e
 }
 
-// sessionStartEvent carries no tool, provenance, config or health.
 func sessionStartEvent() *Event {
 	e := fullEvent()
 	e.Kind = KindSessionStart
@@ -343,7 +289,6 @@ func sessionStartEvent() *Event {
 	return e
 }
 
-// configEvent is a config_change or instructions_loaded: config block only.
 func configEvent() *Event {
 	e := fullEvent()
 	e.Kind = KindConfigChange
@@ -355,7 +300,6 @@ func configEvent() *Event {
 	return e
 }
 
-// healthEvent is ambitd reporting on itself.
 func healthEvent() *Event {
 	e := fullEvent()
 	e.Kind = KindAmbitdHealth

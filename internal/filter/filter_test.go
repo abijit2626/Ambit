@@ -7,8 +7,6 @@ import (
 	"github.com/abijit2626/ambit/internal/event"
 )
 
-// neverSample makes the sampled-remainder path deterministic so tests measure
-// the interesting criteria and nothing else.
 func testFilter() *Filter {
 	cfg := DefaultConfig()
 	cfg.TrustedMCPServers = map[string]bool{"internal-wiki": true}
@@ -88,9 +86,6 @@ func TestInterestingCriteria(t *testing.T) {
 	}
 }
 
-// TestR2SteadyStateDoesNotCross: only the transition is interesting. If every
-// event after the first untrusted fetch crossed, one web page would make the
-// rest of a session unconditionally interesting.
 func TestR2SteadyStateDoesNotCross(t *testing.T) {
 	e := toolEvent(func(e *event.Event) {
 		e.R2 = event.R2{A: true, B: true, C: false, Transition: false}
@@ -100,8 +95,6 @@ func TestR2SteadyStateDoesNotCross(t *testing.T) {
 	}
 }
 
-// TestFilterNeverRelaxesOnServerClaim is the annotation-asymmetry guard: an
-// untrusted server asserting readOnlyHint must not stop its events crossing.
 func TestFilterNeverRelaxesOnServerClaim(t *testing.T) {
 	yes := true
 	e := toolEvent(func(e *event.Event) {
@@ -137,8 +130,6 @@ func TestAlwaysCrossKinds(t *testing.T) {
 	}
 }
 
-// TestUnknownKindCrosses: failing open on volume is recoverable; a new event
-// kind silently not reaching the SIEM is a detection gap nobody notices.
 func TestUnknownKindCrosses(t *testing.T) {
 	if v := testFilter().Decide(&event.Event{Kind: event.Kind("some_future_kind")}); !v.Cross {
 		t.Error("an unrecognized kind should cross rather than vanish")
@@ -162,14 +153,13 @@ func TestGoalDriftThreshold(t *testing.T) {
 
 func TestSampledRemainder(t *testing.T) {
 	cfg := DefaultConfig()
-	// Sampler always returns below the rate, so the remainder always crosses.
+
 	f := NewWithSampler(cfg, func() float64 { return 0.0 })
 	v := f.Decide(toolEvent(nil))
 	if !v.Cross || v.Reason != ReasonSampled {
 		t.Errorf("cross=%v reason=%q, want true/%q", v.Cross, v.Reason, ReasonSampled)
 	}
 
-	// Rate 0 disables sampling entirely.
 	cfg.SampleRate = 0
 	f2 := NewWithSampler(cfg, func() float64 { return 0.0 })
 	if v := f2.Decide(toolEvent(nil)); v.Cross {
@@ -177,11 +167,6 @@ func TestSampledRemainder(t *testing.T) {
 	}
 }
 
-// TestInterestingFractionIsPlausible approximates the M0 exit criterion: on a
-// synthetic mix resembling ordinary work, the crossing fraction should land near
-// the 2-5% the design estimates. This is a smoke test on the criteria, not a
-// measurement — the real number comes from a cohort, and if it comes back far
-// from this the criteria tighten.
 func TestInterestingFractionIsPlausible(t *testing.T) {
 	f := testFilter()
 	const n = 10000
@@ -189,11 +174,11 @@ func TestInterestingFractionIsPlausible(t *testing.T) {
 	for i := 0; i < n; i++ {
 		e := toolEvent(nil)
 		switch {
-		case i%200 == 0: // credential read
+		case i%200 == 0:
 			e.Tool.Paths = []event.PathRef{{Zone: event.ZoneCredential, Op: "read"}}
-		case i%150 == 0: // network command
+		case i%150 == 0:
 			e.Tool.Bash = &event.Bash{Argv0: "curl", CommandClass: classify.ClassNetwork}
-		case i%500 == 0: // r2 transition
+		case i%500 == 0:
 			e.R2.Transition = true
 		}
 		if f.Decide(e).Cross {
@@ -207,11 +192,6 @@ func TestInterestingFractionIsPlausible(t *testing.T) {
 	t.Logf("synthetic crossing fraction: %.3f%%", frac*100)
 }
 
-// TestMCPListingVolumeControl pins the trade docs/04-data-model.md makes: the
-// per-server summary is the one budgeted event per server per session, the per-tool
-// events that say something cross, and the quiet ones stay in the spool. A 60-tool
-// server matching its approved baseline must not spend 60 events reporting that
-// nothing happened.
 func TestMCPListingVolumeControl(t *testing.T) {
 	f := New(Config{SampleRate: 0})
 
@@ -238,8 +218,7 @@ func TestMCPListingVolumeControl(t *testing.T) {
 		{"new tool crosses", listing("create_issue", event.MCPStateNew, nil), true},
 		{"removed tool crosses", listing("create_issue", event.MCPStateRemoved, nil), true},
 		{"unavailable baseline crosses", listing("create_issue", event.MCPStateUnavailable, nil), true},
-		// The default direction: an unknown verdict is a state somebody added without
-		// updating the filter, and the safe reading of that is "interesting".
+
 		{"unknown state crosses", listing("create_issue", "some_future_state", nil), true},
 		{"malformed listing crosses", &event.Event{Kind: event.KindMCPList}, true},
 	}

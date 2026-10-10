@@ -15,9 +15,6 @@ func mustTool(t *testing.T, raw string) Tool {
 	return tool
 }
 
-// TestMetadataHashIgnoresKeyOrder is the difference between a usable detector and
-// one that gets switched off in week one. Schemas built from a map serialize in
-// arbitrary key order, so a hash sensitive to ordering would alert on every restart.
 func TestMetadataHashIgnoresKeyOrder(t *testing.T) {
 	a := mustTool(t, `{"name":"create_issue","description":"Open an issue","inputSchema":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"}},"required":["title"]}}`)
 	b := mustTool(t, `{"description":"Open an issue","inputSchema":{"required":["title"],"properties":{"body":{"type":"string"},"title":{"type":"string"}},"type":"object"},"name":"create_issue"}`)
@@ -30,7 +27,6 @@ func TestMetadataHashIgnoresKeyOrder(t *testing.T) {
 	}
 }
 
-// TestMetadataHashCatchesRealChanges walks the rug-pull cases one at a time.
 func TestMetadataHashCatchesRealChanges(t *testing.T) {
 	base := mustTool(t, `{"name":"create_issue","description":"Open an issue","inputSchema":{"type":"object","properties":{"title":{"type":"string"}}}}`)
 
@@ -50,9 +46,6 @@ func TestMetadataHashCatchesRealChanges(t *testing.T) {
 	}
 }
 
-// TestMetadataHashResistsFieldBoundaryCollision guards the length-prefixing: a
-// server that could move a character between fields and keep its hash would have a
-// free rug pull.
 func TestMetadataHashResistsFieldBoundaryCollision(t *testing.T) {
 	a := mustTool(t, `{"name":"ab","description":"c"}`)
 	b := mustTool(t, `{"name":"a","description":"bc"}`)
@@ -61,8 +54,6 @@ func TestMetadataHashResistsFieldBoundaryCollision(t *testing.T) {
 	}
 }
 
-// TestChangedFieldsNamesTheChange is what makes a D4 alert actionable for an
-// analyst who cannot see our source tree.
 func TestChangedFieldsNamesTheChange(t *testing.T) {
 	before := mustTool(t, `{"name":"search","title":"Search","description":"Search the wiki","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true}}`)
 	cases := []struct {
@@ -85,9 +76,6 @@ func TestChangedFieldsNamesTheChange(t *testing.T) {
 	}
 }
 
-// TestAnnotationFlipIsDriftEvenThoughHashIsStable pins the documented split: the
-// headline hash covers name, description and schema, and annotations are tracked
-// separately so a destructiveHint flipped to false is still reported.
 func TestAnnotationFlipIsDriftEvenThoughHashIsStable(t *testing.T) {
 	before := mustTool(t, `{"name":"delete_repo","description":"Delete a repository","annotations":{"destructiveHint":true}}`)
 	after := mustTool(t, `{"name":"delete_repo","description":"Delete a repository","annotations":{"destructiveHint":false}}`)
@@ -101,9 +89,6 @@ func TestAnnotationFlipIsDriftEvenThoughHashIsStable(t *testing.T) {
 	}
 }
 
-// TestAnnotationsAbsentIsNotFalse is the property the event schema's pointers exist
-// for. A server that said nothing must never be read as having claimed false, and a
-// server claiming readOnlyHint must never relax anything.
 func TestAnnotationsAbsentIsNotFalse(t *testing.T) {
 	silent := mustTool(t, `{"name":"t","description":"d"}`)
 	if a := silent.EventAnnotations(); a.ReadOnlyHint != nil || a.DestructiveHint != nil || a.IdempotentHint != nil || a.OpenWorldHint != nil {
@@ -148,16 +133,15 @@ func TestSchemaTextCollectsValuesAndPropertyNames(t *testing.T) {
 	if truncated {
 		t.Error("small schema reported truncated")
 	}
-	// The property name is included: the model reads parameter names too.
+
 	if !strings.Contains(text, "send_credentials_to") {
 		t.Errorf("property name missing from scan text: %q", text)
 	}
-	// The parameter description is included: it is where a poisoned tool hides.
+
 	if !strings.Contains(text, "https://evil.test") {
 		t.Errorf("parameter description missing from scan text: %q", text)
 	}
-	// Structural keywords are not, or every tool in the fleet matches on the word
-	// "description".
+
 	if strings.Contains(text, "properties\n") {
 		t.Errorf("JSON Schema keyword leaked into scan text: %q", text)
 	}
@@ -175,8 +159,7 @@ func TestSchemaTextBoundsHostileInput(t *testing.T) {
 }
 
 func TestSchemaTextHandlesUnparseableSchema(t *testing.T) {
-	// Whatever this is, the model was offered it, so it is scanned rather than
-	// skipped.
+
 	text, _ := SchemaText(json.RawMessage(`{"type":"object",`))
 	if text == "" {
 		t.Error("unparseable schema produced no scan text")

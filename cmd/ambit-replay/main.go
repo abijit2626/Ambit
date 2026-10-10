@@ -1,16 +1,3 @@
-// Command ambit-replay replays agent trajectories through the real collector pipeline
-// and reports what the provenance engine and Rule-of-Two accounting do with them:
-// precision and recall against the scenarios' own ground truth, a confidence-floor
-// sweep, how deep into a session each Rule-of-Two bit appears, and what fraction of
-// events would cross to Wazuh.
-//
-// It is a measurement tool for the M2 shadow period, and a regression suite once a
-// corpus exists. It never touches a running ambitd, the real spool, the Wazuh sink or
-// the production fingerprint key: every scenario runs in-process against in-memory
-// sinks. See internal/replay for the trajectory format.
-//
-// Exit status: 0 when every assertion held and every gate was met; 2 when one did not;
-// 1 for a usage or input error.
 package main
 
 import (
@@ -51,9 +38,7 @@ func run() int {
 
 	cfg := replay.DefaultConfig()
 	if *configPath != "" {
-		// config.Load treats a missing file as "use the defaults", which is right for the
-		// daemon and wrong here: a mistyped -config would silently replay against a
-		// different set of trusted domains and report numbers for the wrong setup.
+
 		if _, err := os.Stat(*configPath); err != nil {
 			fmt.Fprintln(os.Stderr, "ambit-replay:", err)
 			return 1
@@ -106,8 +91,7 @@ func run() int {
 	}
 
 	if len(violations) > 0 {
-		// To stderr in both modes, so a CI log shows why the run failed even when
-		// stdout is a JSON report being piped somewhere.
+
 		fmt.Fprintln(os.Stderr)
 		for _, v := range violations {
 			fmt.Fprintln(os.Stderr, "ambit-replay: FAIL:", v)

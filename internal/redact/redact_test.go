@@ -72,9 +72,6 @@ func TestRedactPrivateKeyBlock(t *testing.T) {
 	}
 }
 
-// TestRedactKeepsKeyNameDropsValue: an event should still say WHAT was set, so
-// a reviewer can tell an AWS secret from a database password, while the value
-// itself is gone.
 func TestRedactKeepsKeyNameDropsValue(t *testing.T) {
 	out, hits := New().Redact(`DATABASE_PASSWORD="s3cr3tvalue_longenough_here"`)
 	if len(hits) == 0 {
@@ -88,10 +85,6 @@ func TestRedactKeepsKeyNameDropsValue(t *testing.T) {
 	}
 }
 
-// TestRedactNoFalsePositivesOnOrdinaryCode is the noise check. Over-matching
-// here means secret_hit_kinds fires on ordinary source, which crosses events to
-// the SIEM that should have stayed local and trains reviewers to ignore the
-// field.
 func TestRedactNoFalsePositivesOnOrdinaryCode(t *testing.T) {
 	benign := []string{
 		`func main() { fmt.Println("hello world") }`,

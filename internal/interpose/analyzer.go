@@ -14,68 +14,41 @@ import (
 	"github.com/abijit2626/ambit/internal/toolscan"
 )
 
-// Direction says which way a frame was travelling.
 type Direction int
 
 const (
-	// FromClient is agent to server: requests and notifications.
 	FromClient Direction = iota
-	// FromServer is server to agent: responses and notifications. This is the
-	// untrusted direction, and the one D4 and D5 read.
+
 	FromServer
 )
 
-// queueDepth bounds the analysis backlog. Frames beyond it are dropped and
-// counted: the relay must never block, and a backlog this deep already means the
-// analyzer cannot keep up, at which point dropping visibly beats stalling a
-// developer's tool call.
 const queueDepth = 256
 
-// reportQueueDepth bounds undelivered reports. Reports are rare — one per listing
-// — so a backlog here means ambitd is wedged or gone, which the shutdown report
-// and D7 both surface.
 const reportQueueDepth = 32
 
-// pendingCap bounds tracked request ids. A client with this many outstanding
-// tools/list requests is pathological; the cap keeps a hostile or buggy peer from
-// growing this map without limit.
 const pendingCap = 64
 
-// Sender delivers reports. The interposer takes it as an interface so a test can
-// assert on what would have been sent without a listener, and so a broken
-// transport is visibly a transport problem rather than an analysis one.
 type Sender interface {
 	Send(ctx context.Context, rep *Report) error
 }
 
-// Options configure an Analyzer.
 type Options struct {
-	// Server is the logical name from .mcp.json. Required: without it the report
-	// cannot reconstruct mcp__<server>__<tool>, which is the identity everything
-	// downstream keys on.
 	Server string
-	// Siblings are other configured server names, used only for D5's cross-server
-	// reference rule.
+
 	Siblings []string
-	// Store may be nil, which is the degraded mode: D5 still runs, D4 cannot, and
-	// every report says so rather than implying a clean comparison.
+
 	Store *baseline.Store
-	// StoreErr explains a nil Store.
+
 	StoreErr error
 	Sender   Sender
 	Logger   *slog.Logger
 	Version  string
-	// SessionID is best-effort; see Report.SessionID.
+
 	SessionID string
-	// Now is injected for tests.
+
 	Now func() time.Time
 }
 
-// Analyzer watches frames and produces reports.
-//
-// All state lives on a single worker goroutine, so there are no locks on the
-// analysis path and the causal order of the stream is preserved: a request is
-// always enqueued before the response it provokes.
 type Analyzer struct {
 	opts    Options
 	scanner *toolscan.Scanner
@@ -88,15 +61,12 @@ type Analyzer struct {
 	delivered chan struct{}
 	closeOnce sync.Once
 
-	// pending maps a request id to the method it asked for, so a response can be
-	// recognized. MCP responses carry no method name.
 	pending map[string]string
-	// accumulated collects tools across the pages of a paginated tools/list.
+
 	accumulated []mcp.Tool
-	// paging is true while a cursor is outstanding.
+
 	paging bool
-	// listChanged records that the server announced a change, so the listing that
-	// follows is tagged as a re-list rather than a routine one.
+
 	listChanged bool
 
 	clientInfo mcp.ClientInfo
@@ -114,7 +84,6 @@ type queued struct {
 	raw []byte
 }
 
-// NewAnalyzer starts the analyzer's goroutines. Close stops them.
 func NewAnalyzer(opts Options) *Analyzer {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
@@ -138,12 +107,8 @@ func NewAnalyzer(opts Options) *Analyzer {
 	return a
 }
 
-// Observe hands a forwarded frame to the analyzer. It never blocks and never
-// fails: the frame has already reached its destination by the time this is called.
 func (a *Analyzer) Observe(dir Direction, f mcp.Frame) {
-	// Copied because the caller's buffer belongs to the relay. The copy is cheap
-	// next to the analysis, and aliasing a relay buffer would be the kind of bug
-	// that shows up as corrupted evidence months later.
+
 	raw := make([]byte, len(f.Raw))
 	copy(raw, f.Raw)
 	select {
@@ -153,12 +118,6 @@ func (a *Analyzer) Observe(dir Direction, f mcp.Frame) {
 	}
 }
 
-// Close drains the analyzer, sends the shutdown report, and stops its goroutines.
-//
-// It is bounded by ctx because the interposer shuts down on the critical path of
-// the agent's own exit: a wedged ambitd must not hold a developer's session open.
-// Safe to call more than once, which matters because both the relay error path and
-// the normal path reach for it.
 func (a *Analyzer) Close(ctx context.Context) {
 	a.closeOnce.Do(func() {
 		close(a.frames)
@@ -183,8 +142,6 @@ func (a *Analyzer) work() {
 	}
 }
 
-// deliver posts reports off the analysis path, so a slow or absent ambitd costs
-// delivery latency rather than analysis throughput.
 func (a *Analyzer) deliver() {
 	defer close(a.delivered)
 	for rep := range a.reports {
@@ -195,9 +152,7 @@ func (a *Analyzer) deliver() {
 		err := a.opts.Sender.Send(ctx, rep)
 		cancel()
 		if err != nil {
-			// Losing a report is a reportable condition, never a reason to
-			// disturb the MCP stream. The shutdown log line carries the count,
-			// and a silent collection path is what D7 exists to catch.
+
 			a.reportsDropped.Add(1)
 			a.log.Warn("interpose report not delivered",
 				"server", a.opts.Server, "trigger", rep.Trigger, "err", err)
@@ -208,8 +163,7 @@ func (a *Analyzer) deliver() {
 func (a *Analyzer) handle(q queued) {
 	m, err := mcp.Parse(q.raw)
 	if err != nil {
-		// Unparsed frames are counted, not investigated. They were forwarded
-		// already; the counter is what tells us whether this matters in practice.
+
 		a.unparsed.Add(1)
 		if errors.Is(err, mcp.ErrBatch) {
 			a.log.Debug("JSON-RPC batch frame forwarded without analysis", "server", a.opts.Server)
@@ -245,9 +199,7 @@ func (a *Analyzer) track(m *mcp.Message) {
 		return
 	}
 	if len(a.pending) >= pendingCap {
-		// Drop an arbitrary entry rather than growing without bound. Losing a
-		// correlation costs one listing's analysis; unbounded growth costs the
-		// process.
+
 		for k := range a.pending {
 			delete(a.pending, k)
 			break
@@ -275,9 +227,7 @@ func (a *Analyzer) fromServer(m *mcp.Message) {
 	delete(a.pending, key)
 
 	if len(m.Error) > 0 {
-		// An error response to tools/list is not a listing. Resetting the
-		// accumulator matters: a failed page must not leave half a listing behind
-		// to be compared as if it were complete.
+
 		if method == mcp.MethodToolsList {
 			a.accumulated, a.paging = nil, false
 		}
@@ -304,8 +254,7 @@ func (a *Analyzer) toolsList(m *mcp.Message) {
 
 	a.accumulated = append(a.accumulated, listing.Tools...)
 	if listing.NextCursor != "" {
-		// Partial page. Waiting is the only correct move: comparing now would
-		// report every tool on a later page as removed.
+
 		a.paging = true
 		return
 	}
@@ -321,8 +270,6 @@ func (a *Analyzer) toolsList(m *mcp.Message) {
 	a.enqueueReport(a.listingReport(tools, trigger, true))
 }
 
-// listingReport builds the report for a complete listing: D4 against the store,
-// D5 over every advertised field.
 func (a *Analyzer) listingReport(tools []mcp.Tool, trigger string, complete bool) *Report {
 	rep := a.baseReport(trigger)
 	rep.Complete = complete
@@ -348,8 +295,7 @@ func (a *Analyzer) listingReport(tools []mcp.Tool, trigger string, complete bool
 	}
 
 	if a.opts.Store == nil {
-		// Degraded: D5 findings are real, D4 is not available, and the report says
-		// so per tool rather than reporting approval it never checked.
+
 		rep.Degraded = true
 		rep.DegradedReason = "baseline store unavailable"
 		if a.opts.StoreErr != nil {
@@ -373,9 +319,7 @@ func (a *Analyzer) listingReport(tools []mcp.Tool, trigger string, complete bool
 
 	res, err := a.opts.Store.Observe(a.opts.Server, a.serverInfo, tools, complete, a.now())
 	if err != nil {
-		// A store that failed mid-write still produced verdicts; report both the
-		// verdicts and the failure, because a silent write failure would mean the
-		// next session compares against a stale baseline without anyone knowing.
+
 		rep.Degraded = true
 		rep.DegradedReason = "baseline store write failed: " + err.Error()
 		a.log.Error("baseline store write failed", "server", a.opts.Server, "err", err)
@@ -404,8 +348,7 @@ func (a *Analyzer) listingReport(tools []mcp.Tool, trigger string, complete bool
 
 func (a *Analyzer) notificationReport() *Report {
 	rep := a.baseReport(TriggerNotification)
-	// No hashes: nothing has been re-advertised yet. The value here is the
-	// warning, which exists even if the client never re-lists.
+
 	rep.Worst = ""
 	return rep
 }
@@ -441,7 +384,6 @@ func (a *Analyzer) enqueueReport(rep *Report) {
 	}
 }
 
-// Stats reports the analyzer's counters, for the shutdown log line.
 type Stats struct {
 	Listings       int64
 	Calls          int64

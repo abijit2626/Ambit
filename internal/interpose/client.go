@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// Client posts reports to ambitd over loopback.
 type Client struct {
 	url  string
 	http *http.Client
@@ -19,12 +18,8 @@ type Client struct {
 	dropped atomic.Int64
 }
 
-// DefaultTimeout bounds a report POST. It is generous relative to a loopback
-// round trip and short relative to a developer's patience: the send happens off
-// the relay path, but a wedged ambitd must not accumulate goroutines either.
 const DefaultTimeout = 2 * time.Second
 
-// NewClient builds a client for an ambitd hook address such as 127.0.0.1:7777.
 func NewClient(addr string) *Client {
 	return &Client{
 		url:  "http://" + addr + Path,
@@ -32,12 +27,8 @@ func NewClient(addr string) *Client {
 	}
 }
 
-// URL reports the endpoint being posted to.
 func (c *Client) URL() string { return c.url }
 
-// Send posts a report. An error means the report was lost, which is a reportable
-// condition but never a reason to disturb the MCP stream: the caller counts it and
-// carries on.
 func (c *Client) Send(ctx context.Context, rep *Report) error {
 	body, err := json.Marshal(rep)
 	if err != nil {
@@ -65,7 +56,6 @@ func (c *Client) Send(ctx context.Context, rep *Report) error {
 	return nil
 }
 
-// Stats reports delivery counters.
 func (c *Client) Stats() (sent, dropped int64) {
 	return c.sent.Load(), c.dropped.Load()
 }

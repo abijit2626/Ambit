@@ -1,28 +1,4 @@
 #!/usr/bin/env bash
-# Install ambitd as a system service on Linux (systemd) or macOS (launchd), the way a
-# monitoring agent like Sysmon runs: as root, from boot, restarted whenever it exits.
-#
-#   sudo ./scripts/install-system.sh --binary bin/ambitd-linux-amd64   # install and start
-#   sudo ./scripts/install-system.sh --status                          # is it running?
-#   sudo ./scripts/install-system.sh --uninstall                       # remove; keep data
-#   sudo ./scripts/install-system.sh --uninstall --purge               # remove data too
-#
-# What install does, in this order:
-#   1. copies the binary to /usr/local/bin/ambitd and installs the service definition
-#      from deploy/service/;
-#   2. starts the service and waits for its health endpoint;
-#   3. only then installs the observation-only managed-settings bundle, so Claude Code
-#      is never pointed at a daemon that is not there.
-#
-# It refuses to replace managed settings that already exist and differ from the bundle:
-# an organization's own policy may be in that file, and overwriting it would silently
-# drop that policy. Merge the bundle's "env" and "hooks" blocks into it by hand instead.
-#
-# Uninstall reverses the order: managed settings first, then the service. The spool and
-# the fingerprint key stay unless --purge is given, because they are the evidence a
-# later investigation may need.
-#
-# Windows: scripts/install-system.ps1.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -59,7 +35,32 @@ die() { echo "install-system: $*" >&2; exit 1; }
 say() { echo "install-system: $*"; }
 
 usage() {
-  sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  cat >&2<<'USAGE'
+Install ambitd as a system service on Linux (systemd) or macOS (launchd), the way a
+monitoring agent like Sysmon runs: as root, from boot, restarted whenever it exits.
+
+  sudo ./scripts/install-system.sh --binary bin/ambitd-linux-amd64   # install and start
+  sudo ./scripts/install-system.sh --status                          # is it running?
+  sudo ./scripts/install-system.sh --uninstall                       # remove; keep data
+  sudo ./scripts/install-system.sh --uninstall --purge               # remove data too
+
+What install does, in this order:
+  1. copies the binary to /usr/local/bin/ambitd and installs the service definition
+     from deploy/service/;
+  2. starts the service and waits for its health endpoint;
+  3. only then installs the observation-only managed-settings bundle, so Claude Code
+     is never pointed at a daemon that is not there.
+
+It refuses to replace managed settings that already exist and differ from the bundle:
+an organization's own policy may be in that file, and overwriting it would silently
+drop that policy. Merge the bundle's "env" and "hooks" blocks into it by hand instead.
+
+Uninstall reverses the order: managed settings first, then the service. The spool and
+the fingerprint key stay unless --purge is given, because they are the evidence a
+later investigation may need.
+
+Windows: scripts/install-system.ps1.
+USAGE
   exit 2
 }
 
@@ -67,13 +68,8 @@ require_root() {
   [ "$(id -u)" -eq 0 ] || die "run as root (sudo): the service, the binary and managed settings live in system paths"
 }
 
-# PROBE_BIN is the binary whose effective configuration says where ambitd listens: the
-# one being installed during an install (nothing is at BIN_PATH yet on a first install),
-# the installed one otherwise.
 PROBE_BIN=$BIN_PATH
 
-# hook_url is where ambitd listens, read from its effective configuration so a config
-# that moves hook_addr is honored. It falls back to the default.
 hook_url() {
   local addr=""
   if [ -x "$PROBE_BIN" ]; then
@@ -91,9 +87,6 @@ running() {
   case "$(service_state)" in active|loaded) return 0 ;; *) return 1 ;; esac
 }
 
-# wait_healthy needs the service itself running AND the endpoint answering. The endpoint
-# alone is not proof: another process holding the port answers just as well, while the
-# service fails to bind.
 wait_healthy() {
   local i
   for i in $(seq 1 20); do
@@ -113,7 +106,6 @@ service_start() {
     install -d -m 0700 "$LOG_DIR"
     install -m 0644 -o root -g wheel "$UNIT_SRC" "$UNIT_DST"
     launchctl bootout "system/$LABEL" 2>/dev/null || true
-    # enable first: a label someone disabled stays disabled across bootstrap.
     launchctl enable "system/$LABEL"
     launchctl bootstrap system "$UNIT_DST"
   fi
@@ -178,13 +170,10 @@ do_install() {
   [ -f "$bin" ] || die "no such file: $bin"
   [ -f "$UNIT_SRC" ] || die "missing $UNIT_SRC; run this from a checkout of the repository"
   [ -f "$BUNDLE" ] || die "missing $BUNDLE"
-  # Running -version proves the binary is for this OS and CPU before anything changes.
   local ver
   ver=$("$bin" -version 2>/dev/null) || die "$bin does not run here: wrong OS or CPU architecture?"
   PROBE_BIN=$bin
 
-  # A user-scope ambitd (scripts/dev-local.sh) holds the same port, and the service
-  # would fail to bind. Only fail if what answers is not already this service.
   if healthy && ! running; then
     die "something already answers on $(hook_url): probably a user-scope ambitd.
   Remove it first with ./scripts/dev-local.sh --uninstall"

@@ -76,12 +76,6 @@ func post(t *testing.T, url string, v any) map[string]any {
 	return out
 }
 
-// TestM0ResponseIsInert is the most important test in this package. M0 must not
-// change how any session behaves, and an empty response means the hook expressed
-// no opinion so every later permission layer acts as if no hook were installed.
-//
-// Returning "allow" would NOT be equivalent: it suppresses the permission prompt
-// a developer would otherwise see.
 func TestM0ResponseIsInert(t *testing.T) {
 	c := &capture{}
 	url := startServer(t, c, ObserveOnly{})
@@ -124,8 +118,6 @@ func TestHandlerReceivesPayload(t *testing.T) {
 	}
 }
 
-// TestMalformedBodyStillRespondsInert: a failure inside ambitd must not fail the
-// tool call. In M0 that means an empty decision even on garbage input.
 func TestMalformedBodyStillRespondsInert(t *testing.T) {
 	c := &capture{}
 	url := startServer(t, c, ObserveOnly{})
@@ -148,12 +140,6 @@ func TestMalformedBodyStillRespondsInert(t *testing.T) {
 	}
 }
 
-// TestValidateLoopback: binding off-loopback would expose a decision endpoint
-// for the fleet to the network and put remote latency in the tool path.
-//
-// Tests the policy rather than Listen, so the result does not depend on whether
-// the host has a working stack for a given address family — a container with
-// IPv6 disabled would otherwise fail this for the wrong reason.
 func TestValidateLoopback(t *testing.T) {
 	refuse := []string{"0.0.0.0:7777", "192.168.1.10:7777", "[::]:7777", "10.0.0.5:7777", "example.com:7777"}
 	for _, addr := range refuse {
@@ -172,8 +158,6 @@ func TestValidateLoopback(t *testing.T) {
 	}
 }
 
-// TestListenRefusesNonLoopback covers the bind path on IPv4, which is available
-// everywhere this runs.
 func TestListenRefusesNonLoopback(t *testing.T) {
 	if ln, err := Listen("0.0.0.0:0"); err == nil {
 		ln.Close()
@@ -210,9 +194,6 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-// TestLatencyBudget measures the round trip over loopback. The target is p99 5ms;
-// this asserts a much looser ceiling so the test is not flaky on a loaded CI box,
-// while still catching an order-of-magnitude regression.
 func TestLatencyBudget(t *testing.T) {
 	url := startServer(t, &capture{}, ObserveOnly{})
 	payload, _ := json.Marshal(Payload{
@@ -253,14 +234,10 @@ func TestLatencyBudget(t *testing.T) {
 	}
 }
 
-// TestHandlerIsNotOnTheCriticalPath: a slow handler must not slow the response.
-// The handler contract is async, and this asserts the server does not wait on it.
 func TestHandlerIsNotOnTheCriticalPath(t *testing.T) {
 	released := make(chan struct{})
 	slow := HandlerFunc(func(*Payload) {
-		// Simulates a handler that enqueues and returns immediately, which is
-		// the contract. If a future handler blocks here, this test documents
-		// that the response must still not wait on it.
+
 		close(released)
 	})
 	url := startServer(t, slow, ObserveOnly{})

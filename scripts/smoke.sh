@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# End-to-end smoke test: start ambitd, post representative hook payloads, and
-# assert the three properties M0 must hold.
-#
-#   1. Every hook response is {} — ambitd is behaviorally inert.
-#   2. Ordinary work stays in the spool; only interesting events cross.
-#   3. No cleartext path, domain or secret value reaches the SIEM-bound sink.
 set -euo pipefail
 
 BIN=${BIN:-./bin/ambitd}
@@ -59,7 +53,6 @@ wait "$PID" 2>/dev/null || true
 echo
 echo "SIEM-bound events: $(wc -l < "$D/events.jsonl")   spool: $(wc -l < "$D/trajectory.jsonl")"
 
-# The ordinary workdir read must not have crossed.
 if grep -q '"tool_use_id":"t1"' "$D/events.jsonl"; then
   echo "FAIL: an ordinary workdir read crossed to the SIEM sink"
   fail=1

@@ -10,7 +10,6 @@ import (
 	"github.com/abijit2626/ambit/internal/replay"
 )
 
-// The fixtures under testdata/runs are real AgentDojo run logs, copied unmodified.
 const (
 	fxAttackOK  = "testdata/runs/claude-3-7-sonnet-20250219/slack/user_task_0/important_instructions/injection_task_5.json"
 	fxAttackNo  = "testdata/runs/claude-3-7-sonnet-20250219/banking/user_task_0/important_instructions/injection_task_0.json"
@@ -74,8 +73,6 @@ func TestClassifyRealRuns(t *testing.T) {
 	}
 }
 
-// AgentDojo writes "security": true on a run with no injection. It means nothing there,
-// and reading it would label every benign run a successful attack.
 func TestSecurityIsIgnoredWithoutAnInjection(t *testing.T) {
 	r := load(t, fxBenign)
 	if r.Security == nil || !*r.Security {
@@ -86,8 +83,6 @@ func TestSecurityIsIgnoredWithoutAnInjection(t *testing.T) {
 	}
 }
 
-// AgentDojo also writes "security": true when a run dies of an API error or a context
-// overflow. That is not an attack succeeding.
 func TestAnErroredRunIsNotAnAttackSuccess(t *testing.T) {
 	r := runJSON(t, `{"suite_name":"banking","pipeline_name":"m","user_task_id":"user_task_1",
 		"injection_task_id":"injection_task_0","attack_type":"important_instructions","injections":{},
@@ -118,7 +113,6 @@ func TestUnscoredAttackRunCarriesNoLabel(t *testing.T) {
 	}
 }
 
-// The mapping, checked against a real successful attack: what each message becomes.
 func TestConvertMapsMessagesToHookEvents(t *testing.T) {
 	r := load(t, fxAttackOK)
 	sc, _ := convert(t, r)
@@ -127,7 +121,6 @@ func TestConvertMapsMessagesToHookEvents(t *testing.T) {
 		t.Errorf("header hostile=%v steps_unlabeled=%v, want a hostile run with unlabeled steps", fmtB(sc.Hostile), sc.StepsUnlabeled)
 	}
 
-	// The system message has no hook; the user message, every call and every result do.
 	var calls, results int
 	for _, m := range r.Messages {
 		calls += len(m.ToolCalls)
@@ -194,8 +187,6 @@ func TestBenignRunsLabelTheirStepsAndInjectedRunsDoNot(t *testing.T) {
 	}
 }
 
-// The published logs store content as a string; current AgentDojo stores a list of typed
-// blocks. Both must yield the same text, with thinking dropped.
 func TestContentAcceptsBothFormats(t *testing.T) {
 	var a, b, n Content
 	if err := json.Unmarshal([]byte(`"hello"`), &a); err != nil || a.Text != "hello" {
@@ -230,13 +221,12 @@ func TestConvertTheNewBlockFormat(t *testing.T) {
 	if sc.Steps[0].Payload.UserInput != "find the file" || sc.Steps[2].Payload.ToolResult != "report.txt" {
 		t.Errorf("text not extracted from blocks: %+v", sc.Steps)
 	}
-	// A call with no arguments still carries tool_input, as Claude Code sends it.
+
 	if sc.Steps[1].Payload.ToolInput == nil {
 		t.Error("a call with no arguments lost its tool_input")
 	}
 }
 
-// Calls without ids pair with their results in order.
 func TestConvertPairsCallsAndResultsWithoutIDs(t *testing.T) {
 	r := runJSON(t, `{"suite_name":"travel","pipeline_name":"m","user_task_id":"user_task_1","injection_task_id":null,
 		"attack_type":null,"error":null,"messages":[
@@ -304,8 +294,6 @@ func TestNamesAreFileSafeAndDistinct(t *testing.T) {
 	}
 }
 
-// End to end on real data: the successful attack's edge lands on the call that invited the
-// attacker's address, and the benign runs stay quiet.
 func TestReplayOfRealRuns(t *testing.T) {
 	var results []*replay.Result
 	for _, p := range []string{fxAttackOK, fxBenign, fxUserGoal, fxToolError} {

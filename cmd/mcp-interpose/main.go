@@ -1,41 +1,3 @@
-// Command mcp-interpose wraps one MCP server and reports what it advertises.
-//
-// It is configured as the server command in .mcp.json, in front of the real
-// server, one interposer per server:
-//
-//	{
-//	  "mcpServers": {
-//	    "github": {
-//	      "command": "mcp-interpose",
-//	      "args": ["-server", "github", "--", "npx", "-y", "@modelcontextprotocol/server-github"]
-//	    }
-//	  }
-//	}
-//
-// Per server, not in front of all of them, is the load-bearing choice. Claude Code
-// still sees one MCP server per real server under its real name, so tool identity
-// stays mcp__<server>__<tool>: per-tool permission rules in managed settings keep
-// working, hook matchers keep working, and ambitd's own parsing keeps working. The
-// aggregating gateways evaluated in docs/05-mcp-interpose-decision.md all broke
-// that, which is most of why this exists.
-//
-// What it does: hashes each tool's name, description and input schema and compares
-// against an approved baseline (D4), scans advertised text for instruction-shaped
-// language and cross-server references (D5), and carries MCP annotations into the
-// event stream as inputs to policy that may only make it stricter. What it does
-// not do: decide anything. Every frame is forwarded before it is parsed, no
-// response is ever altered, and there is no path by which a finding can block a
-// tool call. Enforcement starts at M3 (see the Roadmap in README.md).
-//
-// Operator workflow:
-//
-//	mcp-interpose -server github -show      # what has been recorded
-//	mcp-interpose -server github -approve   # approve the current surface
-//	mcp-interpose -server github -revoke    # withdraw approval after an incident
-//
-// stdout carries MCP protocol and nothing else. Every diagnostic goes to stderr,
-// which is where the MCP stdio transport expects a server's logs; a stray line on
-// stdout presents as a mysteriously broken server.
 package main
 
 import (
@@ -57,12 +19,8 @@ import (
 	"github.com/abijit2626/ambit/internal/interpose"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
 var version = "0.0.0-dev"
 
-// shutdownGrace bounds report delivery at exit. The interposer sits on the path of
-// the agent's own shutdown, so a wedged ambitd costs a bounded delay and a counted
-// undelivered report, never a hung session.
 const shutdownGrace = 3 * time.Second
 
 func main() {
@@ -103,7 +61,7 @@ func run() (int, error) {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	// stderr, always. stdout belongs to the protocol.
+
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
 	cfg, err := config.Load(*configPath)
@@ -124,10 +82,6 @@ func run() (int, error) {
 		return 2, errors.New("no server command given; put it after --, as in: -server github -- npx -y @modelcontextprotocol/server-github")
 	}
 
-	// A store that cannot be opened is a degraded mode, not a failure: D5 still
-	// works without it, and refusing to start would take the developer's MCP
-	// server down with us. Every report then says the baseline was unavailable, so
-	// "no drift" is never reported when the truth is "nothing was compared".
 	var (
 		store    *baseline.Store
 		storeErr error
@@ -152,9 +106,7 @@ func run() (int, error) {
 	})
 
 	cmd := exec.Command(args[0], args[1:]...)
-	// The wrapped server's stderr passes through untouched: it is the developer's
-	// own diagnostic channel and swallowing it would make debugging a wrapped
-	// server worse than debugging an unwrapped one.
+
 	cmd.Stderr = os.Stderr
 	serverIn, err := cmd.StdinPipe()
 	if err != nil {
@@ -165,10 +117,6 @@ func run() (int, error) {
 		return 1, fmt.Errorf("stdout pipe: %w", err)
 	}
 
-	// On Windows, put this process in a job object that kills whatever is still in it
-	// when we go. The wrapped server is often `npx` or a .cmd shim with the real server
-	// as a grandchild, and an MCP host stops a stdio server with TerminateProcess,
-	// which runs none of our code: without this the grandchildren outlive us.
 	if err := killChildrenOnExit(); err != nil {
 		log.Debug("could not tie the wrapped server's lifetime to ours", "err", err)
 	}
@@ -182,13 +130,7 @@ func run() (int, error) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	// Forward a signal to the wrapped server rather than dying and orphaning it.
-	//
-	// ctx is also cancelled by the deferred stop() when run returns, which is after
-	// the server has exited and been reaped. By then the process is gone, and on
-	// Windows terminate works by PID, which the system may have given to an unrelated
-	// process. exited is closed as soon as Wait returns, and a cancellation that
-	// arrives after it is not a signal.
+
 	exited := make(chan struct{})
 	go func() {
 		select {
@@ -209,8 +151,7 @@ func run() (int, error) {
 		ToServer:   serverIn,
 		FromServer: serverOut,
 		ToClient:   os.Stdout,
-		// Closing the server's stdin on client EOF is what lets the wrapped
-		// process exit on its own terms instead of being killed.
+
 		CloseServerIn: func() { _ = serverIn.Close() },
 		Analyzer:      analyzer,
 		Logger:        log,
@@ -231,8 +172,7 @@ func run() (int, error) {
 		"frames_dropped", st.FramesDropped, "frames_unparsed", st.FramesUnparsed,
 		"reports_sent", sent, "reports_dropped", dropped+st.ReportsDropped)
 	if dropped+st.ReportsDropped > 0 {
-		// Loud, because an interposer whose reports never arrive looks exactly like
-		// a server with nothing to report.
+
 		log.Warn("interposer reports were not delivered to ambitd",
 			"server", *serverName, "dropped", dropped+st.ReportsDropped, "endpoint", client.URL())
 	}
@@ -240,8 +180,6 @@ func run() (int, error) {
 		log.Debug("relay ended with error", "err", proxyErr)
 	}
 
-	// The wrapped server's exit status is ours: the client is entitled to see the
-	// same outcome it would have seen without us in the path.
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
 		return exitErr.ExitCode(), nil
@@ -252,8 +190,6 @@ func run() (int, error) {
 	return 0, nil
 }
 
-// adminMode implements -show, -approve and -revoke: the explicit operator step
-// that turns an inventory into a control.
 func adminMode(dir, server string, approve, revoke bool) (int, error) {
 	store, err := baseline.Open(dir)
 	if err != nil {
@@ -265,8 +201,7 @@ func adminMode(dir, server string, approve, revoke bool) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		// Printed, not silent: approval takes whatever the server is advertising
-		// right now, so the operator should see what they just blessed.
+
 		fmt.Fprintf(os.Stderr, "approved %d tools for server %q\n", len(rec.Tools), server)
 		return 0, printJSON(rec)
 	case revoke:
@@ -294,13 +229,6 @@ func printJSON(v any) error {
 	return enc.Encode(v)
 }
 
-// siblingNames assembles the other-server list for D5's cross-server rule.
-//
-// The flag wins when given. Otherwise the trusted-server list from configuration
-// is used, which is an approximation: it is the only list of sibling names ambit
-// currently holds. Cross-server detection does not depend on it — the
-// mcp__<server>__<tool> form needs no configuration — so an incomplete list costs
-// one rule's coverage rather than the detector.
 func siblingNames(flagValue string, cfg config.Config, self string) []string {
 	raw := cfg.TrustedMCPServers
 	if strings.TrimSpace(flagValue) != "" {
@@ -316,13 +244,6 @@ func siblingNames(flagValue string, cfg config.Config, self string) []string {
 	return out
 }
 
-// sessionEnvVars are checked for a session id, in order.
-//
-// This is best-effort by necessity: the MCP protocol carries no Claude Code
-// session id, and nothing documented guarantees one reaches a server's
-// environment. An id is used when the runtime or the operator provides one and is
-// left empty otherwise — an event correlated to the wrong session would be worse
-// than one correlated to none.
 var sessionEnvVars = []string{"AMBIT_SESSION_ID", "CLAUDE_SESSION_ID"}
 
 func resolveSessionID(flagValue string) string {

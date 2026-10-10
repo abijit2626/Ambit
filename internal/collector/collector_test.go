@@ -65,7 +65,7 @@ func newTestCollector(t *testing.T) (*Collector, *memSink, *memSink) {
 	cfg.EndpointID = "ep_test"
 	cfg.UserID = "u_test"
 	cfg.OrgID = "o_test"
-	cfg.SampleRate = 0 // deterministic: no sampled remainder
+	cfg.SampleRate = 0
 	cfg.TrustedRepoPaths = []string{"/home/dev/src/myrepo"}
 	cfg.TrustedMCPServers = []string{"internal-wiki"}
 	cfg.TrustedContentDomains = []string{"example.com"}
@@ -144,8 +144,6 @@ func TestNetworkCommandCrossesWithClass(t *testing.T) {
 	}
 }
 
-// TestNoCleartextPathsReachTheSIEM is the MSSP-posture guard, end to end. Paths
-// must be keyed digests; only the zone label is cleartext.
 func TestNoCleartextPathsReachTheSIEM(t *testing.T) {
 	c, events, _ := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -166,7 +164,6 @@ func TestNoCleartextPathsReachTheSIEM(t *testing.T) {
 	}
 }
 
-// TestNoSecretValuesReachEitherSink is the redaction guard, end to end.
 func TestNoSecretValuesReachEitherSink(t *testing.T) {
 	c, events, traj := newTestCollector(t)
 	const secret = "AKIAIOSFODNN7EXAMPLE"
@@ -190,8 +187,6 @@ func TestNoSecretValuesReachEitherSink(t *testing.T) {
 	}
 }
 
-// TestPromptTextNeverReachesTheSIEM: prompt_submit crosses because its presence
-// is D1's core signal, but the text is sensitive and no rule needs it.
 func TestPromptTextNeverReachesTheSIEM(t *testing.T) {
 	c, events, traj := newTestCollector(t)
 	const prompt = "refactor the billing module and do not tell anyone about project onyx"
@@ -275,8 +270,6 @@ func TestTrustedMCPServerIsLabelledAndQuiet(t *testing.T) {
 	}
 }
 
-// TestUntrustedInstructionsLoadedCrosses covers D8: a poisoned CLAUDE.md in a
-// cloned repo, which InstructionsLoaded is the only event that reports.
 func TestUntrustedInstructionsLoadedCrosses(t *testing.T) {
 	c, events, _ := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -305,10 +298,6 @@ func TestUntrustedInstructionsLoadedCrosses(t *testing.T) {
 	}
 }
 
-// TestM0EmitsNoDecision: the milestone guarantee. An event carrying a decision
-// would mean ambitd had formed an opinion, which M0/M1 must not do — this holds
-// regardless of Rule-of-Two accounting, which is observational and changes
-// nothing Claude Code sees (every hook response is still {}).
 func TestM0EmitsNoDecision(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -321,9 +310,7 @@ func TestM0EmitsNoDecision(t *testing.T) {
 	if d, present := pol["decision"]; present && d != "" {
 		t.Errorf("policy.decision = %v, want empty: no policy engine exists before M3", d)
 	}
-	// Rule-of-Two accounting DOES run (the shadow-mode instrument, docs/03): a
-	// credential-path read sets bit B. What must stay false is C — nothing about
-	// reading a file is a state change or external communication.
+
 	r2 := m["r2"].(map[string]any)
 	if b, _ := r2["b"].(bool); !b {
 		t.Error("r2.b = false; a credential-path read should set Rule-of-Two bit B")
@@ -343,7 +330,7 @@ func TestUnknownHookEventIsIgnored(t *testing.T) {
 
 func TestInterestingFractionAndReasons(t *testing.T) {
 	c, _, _ := newTestCollector(t)
-	// 1 credential read, 99 ordinary reads.
+
 	c.Handle(&hook.Payload{
 		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
 		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
@@ -358,11 +345,7 @@ func TestInterestingFractionAndReasons(t *testing.T) {
 		t.Errorf("InterestingFraction = %v, want roughly 0.01", got)
 	}
 	st := c.Stats()
-	// The credential read is also the session's first Rule-of-Two transition
-	// (bit B, false to true), and filter.Decide checks R2.Transition before
-	// path_zone, so it crosses as r2_transition rather than severe_zone. Both
-	// are real properties of the same event; the filter's own ordering, not
-	// this test, decides which one is recorded.
+
 	if st.CrossReasons["r2_transition"] != 1 {
 		t.Errorf("CrossReasons[r2_transition] = %d, want 1", st.CrossReasons["r2_transition"])
 	}
@@ -406,13 +389,6 @@ func TestConcurrentHandleIsSafe(t *testing.T) {
 	}
 }
 
-// TestUntrustedZoneOverridesTrustedRepoPrefix is D8's main case, and it was wrong until
-// writing the Wazuh rules exposed it.
-//
-// A CLAUDE.md inside node_modules of a trusted repository is dependency-carried
-// instruction content — the repo-carried injection route the detector exists for — but
-// the trusted-repo prefix check alone calls it trusted, because the dependency directory
-// sits under a trusted path. Zone classification is what catches it, so the zone wins.
 func TestUntrustedZoneOverridesTrustedRepoPrefix(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 
@@ -451,8 +427,6 @@ func TestUntrustedZoneOverridesTrustedRepoPrefix(t *testing.T) {
 	}
 }
 
-// --- Rule-of-Two accounting (the shadow-mode instrument, docs/03) ---
-
 func r2Of(t *testing.T, traj *memSink, i int) map[string]any {
 	t.Helper()
 	m, ok := traj.decode(t, i)["r2"].(map[string]any)
@@ -465,7 +439,6 @@ func r2Of(t *testing.T, traj *memSink, i int) map[string]any {
 func TestR2IsMonotonicAcrossEvents(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 
-	// First: a network bash command sets A and C.
 	c.Handle(&hook.Payload{
 		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
 		ToolName: "Bash", ToolInput: map[string]any{"command": "curl https://example.com"},
@@ -481,8 +454,6 @@ func TestR2IsMonotonicAcrossEvents(t *testing.T) {
 		t.Fatal("first event should not set B")
 	}
 
-	// Second: an ordinary workdir read, sets nothing new -- but A and C must
-	// still read true, because bits never clear within a session.
 	c.Handle(&hook.Payload{
 		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
 		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/src/myrepo/f.go"},
@@ -495,7 +466,6 @@ func TestR2IsMonotonicAcrossEvents(t *testing.T) {
 		t.Error("bit C cleared on the second event; Rule-of-Two bits must be monotonic within a session")
 	}
 
-	// Third: a credential read sets B. A and C must still hold.
 	c.Handle(&hook.Payload{
 		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
 		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
@@ -532,10 +502,6 @@ func TestR2TransitionFiresOnlyOnce(t *testing.T) {
 	}
 }
 
-// TestR2PreAndPostToolUseBothContribute covers why ClassifyTool is called
-// twice for one call rather than being redundant: PostToolUse carries the
-// result, so a secret surfacing only in the output sets B where PreToolUse
-// (input only) could not have known to.
 func TestR2PreAndPostToolUseBothContribute(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -559,8 +525,6 @@ func TestR2PreAndPostToolUseBothContribute(t *testing.T) {
 	}
 }
 
-// TestR2DeniedAndFailedCallsSetNoBits is the guard against manufacturing a
-// signal for an action that never happened.
 func TestR2DeniedAndFailedCallsSetNoBits(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -581,9 +545,6 @@ func TestR2DeniedAndFailedCallsSetNoBits(t *testing.T) {
 	}
 }
 
-// TestR2InstructionsLoadedSetsA covers the config-path rule end to end,
-// distinguishing a trusted repo from an untrusted one via the same
-// isTrustedRepoPath the D8 detector already uses.
 func TestR2InstructionsLoadedSetsA(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -603,8 +564,6 @@ func TestR2InstructionsLoadedSetsA(t *testing.T) {
 	}
 }
 
-// TestR2ConfigChangeSetsNoBits: D6/D8 events about the endpoint's own
-// configuration are not ingest events and must not touch R2.
 func TestR2ConfigChangeSetsNoBits(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -619,9 +578,6 @@ func TestR2ConfigChangeSetsNoBits(t *testing.T) {
 	}
 }
 
-// TestR2WebFetchDomainTrust exercises the digest-based comparison end to end,
-// including that a subdomain of a trusted registrable domain is trusted --
-// the same scope semantics TrustedMCPServers and TrustedRepoPaths use.
 func TestR2WebFetchDomainTrust(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -641,8 +597,6 @@ func TestR2WebFetchDomainTrust(t *testing.T) {
 	}
 }
 
-// TestR2WebSearchAlwaysUntrusted: WebSearch carries no URL to extract a domain
-// from, so it gets no benefit of the doubt.
 func TestR2WebSearchAlwaysUntrusted(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -654,25 +608,18 @@ func TestR2WebSearchAlwaysUntrusted(t *testing.T) {
 	}
 }
 
-// TestR2SubagentSharesParentSessionBits is the concrete resolution this
-// codebase gives to the subagent question: Claude Code gives a
-// subagent the same session_id as its parent, so keying sessionState on
-// session_id alone means the subagent's tool calls see the parent's
-// already-set bits with no separate propagation step.
 func TestR2SubagentSharesParentSessionBits(t *testing.T) {
 	c, _, traj := newTestCollector(t)
-	// The parent reads a credential.
+
 	c.Handle(&hook.Payload{
 		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
 		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
 	})
-	// A subagent starts: same session_id, distinct agent_id/agent_type.
+
 	c.Handle(&hook.Payload{
 		HookEventName: hook.EvSubagentStart, SessionID: "s1", AgentID: "a_1", AgentType: "Explore",
 	})
-	// The subagent's own tool call, under that same session_id, should already
-	// see bit B set -- inherited by construction, not by a copy this test
-	// would otherwise need a separate code path to prove.
+
 	c.Handle(&hook.Payload{
 		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
 		AgentID: "a_1", AgentType: "Explore",
@@ -684,12 +631,6 @@ func TestR2SubagentSharesParentSessionBits(t *testing.T) {
 	}
 }
 
-// TestR2NewSessionIDStartsClean documents the other half of that question: a session_id
-// ambitd has not seen before gets a fresh sessionState with all three bits
-// unset, whether that is a genuinely new Claude Code session or -- per the
-// evidence cited on (c *Collector) session -- the first event after /clear.
-// This is the behavior flagged as unsound for B and C specifically; this
-// test pins what the code actually does today, not that the behavior is right.
 func TestR2NewSessionIDStartsClean(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -706,8 +647,6 @@ func TestR2NewSessionIDStartsClean(t *testing.T) {
 	}
 }
 
-// The daemon is long-lived. A session that ended must not stay in memory until the
-// process restarts, and its Rule-of-Two bits and provenance set must not outlive it.
 func TestSessionEndDropsSessionStateAndStillReportsItsFinalBits(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	c.Handle(&hook.Payload{
@@ -723,8 +662,6 @@ func TestSessionEndDropsSessionStateAndStillReportsItsFinalBits(t *testing.T) {
 		t.Errorf("Sessions = %d after SessionEnd, want 0: the daemon would grow without bound", c.Stats().Sessions)
 	}
 
-	// The SessionEnd event was emitted before the state went, so it still reports the
-	// bit the credential read set.
 	var end struct {
 		R2 struct {
 			B bool `json:"b"`
@@ -740,7 +677,6 @@ func TestSessionEndDropsSessionStateAndStillReportsItsFinalBits(t *testing.T) {
 		t.Error("the SessionEnd event lost the session's final Rule-of-Two state")
 	}
 
-	// A later event under the same id starts clean.
 	c.Handle(&hook.Payload{
 		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
 		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/src/myrepo/main.go"},
