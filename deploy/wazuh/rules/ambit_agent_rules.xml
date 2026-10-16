@@ -107,7 +107,7 @@
   <rule id="100204" level="12">
     <decoded_as>json</decoded_as>
     <field name="kind">^session_start$</field>
-    <field name="agent_entrypoint">^(ci|sdk)$</field>
+    <field name="agent_entrypoint">^ci$|^sdk$</field>
     <description>ambit D1: session started from a non-interactive entrypoint ($(agent_entrypoint)) on $(endpoint_id)</description>
     <mitre>
       <id>T1059</id>
