@@ -520,8 +520,9 @@ Open problems:
   grouping, which fits Wazuh's default matcher not supporting it (inferred). The pattern is
   now `^ci$|^sdk$`, and `TestFieldPatternsAvoidGroupingParentheses` fails on any new field
   pattern with parentheses. The offline tests could not catch this before, because they
-  compile patterns with Go's `regexp`, which accepts grouping. The fixed file has not been
-  re-loaded on a live manager from this tree; the same one-pattern change was.
+  compile patterns with Go's `regexp`, which accepts grouping. The fixed file was then read
+  from the pushed branch and copied into the lab manager: its SHA-256 matched the hand-edited
+  copy that had been running, and `wazuh-analysisd -t` exited 0 with the repo's file in place.
 - **The Windows restart does not fire (observed).** With the task as installed, a forced kill
   was not followed by a restart in 90 seconds (`LastTaskResult` `0xFFFFFFFF`), and an
   invalid `config.json` made `ambitd` exit 1 and got one attempt in 180 seconds, no retry.
