@@ -513,12 +513,15 @@ built-in `json` decoder.
 
 Open problems:
 
-- **Rule 100204 stops the manager loading `ambit_agent_rules.xml` (observed).** The pattern
-  `^(ci|sdk)$` made `wazuh-analysisd -t` fail with `Syntax error on tag` for rule 100204 and
-  exit 1; changing only the pattern to `^ci$|^sdk$` made it exit 0. Renaming the field changed
-  nothing. The other multi-value patterns in the rules are written without grouping, which
-  fits Wazuh's default matcher not supporting it (inferred). The rule is inert by design, but
-  the file does not load on 4.14.8 until this is changed. Not yet fixed in this tree.
+- **Rule 100204 stopped the manager loading `ambit_agent_rules.xml` (observed; fixed).** The
+  pattern `^(ci|sdk)$` made `wazuh-analysisd -t` fail with `Syntax error on tag` for rule
+  100204 and exit 1; changing only the pattern to `^ci$|^sdk$` made it exit 0. Renaming the
+  field changed nothing. The other multi-value patterns in the rules are written without
+  grouping, which fits Wazuh's default matcher not supporting it (inferred). The pattern is
+  now `^ci$|^sdk$`, and `TestFieldPatternsAvoidGroupingParentheses` fails on any new field
+  pattern with parentheses. The offline tests could not catch this before, because they
+  compile patterns with Go's `regexp`, which accepts grouping. The fixed file has not been
+  re-loaded on a live manager from this tree; the same one-pattern change was.
 - **The Windows restart does not fire (observed).** With the task as installed, a forced kill
   was not followed by a restart in 90 seconds (`LastTaskResult` `0xFFFFFFFF`), and an
   invalid `config.json` made `ambitd` exit 1 and got one attempt in 180 seconds, no retry.
