@@ -263,8 +263,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke.ps1                # en
 ```
 
 For a cohort, `ambitd` is installed as a scheduled task that starts at boot as SYSTEM and is
-restarted when it exits, from an Administrator PowerShell. It is a task and not a service
-because `ambitd` is a console program, and making it a service would add a dependency:
+set to restart when it exits (that restart did not fire on a Windows 10 test machine; see
+[Known limitations](#known-limitations)), from an Administrator PowerShell. It is a task and
+not a service because `ambitd` is a console program, and making it a service would add a
+dependency:
 
 ```powershell
 .\scripts\install-system.ps1 -Binary .\bin\ambitd-windows-amd64.exe
@@ -414,11 +416,15 @@ team executes a runbook against a sample alert.
   enforcement keys (bypass mode, sandbox, egress allowlist) that the observation-only M0
   bundle deliberately omits, so deploying both makes D12 fire on every endpoint. The `_m0`
   policy files assert only what the M0 bundle sets.
-- **The system-service installers are verified on Linux only.** `scripts/install-system.sh`
-  and `.ps1` install `ambitd` to run from boot and restart when it exits. The Linux flow was
-  run end to end against a stub service manager, and the systemd unit passes
-  `systemd-analyze verify`. The macOS and Windows installers have not been run on a real
-  machine, and no platform's restart has been observed. See
+- **The system-service installers: Windows has run once on a real machine, and its restart
+  does not work as installed.** `scripts/install-system.sh` and `.ps1` install `ambitd` to run
+  from boot and restart when it exits. The Linux flow was run end to end against a stub
+  service manager, and the systemd unit passes `systemd-analyze verify`. `install-system.ps1`
+  was run on one Windows 10 machine (see
+  [Observed in a first lab run](#observed-in-a-first-lab-run)): the task, its principal, the
+  data directory ACL and the managed settings came out as designed, but the configured
+  restart-on-failure never restarted `ambitd`. The macOS installer has not been run on a real
+  machine, and no Linux or macOS restart has been observed. See
   [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
@@ -434,7 +440,8 @@ team executes a runbook against a sample alert.
 - **Three Wazuh behaviors are unconfirmed on a live manager and fail silently when
   wrong:** the syscheck parent SIDs, the SCA parent SID, and how a `<field>` regex
   matches an array-valued field. Confirm them on the deployed version before relying on
-  the rules that use them.
+  the rules that use them. The array case has since matched on one fixture; see
+  [Observed in a first lab run](#observed-in-a-first-lab-run).
 - **MCP coverage is stdio only.** `mcp-interpose` is a stdio wrapper and does not cover
   servers reached over HTTP/SSE. `mcp_list` events usually carry no session id, because
   MCP does not carry one.
@@ -443,9 +450,10 @@ team executes a runbook against a sample alert.
   there and the detectors that read sandbox denials have no source. The Windows SCA
   policy omits the two sandbox checks because no configuration could satisfy them. Run
   inside WSL2 to get the sandbox. See [Windows](#windows).
-- **Wazuh behavior on a Windows agent is unconfirmed.** FIM wildcard expansion, log
-  rotation under `log_format json`, SCA `f:` and `c:` rules and `whodata` have not been
-  tried on a live agent, and each fails silently when wrong. See
+- **Wazuh behavior on a Windows agent is mostly unconfirmed.** In a first lab run the agent
+  logged that it opened `events.jsonl`. FIM wildcard expansion, log rotation under
+  `log_format json`, SCA `f:` and `c:` rules and `whodata` have not been tried on a live
+  agent, and each fails silently when wrong. See
   [deploy/wazuh/README.md](deploy/wazuh/README.md#windows-agents).
 - **Provenance edges are evidence, not proof.** The intersection is an unsound approximation
   (CaMeL's dataflow tracking needs the interpreter, and Claude Code is a black box): the user
@@ -486,6 +494,71 @@ team executes a runbook against a sample alert.
   Operator `TrustedMCPServers` classification is the larger coverage risk: marking a
   same-vendor admin tool `internal` removes it from Rule-of-Two and goal-drift coverage.
 
+### Observed in a first lab run
+
+One run, by one person, in October 2026: Windows 10 Pro 22H2; `ambitd` built from commit
+`32ee5399` with Go 1.26.7 (`go.mod` says 1.24); a single-node Wazuh 4.14.8 manager in Docker
+and a Wazuh 4.14.8 Windows agent. Rules were exercised with `wazuh-logtest` on
+`deploy/wazuh/fixtures/events.sample.jsonl`. An alert from a live event travelling from the
+agent to the manager has **not** been shown yet. Each item says whether it was *observed*
+(seen directly), *inferred* (a reading of what was seen) or *untested*.
+
+Worked as designed (observed): `go test ./...` passes natively on Windows (26 packages), and
+`ambitd.exe` built there has the same SHA-256 as a Linux cross-build with `-trimpath
+-buildvcs=false` and `CGO_ENABLED=0`. `install-system.ps1` created the task as SYSTEM with a
+boot trigger, redirected the log through `cmd.exe`, restricted the data directory to SYSTEM
+and Administrators, and installed a managed-settings file identical to the M0 bundle. The
+Wazuh agent logged that it opened `events.jsonl`. All 43 fixture lines decode with the
+built-in `json` decoder.
+
+Open problems:
+
+- **Rule 100204 stopped the manager loading `ambit_agent_rules.xml` (observed; fixed).** The
+  pattern `^(ci|sdk)$` made `wazuh-analysisd -t` fail with `Syntax error on tag` for rule
+  100204 and exit 1; changing only the pattern to `^ci$|^sdk$` made it exit 0. Renaming the
+  field changed nothing. The other multi-value patterns in the rules are written without
+  grouping, which fits Wazuh's default matcher not supporting it (inferred). The pattern is
+  now `^ci$|^sdk$`, and `TestFieldPatternsAvoidGroupingParentheses` fails on any new field
+  pattern with parentheses. The offline tests could not catch this before, because they
+  compile patterns with Go's `regexp`, which accepts grouping. The fixed file was then read
+  from the pushed branch and copied into the lab manager: its SHA-256 matched the hand-edited
+  copy that had been running, and `wazuh-analysisd -t` exited 0 with the repo's file in place.
+- **The Windows restart does not fire (observed).** With the task as installed, a forced kill
+  was not followed by a restart in 90 seconds (`LastTaskResult` `0xFFFFFFFF`), and an
+  invalid `config.json` made `ambitd` exit 1 and got one attempt in 180 seconds, no retry.
+  Adding a repeating one-minute time trigger, with `MultipleInstances` left at `IgnoreNew`,
+  brought `ambitd` back about 55 seconds after a kill, with one instance and no duplicates.
+  That was tried once, by hand, and is not in the installer.
+- **The step 3 loop in docs/06 prints nothing on 4.14.8 (observed).** `wazuh-logtest -q`
+  printed only blank lines for a fixture that fires rule 100201; the same line without `-q`
+  shows the alert. As written, the loop looks like a quiet fleet.
+- **Sibling rules shadow each other: one rule fires per event (observed).** A credential
+  write in a `bypassPermissions` session alerted as 100201, not the D2 write rule 100212.
+  An approved MCP tool with `hidden_instruction` alerted as 100241, not 100247, so 100247
+  looks unreachable. Untested: that reads in `bypassPermissions` sessions alert as 100201
+  and so may not count toward the D2 sweep rule 100211, which counts 100210.
+- **Array matching works in the case tried (observed).** 100241, an unanchored literal,
+  matched an event whose `mcp_scan_classes` is a two-element array. Only the first element,
+  and one class at a time, were tried.
+- **Fixture coverage is partial (observed).** Of 43 lines, 33 produced an alert, 3 matched a
+  level-0 rule and 7 matched no rule. Rules 100203, 100204, 100210, 100211, 100212, 100221,
+  100242 to 100245 and 100247 among others did not fire on any line. That is not a failure
+  of those rules: the fixtures do not exercise them.
+- **The hook response exceeded its latency budget (observed).** `ambitd` logged two lines
+  with the same timestamp, `took=26.9995ms budget=5ms`. Whether that affects Claude Code, and
+  whether the two lines are two requests, is untested.
+- **OTLP is off, but the M0 bundle points telemetry at it (observed configuration).**
+  `install-system.ps1` writes no `config.json`, so `ambitd` logs `otlp_addr=off`, while the
+  bundle sends telemetry to `127.0.0.1:4318` and the SCA policy has checks that expect it.
+  What Claude Code does when that export is refused is untested.
+- **The data directory is readable only by SYSTEM and Administrators after
+  `install-system.ps1` (observed).** The comment in
+  `deploy/wazuh/ossec-localfile.windows.xml` says the ACL also grants the current user.
+  The agent runs as SYSTEM and can read it; a non-elevated user cannot.
+- **A `sink_gap` marker line matches no rule (observed; intent unclear).** The docs pair the
+  markers with rule 100313, which matches `health_dropped_events` on an `ambitd_health`
+  event, not the marker itself.
+
 ## Non-goals
 
 Out of scope, so nobody builds them by accident:
@@ -521,9 +594,15 @@ exercised on a real Windows host by the `windows` job in
 `.github/workflows/check.yml`, under Windows PowerShell 5.1 and PowerShell 7. That covers
 `ambitd`, `mcp-interpose` and the local install; it does not cover a Wazuh agent on
 Windows, and Claude Code's own hook payloads on Windows were read from its documentation
-rather than captured. `install-system.ps1` is parsed by PowerShell 7 but not run on Windows.
+rather than captured. `install-system.ps1` is parsed by PowerShell 7 in CI; it has been run
+once, by hand, on a Windows 10 machine (see
+[Observed in a first lab run](#observed-in-a-first-lab-run)).
 
 The comment removal was checked rather than assumed. The Go replay reports (the starter corpus
 and both AgentDojo model runs) are byte-identical before and after, the set of files compiled
 on each OS is unchanged, and PowerShell's own tokenizer sees the same non-comment tokens in
 every `.ps1`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
