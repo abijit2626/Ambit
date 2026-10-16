@@ -310,6 +310,19 @@ func TestRuleFieldsExistInTheSchema(t *testing.T) {
 	}
 }
 
+func TestFieldPatternsAvoidGroupingParentheses(t *testing.T) {
+	for _, r := range loadRules(t) {
+		for _, f := range r.Fields {
+			if f.Type == "pcre2" {
+				continue
+			}
+			if strings.ContainsAny(f.Pattern, "()") {
+				t.Errorf("rule %d field %q pattern %q has parentheses; Wazuh 4.14.8 failed to load a rule written as ^(ci|sdk)$ (wazuh-analysisd -t: Syntax error on tag, exit 1) and accepted ^ci$|^sdk$, so write alternation without grouping or set type=\"pcre2\"", r.ID, f.Name, f.Pattern)
+			}
+		}
+	}
+}
+
 func TestDescriptionInterpolationsExist(t *testing.T) {
 	all, _ := schemaFields()
 	interp := regexp.MustCompile(`\$\(([^)]+)\)`)
