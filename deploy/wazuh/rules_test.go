@@ -17,6 +17,7 @@ import (
 const (
 	rulesGlob    = "rules/*.xml"
 	fixturesPath = "fixtures/events.sample.jsonl"
+	sweepsPath   = "fixtures/d2-sweeps.jsonl"
 	runbooksDir  = "runbooks"
 
 	fieldBudget = 55
@@ -57,6 +58,7 @@ type rule struct {
 	DecodedAs   string  `xml:"decoded_as"`
 	IfSID       string  `xml:"if_sid"`
 	IfMatchedSI string  `xml:"if_matched_sid"`
+	IfMatchedGr string  `xml:"if_matched_group"`
 	SameField   string  `xml:"same_field"`
 	Description string  `xml:"description"`
 	Groups      string  `xml:"group"`
@@ -70,12 +72,22 @@ type rule struct {
 type field struct {
 	Name    string `xml:"name,attr"`
 	Type    string `xml:"type,attr"`
+	Negate  string `xml:"negate,attr"`
 	Pattern string `xml:",chardata"`
 }
 
-func (r rule) isCorrelation() bool { return r.IfMatchedSI != "" }
+func (r rule) isCorrelation() bool { return r.IfMatchedSI != "" || r.IfMatchedGr != "" }
 
 func (r rule) hasGroup(name string) bool { return strings.Contains(r.Groups, name) }
+
+func (r rule) hasExactGroup(name string) bool {
+	for _, g := range strings.Split(r.Groups, ",") {
+		if strings.TrimSpace(g) == name {
+			return true
+		}
+	}
+	return false
+}
 
 func (r rule) parentIDs(t *testing.T) []int {
 	t.Helper()
@@ -156,9 +168,14 @@ func loadRules(t *testing.T) []rule {
 
 func loadFixtures(t *testing.T) []map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(fixturesPath)
+	return loadFixtureFile(t, fixturesPath)
+}
+
+func loadFixtureFile(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read fixtures: %v (regenerate with: make fixtures)", err)
+		t.Fatalf("read %s: %v (regenerate with: make fixtures)", path, err)
 	}
 	var out []map[string]any
 	for i, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
@@ -284,6 +301,17 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 			if r.hasGroup(groupWazuhSourced) && !external {
 				t.Errorf("declares %s but reads no Wazuh-owned event", groupWazuhSourced)
 			}
+			if g := strings.TrimSpace(r.IfMatchedGr); g != "" {
+				var carriers int
+				for _, o := range rules {
+					if o.hasExactGroup(g) && !o.isCorrelation() {
+						carriers++
+					}
+				}
+				if carriers == 0 {
+					t.Errorf("counts group %q, which no single-event rule carries; the rule would never fire", g)
+				}
+			}
 			if r.isCorrelation() {
 				if r.Frequency <= 0 || r.Timeframe <= 0 {
 					t.Errorf("correlation rule needs frequency and timeframe, got %d/%d", r.Frequency, r.Timeframe)
@@ -388,7 +416,7 @@ func matches(r rule, ev map[string]any, byID map[int]rule) (bool, error) {
 		pattern := strings.TrimSpace(f.Pattern)
 		if pattern == `\.+` {
 
-			if value == "" {
+			if (value == "") != (f.Negate == "yes") {
 				return false, nil
 			}
 			continue
@@ -397,7 +425,7 @@ func matches(r rule, ev map[string]any, byID map[int]rule) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("rule %d: field %s pattern %q does not compile: %w", r.ID, f.Name, pattern, err)
 		}
-		if !re.MatchString(value) {
+		if re.MatchString(value) == (f.Negate == "yes") {
 			return false, nil
 		}
 	}
@@ -499,25 +527,29 @@ func TestSummaryAndPerToolEventsAreDistinguishable(t *testing.T) {
 }
 
 func TestFixturesStayInsideTheFieldBudget(t *testing.T) {
-	for i, ev := range loadFixtures(t) {
-		if len(ev) > fieldBudget {
-			t.Errorf("fixture %d has %d fields, budget is %d: an event this wide risks the decoder rejecting it, which is silent detection loss", i+1, len(ev), fieldBudget)
+	for _, path := range []string{fixturesPath, sweepsPath} {
+		for i, ev := range loadFixtureFile(t, path) {
+			if len(ev) > fieldBudget {
+				t.Errorf("%s line %d has %d fields, budget is %d: an event this wide risks the decoder rejecting it, which is silent detection loss", path, i+1, len(ev), fieldBudget)
+			}
 		}
 	}
 }
 
 func TestFixturesCarryNoCleartextSecrets(t *testing.T) {
-	raw, err := os.ReadFile(fixturesPath)
-	if err != nil {
-		t.Fatalf("read fixtures: %v", err)
-	}
+	for _, path := range []string{fixturesPath, sweepsPath} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
 
-	for _, banned := range []string{
-		"/home/dev", ".ssh", "id_ed25519", "id_rsa", ".aws",
-		"Ignore all previous", "exfil.attacker.test", "billing",
-	} {
-		if strings.Contains(string(raw), banned) {
-			t.Errorf("fixtures contain %q in cleartext; the SIEM-bound sink must not carry it, so neither may a fixture generated from it", banned)
+		for _, banned := range []string{
+			"/home/dev", ".ssh", "id_ed25519", "id_rsa", ".aws",
+			"Ignore all previous", "exfil.attacker.test", "billing",
+		} {
+			if strings.Contains(string(raw), banned) {
+				t.Errorf("%s contains %q in cleartext; the SIEM-bound sink must not carry it, so neither may a fixture generated from it", path, banned)
+			}
 		}
 	}
 }
@@ -903,4 +935,134 @@ func TestDeployArtifactsAreWellFormed(t *testing.T) {
 		t.Errorf("found %d XML and %d JSON files under %s; expected both", xmlFiles, jsonFiles, root)
 	}
 	t.Logf("parsed %d XML and %d JSON deploy artifacts", xmlFiles, jsonFiles)
+}
+
+const (
+	sweepRuleID    = 100211
+	groupCredRead  = "ambit_cred_read"
+	credReadOp     = "read"
+	credentialZone = "credential"
+)
+
+func credentialEvent(mode, op string) map[string]any {
+	return map[string]any{
+		"schema_v": float64(2), "src": "hook", "kind": "tool_pre",
+		"permission_mode": mode, "session_id": "s_sweep", "tool_name": "Read",
+		"path_zone": credentialZone, "path_op": op, "path_count": float64(1),
+	}
+}
+
+func TestCredentialSweepCountsOnlyCredentialReads(t *testing.T) {
+	rules := loadRules(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+	sweep, ok := byID[sweepRuleID]
+	if !ok {
+		t.Fatalf("rule %d is missing", sweepRuleID)
+	}
+
+	if got := strings.TrimSpace(sweep.IfMatchedGr); got != groupCredRead {
+		t.Fatalf("rule %d counts if_matched_group %q, want %q: a bypassPermissions read alerts as 100201, not 100210, so counting one rule id misses the sweep", sweepRuleID, got, groupCredRead)
+	}
+	if sweep.hasExactGroup(groupCredRead) {
+		t.Errorf("rule %d carries %s, the group it counts, so its own alerts would count toward it", sweepRuleID, groupCredRead)
+	}
+	if sweep.Ignore != 0 {
+		t.Errorf("rule %d sets ignore=%d; ignore silences the rule for every session on every host, so one sweep hides any other for that long", sweepRuleID, sweep.Ignore)
+	}
+
+	for _, r := range rules {
+		if !r.hasExactGroup(groupCredRead) {
+			continue
+		}
+		if r.isCorrelation() {
+			t.Errorf("rule %d is a correlation rule carrying %s; its alerts would be counted as reads", r.ID, groupCredRead)
+			continue
+		}
+		for _, op := range []string{"write", "unknown"} {
+			for _, mode := range []string{"default", "bypassPermissions"} {
+				hit, err := matches(r, credentialEvent(mode, op), byID)
+				if err != nil {
+					t.Fatalf("rule %d: %v", r.ID, err)
+				}
+				if hit {
+					t.Errorf("rule %d carries %s but matches a credential-zone %s in %s mode; the sweep would count it as a read", r.ID, groupCredRead, op, mode)
+				}
+			}
+		}
+	}
+
+	for _, mode := range []string{"default", "acceptEdits", "plan", "auto", "bypassPermissions"} {
+		ev := credentialEvent(mode, credReadOp)
+		var carriers int
+		for _, r := range rules {
+			if r.isCorrelation() || r.Level == 0 || r.hasGroup(groupWazuhSourced) || r.hasGroup(groupPendingEmitter) {
+				continue
+			}
+			hit, err := matches(r, ev, byID)
+			if err != nil {
+				t.Fatalf("rule %d: %v", r.ID, err)
+			}
+			if !hit {
+				continue
+			}
+			if r.hasExactGroup(groupCredRead) {
+				carriers++
+				continue
+			}
+			t.Errorf("rule %d alerts on a credential-zone read in %s mode without carrying %s; if it wins the event, that read is not counted by rule %d", r.ID, mode, groupCredRead, sweepRuleID)
+		}
+		if carriers == 0 {
+			t.Errorf("no rule carrying %s matches a credential-zone read in %s mode; the sweep cannot see that mode", groupCredRead, mode)
+		}
+	}
+}
+
+func TestSweepFixturesFeedTheCount(t *testing.T) {
+	rules := loadRules(t)
+	byID := map[int]rule{}
+	for _, r := range rules {
+		byID[r.ID] = r
+	}
+	threshold := byID[sweepRuleID].Frequency
+	if threshold <= 0 {
+		t.Fatalf("rule %d has no frequency", sweepRuleID)
+	}
+
+	counted := map[string]int{}
+	for i, ev := range loadFixtureFile(t, sweepsPath) {
+		sid, _ := ev["session_id"].(string)
+		var tagged bool
+		for _, r := range rules {
+			if !r.hasExactGroup(groupCredRead) || r.isCorrelation() {
+				continue
+			}
+			hit, err := matches(r, ev, byID)
+			if err != nil {
+				t.Fatalf("%s line %d: %v", sweepsPath, i+1, err)
+			}
+			tagged = tagged || hit
+		}
+		if tagged {
+			counted[sid]++
+		}
+		if tagged != (ev["path_op"] == credReadOp) {
+			t.Errorf("%s line %d (%s, %v %v): counted=%v; only credential reads may count toward rule %d", sweepsPath, i+1, sid, ev["permission_mode"], ev["path_op"], tagged, sweepRuleID)
+		}
+	}
+
+	want := map[string]bool{
+		"s_sweep_bypass":     true,
+		"s_sweep_default":    true,
+		"s_sweep_switch":     true,
+		"s_sweep_writes":     false,
+		"s_sweep_onlywrites": false,
+	}
+	for sid, sweeps := range want {
+		if got := counted[sid] >= threshold; got != sweeps {
+			t.Errorf("session %s: %d counted reads against a threshold of %d; want sweep=%v (wazuh-logtest on 4.14.8 alerted 100211 on the 8th read in the sessions marked true)", sid, counted[sid], threshold, sweeps)
+		}
+	}
 }
