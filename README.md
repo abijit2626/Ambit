@@ -535,8 +535,26 @@ Open problems:
 - **Sibling rules shadow each other: one rule fires per event (observed).** A credential
   write in a `bypassPermissions` session alerted as 100201, not the D2 write rule 100212.
   An approved MCP tool with `hidden_instruction` alerted as 100241, not 100247, so 100247
-  looks unreachable. Untested: that reads in `bypassPermissions` sessions alert as 100201
-  and so may not count toward the D2 sweep rule 100211, which counts 100210.
+  looks unreachable. Which rule wins is decided by level before file order (observed with
+  `wazuh-logtest` on the 4.14.8 image, by swapping the order and levels of two identical
+  rules): level 0 first, then the highest level, with file order only breaking ties. The
+  live results above fit that and also fit "file order wins", because the winner was
+  both earlier and higher.
+- **The D2 sweep was blind in `bypassPermissions` sessions (observed live; fixed, proven
+  offline only).** Ten Read-tool reads of decoy credential files gave ten 100201 alerts
+  and no 100211, because a bypass-mode read alerts as 100201 and 100211 counted only
+  100210. A session that switched mode partway was blind the same way (observed offline).
+  100211 now counts the group `ambit_cred_read`, carried by 100201 (now reads only) and
+  100210; bypass-mode writes and other operations alert as a new 100205. Replayed through
+  `wazuh-logtest` on the 4.14.8 image, 100211 fires on the 8th read in bypass, default and
+  mode-switching sessions and never counts writes (`deploy/wazuh/fixtures/d2-sweeps.jsonl`).
+  Not yet shown on a live manager.
+- **`ignore` on 100211 silenced every other session's sweep (observed offline; removed).**
+  After one session's sweep fired, a second session's sweep matched and raised no alert:
+  `ignore` is per rule, not per `same_field` value. Without it, 100211 still fires once per
+  eight fresh reads, not on every read. Eleven other correlation rules use `ignore`
+  (100221, 100240, 100248, 100252, 100261, 100271, 100281, 100282, 100292, 100301, 100312)
+  and probably blind each other the same way (inferred; untested).
 - **Array matching works in the case tried (observed).** 100241, an unanchored literal,
   matched an event whose `mcp_scan_classes` is a two-element array. Only the first element,
   and one class at a time, were tried.

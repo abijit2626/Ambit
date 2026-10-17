@@ -20,9 +20,15 @@ a different act.
   filesystem.
 - For 100211: eight or more such reads inside two minutes, **in one session**
   (`same_field` on `session_id`), so this is one agent sweeping rather than a fleet-wide
-  coincidence.
+  coincidence. Reads count in every permission mode: in a `bypassPermissions` session each
+  read alerts as D1's 100201 instead of 100210, and both carry the group
+  `ambit_cred_read` that 100211 counts, so a session that switches mode partway through
+  still adds up. Writes never count.
+- 100211 fires once per eight fresh reads in a session, and one session's sweep does not
+  silence another's: the rule has no `ignore`.
 - For 100212: the operation was a write. `path_count` says how many paths that single
-  tool call touched.
+  tool call touched. In a `bypassPermissions` session the same write alerts as D1's
+  100205 instead, at level 13.
 
 ## What it does not assert
 
@@ -50,7 +56,7 @@ a different act.
 4. **Check the timing against build activity.** A sweep inside the first seconds of a
    session, before any prompt, is automation. A sweep in the middle of a long session
    with many workdir reads is likely a test suite.
-5. **For 100212, treat writes as more serious than reads by default.** Writing to a
+5. **For 100212 (and 100205), treat writes as more serious than reads by default.** Writing to a
    credential path is persistence — an added `authorized_keys` entry, a rewritten token
    file — not staging. There are fewer innocent explanations.
 
