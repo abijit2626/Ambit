@@ -77,14 +77,43 @@ function Wait-Healthy {
     return $false
 }
 
+function Get-AmbitdProcess {
+    return @(Get-Process -Name ambitd -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $BinPath })
+}
+
 function Stop-Ambitd {
     $t = Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
     if ($null -ne $t) {
+        Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null
         Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
     }
-    Get-Process -Name ambitd -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -eq $BinPath } |
-        Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-AmbitdProcess | Stop-Process -Force -ErrorAction SilentlyContinue
+    for ($i = 0; $i -lt 40; $i++) {
+        if ((Get-AmbitdProcess).Count -eq 0) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    Die 'ambitd is still running 10 seconds after it was stopped, so its binary cannot be replaced'
+}
+
+function Get-KeepAliveProblem([string]$TaskXml) {
+    $doc = New-Object System.Xml.XmlDocument
+    try { $doc.LoadXml($TaskXml) } catch { return 'the task definition is not readable XML' }
+    if ($doc.SelectNodes('//*[local-name()=''BootTrigger'']').Count -lt 1) {
+        return 'no boot trigger'
+    }
+    $intervals = @($doc.SelectNodes('//*[local-name()=''TimeTrigger'']/*[local-name()=''Repetition'']/*[local-name()=''Interval'']'))
+    if (@($intervals | Where-Object { $_.InnerText -eq 'PT1M' }).Count -lt 1) {
+        return 'no one-minute repeating trigger, so a killed ambitd is not brought back'
+    }
+    $policy = $doc.SelectSingleNode('//*[local-name()=''Settings'']/*[local-name()=''MultipleInstancesPolicy'']')
+    if ($null -eq $policy -or $policy.InnerText -ne 'IgnoreNew') {
+        return 'MultipleInstances is not IgnoreNew, so an overlapping start could run two daemons'
+    }
+    $enabled = $doc.SelectSingleNode('//*[local-name()=''Settings'']/*[local-name()=''Enabled'']')
+    if ($null -ne $enabled -and $enabled.InnerText -eq 'false') {
+        return 'the task is disabled'
+    }
+    return ''
 }
 
 function New-DataDir {
@@ -103,14 +132,31 @@ function New-DataDir {
 function Register-AmbitdTask {
     $arg = '/d /c ""' + $BinPath + '" -config "' + $Config + '" >> "' + $LogPath + '" 2>&1"'
     $action    = New-ScheduledTaskAction -Execute $Cmd -Argument $arg
-    $trigger   = New-ScheduledTaskTrigger -AtStartup
+    $startup   = New-ScheduledTaskTrigger -AtStartup
     $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
     $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
         -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
         -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -MultipleInstances IgnoreNew
-    Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Action $action `
-        -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+
+    $registered = $false
+    $lastError = ''
+    foreach ($span in @([TimeSpan]::MaxValue, (New-TimeSpan -Days 3650))) {
+        try {
+            $repeat = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1)) `
+                -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration $span
+            Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Action $action `
+                -Trigger @($startup, $repeat) -Principal $principal -Settings $settings -Force | Out-Null
+            $registered = $true
+            break
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+    }
+    if (-not $registered) { Die ('could not register the task with a one-minute repeating trigger: ' + $lastError) }
+
+    $problem = Get-KeepAliveProblem ([string](Export-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath))
+    if ($problem) { Die ('the registered task has no working keep-alive: ' + $problem) }
     Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
 }
 
@@ -162,9 +208,20 @@ function Invoke-Install {
     }
 
     New-DataDir
-    Stop-Ambitd
-    New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-    Copy-Item -LiteralPath $src -Destination $BinPath -Force
+    $hadTask = (Get-TaskState) -ne 'not registered'
+    try {
+        Stop-Ambitd
+        New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+        Copy-Item -LiteralPath $src -Destination $BinPath -Force
+    } catch {
+        $why = $_.Exception.Message
+        if ($hadTask) {
+            Enable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue | Out-Null
+            Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
+            Say 'the upgrade failed; the previous task was re-enabled so the endpoint is not left unobserved'
+        }
+        Die ('upgrade failed: ' + $why)
+    }
     Say "installed $BinPath ($ver)"
 
     Register-AmbitdTask
@@ -174,7 +231,8 @@ function Invoke-Install {
     Say "task running, health endpoint answers on $(Get-HookUrl)"
 
     Install-ManagedSettings
-    Say "done. Data: $DataDir. Start a Claude Code session and check that events.jsonl there gains a session_start line."
+    Say "done. Data: $DataDir. Start a Claude Code session and send one prompt: events.jsonl there should gain a prompt_submit line."
+    Say 'A session_start line is not expected: that event does not reach ambitd over the http hook (README, Known limitations).'
 }
 
 function Invoke-Uninstall {
@@ -196,6 +254,11 @@ function Invoke-Uninstall {
 
 function Show-Status {
     Write-Host ("task:             " + (Get-TaskState))
+    if ((Get-TaskState) -ne 'not registered') {
+        $p = Get-KeepAliveProblem ([string](Export-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath))
+        if ($p) { Write-Host ("keep-alive:       NOT in place: " + $p) }
+        else { Write-Host 'keep-alive:       ok (boot trigger, one-minute repeat, IgnoreNew)' }
+    }
     if (Test-Healthy) { Write-Host ("health endpoint:  answers on " + (Get-HookUrl)) }
     else { Write-Host ("health endpoint:  no answer on " + (Get-HookUrl)) }
     if (Test-Path -LiteralPath $BinPath) { Write-Host "binary:           $BinPath" }
@@ -208,6 +271,8 @@ function Show-Status {
     }
     Write-Host "data:             $DataDir"
 }
+
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 if ($Purge -and -not $Uninstall) { Die '-Purge only goes with -Uninstall' }
 if ($Status) { Show-Status }

@@ -37,7 +37,8 @@ say() { echo "install-system: $*"; }
 usage() {
   cat >&2<<'USAGE'
 Install ambitd as a system service on Linux (systemd) or macOS (launchd), the way a
-monitoring agent like Sysmon runs: as root, from boot, restarted whenever it exits.
+monitoring agent like Sysmon runs: as root, from boot, with the service manager set to restart
+it (systemd Restart=always, launchd KeepAlive; neither restart has been observed yet).
 
   sudo ./scripts/install-system.sh --binary bin/ambitd-linux-amd64   # install and start
   sudo ./scripts/install-system.sh --status                          # is it running?
@@ -193,8 +194,9 @@ do_install() {
   say "service running, health endpoint answers on $(hook_url)"
 
   install_managed_settings
-  say "done. Data: $DATA_DIR. Start a Claude Code session and check that
-  $DATA_DIR/events.jsonl gains a session_start line."
+  say "done. Data: $DATA_DIR. Start a Claude Code session and send one prompt: $DATA_DIR/events.jsonl
+  should gain a prompt_submit line."
+  say "A session_start line is not expected: that event does not reach ambitd over the http hook (README, Known limitations)."
 }
 
 do_uninstall() {
