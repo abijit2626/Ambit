@@ -51,13 +51,43 @@
     system: an agent with no permission prompts reading a credential path. That is the
     documented malware pattern — re-invoke the developer's own agent with permission
     bypass, then inventory SSH keys and cloud credentials.
+
+    Wazuh alerts one rule per event. Among rules that could match the same event it tries
+    level 0 first, then the highest level, and file order only breaks ties (wazuh-logtest,
+    4.14.8). So this level-13 rule takes every credential read in a bypassPermissions
+    session away from 100210, wherever the two sit in the file. That is why it carries
+    ambit_cred_read: 100211 counts that group, not 100210, and a bypass-mode sweep would be
+    invisible otherwise. It matches reads only so that the group means reads only.
   -->
   <rule id="100201" level="13">
     <decoded_as>json</decoded_as>
     <field name="kind">^tool_pre$</field>
     <field name="permission_mode">^bypassPermissions$</field>
     <field name="path_zone">^credential$</field>
-    <description>ambit D1: credential-zone access in a bypassPermissions session - $(tool_name) $(path_op) on $(endpoint_id)</description>
+    <field name="path_op">^read$</field>
+    <description>ambit D1: credential-zone read in a bypassPermissions session - $(tool_name) on $(endpoint_id)</description>
+    <mitre>
+      <id>T1059</id>
+      <id>T1552.001</id>
+    </mitre>
+    <group>ambit_d1,ambit_d2,ambit_cred_read,runbook_D1,</group>
+  </rule>
+
+  <!--
+    Every other credential-zone operation in a bypassPermissions session: writes, and any
+    path_op that is not a read. It negates read rather than listing write, so an operation
+    ambitd learns to emit later is still caught, and so it never competes with 100201 for
+    a read: both are level 13, and a tie would fall to file order. It outranks 100212, so a
+    bypass-mode write alerts here and not as 100212, and it must not carry ambit_cred_read
+    or writes would count toward the read sweep.
+  -->
+  <rule id="100205" level="13">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^tool_pre$</field>
+    <field name="permission_mode">^bypassPermissions$</field>
+    <field name="path_zone">^credential$</field>
+    <field name="path_op" negate="yes">^read$</field>
+    <description>ambit D1: credential-zone $(path_op) in a bypassPermissions session - $(tool_name) on $(endpoint_id)</description>
     <mitre>
       <id>T1059</id>
       <id>T1552.001</id>
@@ -131,19 +161,30 @@
     <mitre>
       <id>T1552.001</id>
     </mitre>
-    <group>ambit_d2,runbook_D2,</group>
+    <group>ambit_d2,ambit_cred_read,runbook_D2,</group>
   </rule>
 
   <!--
     D2: many of them, same session, short window. same_field on session_id is what makes
     this a sweep by one agent rather than eight unrelated reads across the fleet.
 
+    It counts the group ambit_cred_read, which only 100201 and 100210 carry, so reads in
+    any permission mode count, a session that switches mode partway still adds up, and
+    writes do not. if_matched_group counts an event by the groups of the rule that
+    alerted on it, so a rule that takes reads away from those two without carrying the
+    group would blind this one again; TestCredentialSweepCountsOnlyCredentialReads checks
+    the group.
+
+    No ignore: ignore silences the rule for every session on every host, so one sweep
+    would hide any other for the window. Without it the rule still fires once per eight
+    fresh reads in a session, not on every read after the eighth.
+
     The threshold is a placeholder to be set from M2 baseline data, not from intuition: a
     monorepo with forty .env files will trip 8-in-120s during an ordinary build, and the
     runbook names that as the expected false positive.
   -->
-  <rule id="100211" level="12" frequency="8" timeframe="120" ignore="300">
-    <if_matched_sid>100210</if_matched_sid>
+  <rule id="100211" level="12" frequency="8" timeframe="120">
+    <if_matched_group>ambit_cred_read</if_matched_group>
     <same_field>session_id</same_field>
     <description>ambit D2: credential sweep - 8+ credential-zone reads in one session within 120s</description>
     <mitre>
@@ -157,7 +198,8 @@
     A credential-zone WRITE, which the sweep rule does not cover. Reading credentials is
     staging for exfiltration; writing them is persistence or account takeover — adding an
     authorized_keys entry, rewriting a token file — and it deserves its own alert rather
-    than being folded into a read threshold.
+    than being folded into a read threshold. In a bypassPermissions session the same write
+    alerts as 100205 instead, which outranks this rule.
   -->
   <rule id="100212" level="12">
     <decoded_as>json</decoded_as>

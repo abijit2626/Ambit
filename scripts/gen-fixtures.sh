@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 AMBITD=${AMBITD:-$ROOT/bin/ambitd}
 INTERPOSE=${INTERPOSE:-$ROOT/bin/mcp-interpose}
 OUT=${OUT:-$ROOT/deploy/wazuh/fixtures/events.sample.jsonl}
+SWEEPS=${SWEEPS:-$ROOT/deploy/wazuh/fixtures/d2-sweeps.jsonl}
 PORT=${PORT:-17997}
 
 for bin in "$AMBITD" "$INTERPOSE"; do
@@ -109,6 +110,24 @@ post '{"hook_event_name":"SubagentStop","session_id":"s_4d2","agent_id":"a_1","a
 post '{"hook_event_name":"PreCompact","session_id":"s_4d2","compaction_reason":"context_full"}'
 post '{"hook_event_name":"SessionEnd","session_id":"s_4d2","end_reason":"clear"}'
 
+CRED_PATHS=(
+  /home/dev/.ssh/id_ed25519 /home/dev/.ssh/id_rsa /home/dev/.aws/credentials /home/dev/.netrc
+  /home/dev/.git-credentials /home/dev/.npmrc /home/dev/.pgpass /home/dev/.kube/config
+  /home/dev/.docker/config.json /home/dev/.config/gh/hosts.yml
+)
+sweep_read() { # SESSION MODE INDEX
+  post "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"$1\",\"permission_mode\":\"$2\",\"cwd\":\"/home/dev/src/myrepo\",\"tool_name\":\"Read\",\"tool_use_id\":\"t_$1_r$3\",\"tool_input\":{\"file_path\":\"${CRED_PATHS[$3]}\"}}"
+}
+sweep_write() { # SESSION MODE INDEX
+  post "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"$1\",\"permission_mode\":\"$2\",\"cwd\":\"/home/dev/src/myrepo\",\"tool_name\":\"Write\",\"tool_use_id\":\"t_$1_w$3\",\"tool_input\":{\"file_path\":\"/home/dev/.aws/config\",\"content\":\"[default]\"}}"
+}
+for i in 0 1 2 3 4 5 6 7 8 9; do sweep_read s_sweep_bypass bypassPermissions "$i"; done
+for i in 0 1 2 3 4 5 6 7 8 9; do sweep_read s_sweep_default default "$i"; done
+for i in 0 1 2 3; do sweep_read s_sweep_switch default "$i"; done
+for i in 4 5 6 7; do sweep_read s_sweep_switch bypassPermissions "$i"; done
+for i in 0 1 2 3 4 5 6; do sweep_read s_sweep_writes bypassPermissions "$i"; sweep_write s_sweep_writes bypassPermissions "$i"; done
+for i in 0 1 2 3 4 5 6 7; do sweep_write s_sweep_onlywrites bypassPermissions "$i"; done
+
 run MODE=benign
 admin -approve
 run MODE=benign
@@ -189,6 +208,9 @@ pick '"mcp_baseline_state":"approved"'
 
 awk '!seen[$0]++' "$OUT.tmp" > "$OUT"
 rm -f "$OUT.tmp"
+
+grep -E '"session_id":"s_sweep_[a-z]+"' "$D/events.jsonl" > "$SWEEPS"
+echo "wrote $(wc -l < "$SWEEPS" | tr -d ' ') sweep sequence lines to $SWEEPS"
 
 cat >> "$OUT" <<'SYNTHETIC'
 {"schema_v":2,"event_id":"01JSYNTH1","ts":"2026-09-27T11:50:03.412Z","src":"hook","kind":"tool_pre","endpoint_id":"ep_7f3a1c","os":"linux","ambitd_version":"0.2.0","user_id":"u_1a2b","org_id":"o_9x8y","agent_kind":"claude-code","agent_entrypoint":"cli","permission_mode":"default","sandbox_enabled":true,"sandbox_strict_allowlist":true,"session_id":"s_synth","sequence":91,"tool_name":"Bash","tool_use_id":"t_s1","bash_argv0":"curl","bash_command_class":"network","prov_edge_count":1,"prov_edge_class":"domain","prov_edge_confidence":0.9,"prov_edge_from":"01JA","prov_fp_notable":"hmac:3f9c","prov_fp_role":"output","taint_labels":["web:hmac:d41d"],"r2_a":true,"r2_b":true,"r2_c":true,"policy_decision":"deny","policy_reason":"outbound network from Bash after untrusted input and sensitive data","policy_rule_id":"r2.egress_after_ab","policy_bundle_version":"r2-gate.v1","policy_shadow":true}
