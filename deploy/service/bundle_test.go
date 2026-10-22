@@ -161,8 +161,11 @@ func TestEarlierBundleHashIsPinnedInBothInstallers(t *testing.T) {
 	}
 }
 
-// shellLibrary is install-system.sh without its argument handling and dispatch, so the
-// functions can be called one at a time against a temp directory.
+// shellLibrary is install-system.sh without its OS gate, argument handling and dispatch, so the
+// functions can be called one at a time against a temp directory. The gate is cut out because the
+// script refuses any OS but Linux and macOS (Git Bash on a Windows runner answers MINGW64_NT-...,
+// and Git Bash resolves its own uname before one placed on the PATH), while the functions tested
+// here (the hash check, the bundle check, the install and remove steps) do not depend on the OS.
 func shellLibrary(t *testing.T) string {
 	t.Helper()
 	text := read(t, shScript)
@@ -170,25 +173,26 @@ func shellLibrary(t *testing.T) string {
 	if cut < 0 {
 		t.Fatal("install-system.sh no longer has the argument-handling section this test cuts at")
 	}
+	gate := strings.Index(text, "\ncase \"$(uname -s)\" in")
+	gateEnd := strings.Index(text[gate+1:], "\nesac\n")
+	if gate < 0 || gateEnd < 0 || gate+1+gateEnd > cut {
+		t.Fatal("install-system.sh no longer opens with the case on uname -s that this test cuts out")
+	}
+	lib := text[:gate] + "\nOS=linux\n" + text[gate+1+gateEnd+len("\nesac"):cut]
+	if strings.Contains(lib, "uname") {
+		t.Fatal("the library still calls uname outside the cut-out case")
+	}
 	path := filepath.Join(t.TempDir(), "lib.sh")
-	if err := os.WriteFile(path, []byte(text[:cut]), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(lib), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
 }
 
-// shellEnv is the environment for a bash that sources install-system.sh as a library. The script
-// refuses any OS but Linux and macOS at its first line, and Git Bash on a Windows runner answers
-// MINGW64_NT-..., so a uname that says Linux goes first on the PATH: the functions under test
-// (the bundle choice, the hash check, the install and remove steps) do not depend on the OS. Paths
-// are passed with forward slashes, which both Git Bash and a Unix shell read.
-func shellEnv(t *testing.T, kv ...string) []string {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "uname"), []byte("#!/bin/sh\necho Linux\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	env := append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+// shellEnv is the environment for a bash that sources the library built by shellLibrary. Paths are
+// passed with forward slashes, which both Git Bash and a Unix shell read.
+func shellEnv(kv ...string) []string {
+	env := os.Environ()
 	for _, e := range kv {
 		k, v, _ := strings.Cut(e, "=")
 		env = append(env, k+"="+filepath.ToSlash(v))
@@ -245,7 +249,7 @@ func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 			}
 			script := `. "$LIB"; BUNDLE="$NEWBUNDLE"; MANAGED="$MANAGED_PATH"; install_managed_settings`
 			cmd := exec.Command("bash", "-c", script)
-			cmd.Env = shellEnv(t, "LIB="+lib, "NEWBUNDLE="+newBundle, "MANAGED_PATH="+managed)
+			cmd.Env = shellEnv("LIB="+lib, "NEWBUNDLE="+newBundle, "MANAGED_PATH="+managed)
 			out, err := cmd.CombinedOutput()
 			if c.wantErr != (err != nil) {
 				t.Fatalf("error = %v, want error %v\n%s", err, c.wantErr, out)
@@ -274,7 +278,7 @@ func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("bash", "-c", `. "$LIB"; BUNDLE="$NEWBUNDLE"; MANAGED="$MANAGED_PATH"; remove_managed_settings`)
-			cmd.Env = shellEnv(t, "LIB="+lib, "NEWBUNDLE="+newBundle, "MANAGED_PATH="+p)
+			cmd.Env = shellEnv("LIB="+lib, "NEWBUNDLE="+newBundle, "MANAGED_PATH="+p)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("%s: %v\n%s", name, err, out)
 			}
@@ -293,7 +297,7 @@ func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 		}
 		for name, path := range map[string]string{"wrong": wrong, "right": newBundle} {
 			cmd := exec.Command("bash", "-c", `. "$LIB"; BUNDLE="$B"; bundle_problem`)
-			cmd.Env = shellEnv(t, "LIB="+lib, "B="+path)
+			cmd.Env = shellEnv("LIB="+lib, "B="+path)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("%s: %v\n%s", name, err, out)
