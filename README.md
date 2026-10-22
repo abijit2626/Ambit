@@ -262,11 +262,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Uninstall
 powershell -ExecutionPolicy Bypass -File .\scripts\smoke.ps1                # end-to-end check
 ```
 
-For a cohort, `ambitd` is installed as a scheduled task that starts at boot as SYSTEM and is
-set to restart when it exits (that restart did not fire on a Windows 10 test machine; see
-[Known limitations](#known-limitations)), from an Administrator PowerShell. It is a task and
-not a service because `ambitd` is a console program, and making it a service would add a
-dependency:
+For a cohort, `ambitd` is installed as a scheduled task that starts at boot as SYSTEM, from an
+Administrator PowerShell. The task's own restart-on-failure setting did not restart `ambitd` on a
+Windows 10 test machine, so the installer also registers a repeating one-minute trigger with
+`MultipleInstances` set to `IgnoreNew` and checks that it is there; the trigger worked once when
+added by hand, and the installer's version has not yet run on a real machine (see
+[Known limitations](#known-limitations)). It is a task and not a service because `ambitd` is a
+console program, and making it a service would add a dependency:
 
 ```powershell
 .\scripts\install-system.ps1 -Binary .\bin\ambitd-windows-amd64.exe
@@ -416,16 +418,35 @@ team executes a runbook against a sample alert.
   enforcement keys (bypass mode, sandbox, egress allowlist) that the observation-only M0
   bundle deliberately omits, so deploying both makes D12 fire on every endpoint. The `_m0`
   policy files assert only what the M0 bundle sets.
-- **The system-service installers: Windows has run once on a real machine, and its restart
-  does not work as installed.** `scripts/install-system.sh` and `.ps1` install `ambitd` to run
-  from boot and restart when it exits. The Linux flow was run end to end against a stub
-  service manager, and the systemd unit passes `systemd-analyze verify`. `install-system.ps1`
-  was run on one Windows 10 machine (see
-  [Observed in a first lab run](#observed-in-a-first-lab-run)): the task, its principal, the
-  data directory ACL and the managed settings came out as designed, but the configured
-  restart-on-failure never restarted `ambitd`. The macOS installer has not been run on a real
-  machine, and no Linux or macOS restart has been observed. See
-  [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
+- **The system-service installers: Windows has run on one real machine, where the upgrade,
+  restart and fresh install each passed once.** `scripts/install-system.sh` and `.ps1`
+  install `ambitd` to run from boot, with the service manager set to bring it back if it
+  exits. The Linux flow was run end to end against a stub service manager, and the systemd
+  unit passes `systemd-analyze verify`. `install-system.ps1` was run on one Windows 10
+  machine (see [Observed in a first lab run](#observed-in-a-first-lab-run)): the task, its
+  principal, the data directory ACL and the managed settings came out as designed, but the
+  configured restart-on-failure never restarted `ambitd`. The installer now registers a
+  repeating one-minute trigger itself, disables the task before it replaces the binary, and
+  refuses to finish if the registered task lacks the trigger. On the same machine an
+  upgrade, a forced kill and an uninstall followed by a fresh install each passed once
+  (observed); a new data directory, a reboot and which mechanism restarts `ambitd` are
+  untested. The macOS installer has not been run on a real machine, and no Linux or macOS
+  restart has been observed. See [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
+- **`SessionStart` reaches `ambitd` only through a `command` hook, and it carries no
+  `permission_mode`.** Claude Code v2.1.278 fires it but does not deliver it to an `http` hook
+  (observed in 3+ sessions, then isolated on Windows: the same event ran a `command` hook and
+  never reached `ambitd` over `http`). Both bundles therefore register `SessionStart` as a
+  command that runs `ambitd hook-forward`: the payload on stdin is posted unchanged to
+  `ambitd`, nothing is printed (a SessionStart hook's stdout becomes model context), and the
+  exit code is always 0, so a stopped `ambitd` costs one stderr line and never blocks a
+  session. There is one bundle per OS family because the command names the installed binary by
+  absolute path; like the `http` hooks it uses the default hook address. In the lab a
+  `session_start` reached the spool this way (observed with a probe project; the installed
+  bundle's exact command is untested). The real payload has no `permission_mode`, so rule
+  100200, which needs `bypassPermissions` on a `session_start`, cannot fire on a live endpoint
+  (inferred from the rule's condition). D1 rests on 100201 to 100203, which read the mode from
+  tool events. The installers upgrade a managed-settings file that is exactly the earlier
+  bundle and refuse to touch any other.
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
   and validates rule fields against a closed schema. See
@@ -523,15 +544,59 @@ Open problems:
   compile patterns with Go's `regexp`, which accepts grouping. The fixed file was then read
   from the pushed branch and copied into the lab manager: its SHA-256 matched the hand-edited
   copy that had been running, and `wazuh-analysisd -t` exited 0 with the repo's file in place.
-- **The Windows restart does not fire (observed).** With the task as installed, a forced kill
-  was not followed by a restart in 90 seconds (`LastTaskResult` `0xFFFFFFFF`), and an
-  invalid `config.json` made `ambitd` exit 1 and got one attempt in 180 seconds, no retry.
-  Adding a repeating one-minute time trigger, with `MultipleInstances` left at `IgnoreNew`,
-  brought `ambitd` back about 55 seconds after a kill, with one instance and no duplicates.
-  That was tried once, by hand, and is not in the installer.
-- **The step 3 loop in docs/06 prints nothing on 4.14.8 (observed).** `wazuh-logtest -q`
+- **The Windows restart did not fire (observed; fixed, shown once).** With the task as
+  installed, a forced kill was not followed by a restart in 90 seconds (`LastTaskResult`
+  `0xFFFFFFFF`), and an invalid `config.json` made `ambitd` exit 1 and got one attempt in
+  180 seconds, no retry. Adding a repeating one-minute time trigger, with
+  `MultipleInstances` left at `IgnoreNew`, brought `ambitd` back about 55 seconds after a
+  kill, with one instance and no duplicates. That was tried once, by hand. With that trigger
+  in place, an upgrade failed: it restarted `ambitd` between the stop and the binary copy,
+  so the copy hit a running file. The installer now registers the trigger itself (with a
+  check that it is present), disables the task before stopping it and waits for the process
+  to exit. On the same machine (observed, once each, 2026-10-22, Windows PowerShell 5.1):
+  the first upgrade with that installer failed right after the kill with
+  `The property 'Count' cannot be found on this object`, because the wait read `.Count` on
+  an empty result under `Set-StrictMode`; its failure path re-enabled the old task and
+  `ambitd` came back. With that fixed, the upgrade re-registered the task with the
+  installer's own trigger and left one `ambitd` with an unchanged binary. The trigger's
+  repetition came out as `P3650D`, so the installer's ten-year fallback was used, not the
+  indefinite form (inferred). A forced kill then brought `ambitd` back in 40 to 45 seconds
+  as one new instance, with no second one in the next 20 seconds. `-Uninstall` without
+  `-Purge` removed the task, the binary folder and the managed settings and kept the data
+  folder, and a fresh install restored all three byte for byte. Whether the repeating
+  trigger or restart-on-failure brought `ambitd` back after the kill is untested.
+- **`session_start` arrives through a command hook, with an empty mode (observed, 2026-10-22,
+  Claude Code v2.1.278, Windows 10).** First run: in a throwaway project with both hook kinds
+  registered, the `SessionStart` command hook ran and the `http` one added no `session_start`
+  event, while the `SessionEnd` `http` hook did arrive. Built from the hook-forward commit and
+  registered as a `SessionStart` command, `ambitd hook-forward` delivered one `session_start`
+  to the spool with an empty `permission_mode`, about half a second before a PowerShell logging
+  hook in the same group wrote its line (the hooks seem to start together; inferred). Second
+  run, after `install-system.ps1` replaced the earlier bundle with the new Windows one (it
+  recognised the old file by its SHA-256, one `ambitd` came back, and the installed command run
+  by Git Bash exited 0, printed nothing and landed one synthetic `session_start`): a real
+  session in an empty folder produced exactly one `session_start` (empty mode), two
+  `prompt_submit`, a `Glob` `tool_pre` and `tool_post`, a `subagent_stop` and one
+  `session_end`. Those events are attributed to the session by shape and timing, not by
+  session id, because other Claude processes were open. `prompt_submit`, `tool_pre` and
+  `session_end` all carried `permission_mode` `auto`, so a session's mode is first learned from
+  its first prompt, not from `session_start` and not only after a tool call. The earlier
+  probe session had two `session_end` events with identical timestamps; that did not recur in
+  the clean run (cause unknown). Untested: the Linux and macOS bundle, and what the model
+  sees at a session start.
+- **The Windows FIM block was not deployed on the lab agent (observed).** Neither the
+  agent's `ossec.conf` nor the manager's shared `agent.conf` named
+  `C:\Program Files\ClaudeCode`, and the reinstall's delete and re-add of
+  `managed-settings.json` raised no alert, so D6 rule 100254 has not fired live. Where the
+  block is deployed it still does not watch `C:\Program Files\ambit`, so a replaced
+  `ambitd.exe` would raise no FIM alert (observed in
+  `deploy/wazuh/ossec-syscheck.windows.xml`).
+- **The step 3 loop in docs/06 printed nothing on 4.14.8 (observed; replaced).** `wazuh-logtest -q`
   printed only blank lines for a fixture that fires rule 100201; the same line without `-q`
-  shows the alert. As written, the loop looks like a quiet fleet.
+  shows the alert, on stderr. As written, the loop looked like a quiet fleet. It now points at a
+  loop in `deploy/wazuh/README.md` that prints a line per fixture and was run in a container of the
+  4.14.8 image (43 decoded as `json`, 33 alerts, 3 at level 0, 7 with no rule); it has not been run
+  on the lab manager. A test fails if any documentation example uses `wazuh-logtest -q`.
 - **Sibling rules shadow each other: one rule fires per event (observed).** A credential
   write in a `bypassPermissions` session alerted as 100201, not the D2 write rule 100212.
   An approved MCP tool with `hidden_instruction` alerted as 100241, not 100247, so 100247
@@ -595,7 +660,7 @@ exercised on a real Windows host by the `windows` job in
 `ambitd`, `mcp-interpose` and the local install; it does not cover a Wazuh agent on
 Windows, and Claude Code's own hook payloads on Windows were read from its documentation
 rather than captured. `install-system.ps1` is parsed by PowerShell 7 in CI; it has been run
-once, by hand, on a Windows 10 machine (see
+on one Windows 10 machine, for a first install, an upgrade and a fresh install (see
 [Observed in a first lab run](#observed-in-a-first-lab-run)).
 
 The comment removal was checked rather than assumed. The Go replay reports (the starter corpus
