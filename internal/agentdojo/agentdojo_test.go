@@ -133,7 +133,7 @@ func TestConvertMapsMessagesToHookEvents(t *testing.T) {
 	}
 
 	first := sc.Steps[0].Payload
-	if first.HookEventName != "UserPromptSubmit" || first.UserInput != r.Messages[1].Content.Text {
+	if first.HookEventName != "UserPromptSubmit" || first.PromptText() != r.Messages[1].Content.Text {
 		t.Errorf("first step = %+v, want the user's request as UserPromptSubmit", first)
 	}
 
@@ -147,7 +147,7 @@ func TestConvertMapsMessagesToHookEvents(t *testing.T) {
 	if pre.ToolUseID == "" || pre.ToolUseID != post.ToolUseID {
 		t.Errorf("tool_use_id %q / %q: a call and its result must pair", pre.ToolUseID, post.ToolUseID)
 	}
-	if post.ToolResult == nil || post.ToolResult == "" {
+	if out, ok := post.ToolOutput(); !ok || out == "" {
 		t.Error("the result text was not carried")
 	}
 	for _, st := range sc.Steps {
@@ -163,10 +163,10 @@ func TestConvertMapsAToolErrorToAFailure(t *testing.T) {
 	for _, st := range sc.Steps {
 		if st.Payload.HookEventName == "PostToolUseFailure" {
 			failures++
-			if st.Payload.ToolError == "" {
+			if st.Payload.ToolFailure() == "" {
 				t.Error("a failure lost its error text")
 			}
-			if st.Payload.ToolResult != nil {
+			if _, ok := st.Payload.ToolOutput(); ok {
 				t.Error("a failed call must not also carry a result, or it would register as ingest")
 			}
 		}
@@ -218,7 +218,7 @@ func TestConvertTheNewBlockFormat(t *testing.T) {
 	if len(sc.Steps) != 3 {
 		t.Fatalf("steps = %d, want 3", len(sc.Steps))
 	}
-	if sc.Steps[0].Payload.UserInput != "find the file" || sc.Steps[2].Payload.ToolResult != "report.txt" {
+	if out, _ := sc.Steps[2].Payload.ToolOutput(); sc.Steps[0].Payload.PromptText() != "find the file" || out != "report.txt" {
 		t.Errorf("text not extracted from blocks: %+v", sc.Steps)
 	}
 

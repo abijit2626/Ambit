@@ -223,10 +223,11 @@ else
   echo "  backed up to $SETTINGS.ambit-backup"
 fi
 
-python3 - "$SETTINGS" "$HOOK_PORT" "$OTLP_PORT" <<'PY'
-import json, sys
-path, hook_port, otlp_port = sys.argv[1], sys.argv[2], sys.argv[3]
+python3 - "$SETTINGS" "$HOOK_PORT" "$OTLP_PORT" "$BIN" <<'PY'
+import json, shlex, sys
+path, hook_port, otlp_port, binary = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 url = f"http://127.0.0.1:{hook_port}/hook"
+forward = f"{shlex.quote(binary)} hook-forward -addr 127.0.0.1:{hook_port}"
 
 with open(path) as f:
     settings = json.load(f)
@@ -244,10 +245,22 @@ events = [
 
 hooks = settings.setdefault("hooks", {})
 for ev in events:
-    block = {"hooks": [entry]} if ev in no_matcher else {"matcher": ".*", "hooks": [entry]}
+    # Claude Code does not deliver SessionStart to an http hook, so that one event is a command
+    # that hands the payload to ambitd. An http entry an earlier run added for it never worked
+    # and is dropped, so a re-run leaves one working hook rather than a dead one beside it.
+    command = ev == "SessionStart"
+    mine = {"type": "command", "command": forward} if command else entry
+    block = {"hooks": [mine]} if ev in no_matcher else {"matcher": ".*", "hooks": [mine]}
     existing = hooks.setdefault(ev, [])
+    if command:
+        existing[:] = [
+            e for e in existing
+            if not (isinstance(e, dict) and e.get("hooks")
+                    and all(isinstance(h, dict) and h.get("url") == url for h in e["hooks"]))
+        ]
+    key, want = ("command", forward) if command else ("url", url)
     if not any(
-        any(h.get("url") == url for h in e.get("hooks", []))
+        any(h.get(key) == want for h in e.get("hooks", []))
         for e in existing if isinstance(e, dict)
     ):
         existing.append(block)
