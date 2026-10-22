@@ -168,13 +168,13 @@ type payload struct {
 	SessionID     string `json:"session_id"`
 	PromptID      string `json:"prompt_id,omitempty"`
 	CWD           string `json:"cwd"`
-	UserInput     string `json:"user_input,omitempty"`
+	UserInput     string `json:"prompt,omitempty"`
 	ToolName      string `json:"tool_name,omitempty"`
 	ToolUseID     string `json:"tool_use_id,omitempty"`
 
 	ToolInput  *map[string]any `json:"tool_input,omitempty"`
-	ToolResult *string         `json:"tool_result,omitempty"`
-	ToolError  string          `json:"tool_error,omitempty"`
+	ToolResult *string         `json:"tool_response,omitempty"`
+	ToolError  string          `json:"error,omitempty"`
 }
 
 type header struct {

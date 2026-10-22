@@ -264,15 +264,16 @@ func (c *Collector) build(p *hook.Payload) *event.Event {
 
 func (c *Collector) fillPrompt(e *event.Event, p *hook.Payload, st *sessionState) {
 
-	clean, hits := c.red.Redact(p.UserInput)
+	prompt := p.PromptText()
+	clean, hits := c.red.Redact(prompt)
 
 	declared := c.ext.Extract(clean)
 	st.prov.Declare(declared)
 	st.sens.Declare(declared)
 	e.Prompt = &event.PromptInfo{
 		Text:       clean,
-		TextDigest: c.ext.Digest(p.UserInput),
-		Bytes:      len(p.UserInput),
+		TextDigest: c.ext.Digest(prompt),
+		Bytes:      len(prompt),
 	}
 	if len(hits) > 0 {
 		c.log.Warn("secret material detected in a user prompt", "kinds", len(hits))
@@ -280,7 +281,7 @@ func (c *Collector) fillPrompt(e *event.Event, p *hook.Payload, st *sessionState
 }
 
 func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) {
-	t := &event.Tool{Name: p.ToolName, UseID: p.ToolUseID, Error: p.ToolError}
+	t := &event.Tool{Name: p.ToolName, UseID: p.ToolUseID, Error: p.ToolFailure()}
 
 	if server, tool, ok := hook.IsMCPTool(p.ToolName); ok {
 		trust := ""
@@ -325,8 +326,7 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 	}
 
 	var resultFeatures *event.Features
-	if p.ToolResult != nil {
-		resultText := fmt.Sprint(p.ToolResult)
+	if resultText, ok := p.ToolOutput(); ok {
 		cleanResult, resultHits := c.red.Redact(resultText)
 		t.ResultDigest = c.ext.Digest(resultText)
 		t.ResultBytes = len(resultText)
