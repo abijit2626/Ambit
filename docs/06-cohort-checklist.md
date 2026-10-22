@@ -33,9 +33,14 @@ Each one will otherwise cost the cohort a week to discover.
    it with `nohup` under the user's own settings, which is right for one machine and wrong for a
    cohort: a reboot or a crash leaves the endpoint unobserved. `scripts/install-system.sh` (Linux,
    macOS) and `scripts/install-system.ps1` (Windows) install it the way a monitoring agent runs:
-   as root or SYSTEM, from boot, restarted whenever it exits. The definitions are in
-   `deploy/service/`: a systemd unit, a LaunchDaemon, and on Windows a scheduled task, because
-   `ambitd` is a console program and making it a Windows service would add a dependency. The
+   as root or SYSTEM, from boot, with the service manager set to bring it back if it exits. On
+   Linux that is the unit's `Restart=always` and on macOS the LaunchDaemon's `KeepAlive`; neither
+   has been observed to fire. On Windows the task's own restart-on-failure setting did not restart
+   `ambitd` on a test machine, so the installer registers a repeating one-minute trigger with
+   `MultipleInstances` set to `IgnoreNew`, and checks that it is there after registering. The
+   definitions are in `deploy/service/`: a systemd unit, a LaunchDaemon, and on Windows a
+   scheduled task, because `ambitd` is a console program and making it a Windows service would
+   add a dependency. The
    installer starts the service and checks its health before it installs the managed settings,
    and refuses to overwrite managed settings that are not the M0 bundle. Logs: `journalctl -u
    ambitd` on Linux, `/Library/Logs/ambit/ambitd.log` on macOS,
@@ -49,9 +54,13 @@ Each one will otherwise cost the cohort a week to discover.
 
    What is verified: the Linux installer's whole flow (install, upgrade, status, uninstall,
    refusing a held port and existing managed settings), run against a stub service manager and a
-   real `ambitd`; and the systemd unit, with `systemd-analyze verify`. What is not: the restart
-   itself on any platform, and the macOS and Windows installers, which have not been run. Kill
-   `ambitd` on a test machine of each kind and watch it come back before rolling out.
+   real `ambitd`; and the systemd unit, with `systemd-analyze verify`. The Windows installer has
+   run on one machine, where the repeating trigger brought `ambitd` back about 55 seconds after a
+   kill when it was added by hand, and where an upgrade with that trigger in place failed because
+   the daemon restarted between the stop and the binary copy; the installer now disables the task
+   first, and that change is not yet run on a real machine. What is not verified: the restart on
+   Linux or macOS, and the macOS installer. Kill `ambitd` on a test machine of each kind and
+   watch it come back before rolling out.
 
 3. **Hook latency is not reported as a number.** `ambitd` logs `hook response exceeded latency
    budget` for each response slower than `latency_budget_ms` (default 5) and records nothing
@@ -98,12 +107,11 @@ Each one will otherwise cost the cohort a week to discover.
    sudo grep -iE "rules|error" /var/ossec/logs/ossec.log | tail -20
    ```
 
-3. Run every fixture through the real engine and compare with the offline expectations:
-
-   ```sh
-   while read -r line; do echo "$line" | /var/ossec/bin/wazuh-logtest -q; done \
-     < deploy/wazuh/fixtures/events.sample.jsonl
-   ```
+3. Run every fixture through the real engine and compare with the offline expectations. Use the
+   loop under "Verify the D4/D5 rules" in `deploy/wazuh/README.md`, which prints one line per
+   fixture: the decoder, the rule and its level. Do not use `wazuh-logtest -q`: on Wazuh 4.14.8
+   it prints nothing for a line that matches, and without it the result goes to stderr, so a
+   loop built on `-q` reads as a manager where nothing fires.
 
    Check that `json` is the matched decoder, that the D4/D5 rules named in
    `deploy/wazuh/README.md` fire (100231, 100232, 100234, 100236, 100237, 100239, 100241–100246),
@@ -132,7 +140,11 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
    `ambitd -print-config` shows the effective configuration. Set `trusted_repo_paths`,
    `trusted_content_domains` and, if you classify MCP servers or tools, `trusted_mcp_servers` and
    `mcp_tool_labels`. An unset trusted-repo list makes D8 mostly noise early on, as its runbook
-   says. Then run one Claude Code session and check that `events.jsonl` has a `session_start`.
+   says. Then run one Claude Code session, send one prompt, and check that `events.jsonl` gains a
+   `session_start` line and a `prompt_submit` line. `session_start` comes from the bundle's
+   `SessionStart` command hook (`ambitd hook-forward`), because Claude Code does not deliver
+   that event to an `http` hook; if only `prompt_submit` appears, that hook is not running (see
+   the README's known limitations). Its `permission_mode` is empty, by design of the payload.
 4. For each MCP server the volunteer uses, wrap its command in `mcp-interpose -server NAME`
    in the MCP configuration (the README's "Classifying MCP servers and tools" section shows the
    shape), run a session so the surface is recorded, review it with `-show`,

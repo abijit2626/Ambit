@@ -19,6 +19,7 @@ import (
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/hook"
+	"github.com/abijit2626/ambit/internal/hookfwd"
 	"github.com/abijit2626/ambit/internal/interpose"
 	"github.com/abijit2626/ambit/internal/otlp"
 	"github.com/abijit2626/ambit/internal/sink"
@@ -27,6 +28,11 @@ import (
 var version = "0.0.0-dev"
 
 func main() {
+	// A command hook, not the daemon: Claude Code runs this for SessionStart, which it does not
+	// deliver to hooks of type http. See internal/hookfwd.
+	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
+		os.Exit(hookfwd.Main(os.Args[2:], os.Stdin, os.Stderr))
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ambitd:", err)
 		os.Exit(1)
