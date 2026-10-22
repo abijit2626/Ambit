@@ -62,16 +62,44 @@ try {
     $events = @('PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied',
         'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'InstructionsLoaded', 'ConfigChange',
         'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact')
-    $missing = @($events | Where-Object {
+    $httpEvents = @($events | Where-Object { $_ -ne 'SessionStart' })
+    $missing = @($httpEvents | Where-Object {
             $n = 0
             foreach ($e in @($j.hooks.$_)) { foreach ($h in @($e.hooks)) { if ($h.url -eq $hookUrl) { $n++ } } }
             $n -ne 1
         })
-    Assert ($missing.Count -eq 0) "every one of the $($events.Count) events has exactly one ambitd hook ($($missing -join ', '))"
+    Assert ($missing.Count -eq 0) "every one of the $($httpEvents.Count) http events has exactly one ambitd hook ($($missing -join ', '))"
+
+    $startHooks = @()
+    foreach ($e in @($j.hooks.SessionStart)) { foreach ($h in @($e.hooks)) { $startHooks += $h } }
+    Assert (@($startHooks | Where-Object { $_.url -eq $hookUrl }).Count -eq 0) 'SessionStart has no http hook, which Claude Code does not deliver'
+    $fwd = @($startHooks | Where-Object { $_.type -eq 'command' -and $_.command -like '*hook-forward*' })
+    Assert ($fwd.Count -eq 1) 'SessionStart has exactly one hook-forward command hook'
+    $wantFwd = '"' + (Join-Path $ambitDir 'ambitd.exe').Replace('\', '/') + '" hook-forward -addr 127.0.0.1:' + $HookPort
+    Assert (($fwd.Count -eq 1) -and ($fwd[0].command -ceq $wantFwd)) 'the forwarder is named by its absolute path, quoted, with the hook address'
 
     Assert ((Get-Content (Join-Path $ambitDir 'config.json') -Raw | ConvertFrom-Json).hook_addr -eq "127.0.0.1:$HookPort") 'config.json parses and carries the hook address'
     $h = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$HookPort/healthz"
     Assert ($h.StatusCode -eq 200) 'ambitd is up and healthy'
+
+    $fwdExe = Join-Path $ambitDir 'ambitd.exe'
+    $fwdIn = Join-Path $tmp 'sessionstart.json'
+    $fwdOut = Join-Path $tmp 'fwd.out'
+    $fwdErr = Join-Path $tmp 'fwd.err'
+    [System.IO.File]::WriteAllText($fwdIn, '{"cwd":"C:/work/proj","hook_event_name":"SessionStart","model":"m","session_id":"s-fwd","source":"startup","transcript_path":"C:/t.jsonl"}', (New-Object System.Text.UTF8Encoding($false)))
+    $fwdProc = Start-Process -FilePath $fwdExe -ArgumentList @('hook-forward', '-addr', "127.0.0.1:$HookPort") `
+        -RedirectStandardInput $fwdIn -RedirectStandardOutput $fwdOut -RedirectStandardError $fwdErr -NoNewWindow -Wait -PassThru
+    Assert ($fwdProc.ExitCode -eq 0) 'the forwarder exits 0'
+    Assert ((Get-Item -LiteralPath $fwdOut).Length -eq 0) 'the forwarder prints nothing to stdout, which for SessionStart would become model context'
+    $spool = Join-Path $ambitDir 'trajectory.jsonl'
+    $landed = $false
+    for ($i = 0; $i -lt 30 -and -not $landed; $i++) {
+        if (Test-Path -LiteralPath $spool) {
+            $landed = [System.IO.File]::ReadAllText($spool).Contains('"kind":"session_start"')
+        }
+        if (-not $landed) { Start-Sleep -Milliseconds 100 }
+    }
+    Assert $landed 'a SessionStart payload piped to the forwarder reaches the spool as a session_start event'
 
     $body = '{"hook_event_name":"PreToolUse","session_id":"s1","cwd":"C:\\Users\\dev","tool_name":"Read","tool_input":{"file_path":"C:\\Users\\dev\\.ssh\\id_rsa"}}'
     $r = Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -Body $body -Uri $hookUrl
@@ -81,6 +109,7 @@ try {
     & $devLocal @common | Out-Null
     $j2 = [System.IO.File]::ReadAllText($settings) | ConvertFrom-Json
     Assert (@($j2.hooks.PreToolUse).Count -eq 2) 're-running does not stack duplicate hooks'
+    Assert (@($j2.hooks.SessionStart).Count -eq 1) 're-running does not stack duplicate SessionStart hooks'
     Assert ([System.IO.File]::ReadAllText("$settings.ambit-backup") -eq $seed) 'the backup is still the pristine original, not the modified file'
 
     Write-Host '3. status'
