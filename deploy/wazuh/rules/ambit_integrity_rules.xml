@@ -68,7 +68,7 @@
     adjusting a setting. Repeated changes in minutes is either a script or someone
     searching for a configuration that stops being blocked.
   -->
-  <rule id="100252" level="12" frequency="3" timeframe="600" ignore="600">
+  <rule id="100252" level="12" frequency="3" timeframe="600">
     <if_matched_sid>100250</if_matched_sid>
     <same_field>session_id</same_field>
     <description>ambit D6: 3+ configuration changes in one session within 600s</description>
@@ -163,7 +163,7 @@
     <group>ambit_d11,ambit_pending_emitter,runbook_D11,</group>
   </rule>
 
-  <rule id="100261" level="12" frequency="5" timeframe="300" ignore="600">
+  <rule id="100261" level="12" frequency="5" timeframe="300">
     <if_matched_sid>100260</if_matched_sid>
     <same_field>endpoint_id</same_field>
     <description>ambit D11: sustained fail-open - ambitd repeatedly unavailable on one endpoint</description>
