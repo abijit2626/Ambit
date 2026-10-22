@@ -1,0 +1,25 @@
+# Hook payload shapes captured from Claude Code v2.1.278 on Windows 10, 2026-10-22.
+#
+# A command hook on every event recorded the key names and the value type of each key, two levels
+# deep, and nothing else: no value was written down. One line per distinct shape seen, in the form
+#   EventName => object{key:type,key:object{key:type},...}
+# where type is string, number, bool, null, array or object (object is a nesting past two levels).
+#
+# Not captured, so their field names are unverified here: PermissionRequest, PermissionDenied and
+# ConfigChange (the session ran in auto mode and changed no settings). payload_test.go lists the
+# Payload fields that depend on them.
+SessionStart => object{cwd:string,hook_event_name:string,model:string,prompt_id:string,scratchpad_dir:string,session_id:string,source:string,transcript_path:string}
+SessionStart => object{cwd:string,hook_event_name:string,model:string,scratchpad_dir:string,session_id:string,source:string,transcript_path:string}
+UserPromptSubmit => object{cwd:string,hook_event_name:string,permission_mode:string,prompt:string,prompt_id:string,scratchpad_dir:string,session_id:string,transcript_path:string}
+PreToolUse => object{agent_id:string,agent_type:string,cwd:string,effort:object{level:string},hook_event_name:string,permission_mode:string,prompt_id:string,scratchpad_dir:string,session_id:string,tool_input:object{command:string},tool_name:string,tool_use_id:string,transcript_path:string}
+PreToolUse => object{agent_id:string,agent_type:string,cwd:string,effort:object{level:string},hook_event_name:string,permission_mode:string,prompt_id:string,scratchpad_dir:string,session_id:string,tool_input:object{message:string},tool_name:string,tool_use_id:string,transcript_path:string}
+PostToolUse => object{agent_id:string,agent_type:string,cwd:string,duration_ms:number,effort:object{level:string},hook_event_name:string,permission_mode:string,prompt_id:string,scratchpad_dir:string,session_id:string,tool_input:object{command:string},tool_name:string,tool_response:object{interrupted:bool,isImage:bool,noOutputExpected:bool,stderr:string,stdout:string},tool_use_id:string,transcript_path:string}
+PostToolUse => object{agent_id:string,agent_type:string,cwd:string,duration_ms:number,effort:object{level:string},hook_event_name:string,permission_mode:string,prompt_id:string,scratchpad_dir:string,session_id:string,tool_input:object{message:string},tool_name:string,tool_response:object{message:string,success:bool},tool_use_id:string,transcript_path:string}
+PostToolUseFailure => object{cwd:string,duration_ms:number,effort:object{level:string},error:string,hook_event_name:string,is_interrupt:bool,permission_mode:string,prompt_id:string,scratchpad_dir:string,session_id:string,tool_input:object{command:string,description:string},tool_name:string,tool_use_id:string,transcript_path:string}
+InstructionsLoaded => object{cwd:string,file_path:string,hook_event_name:string,load_reason:string,memory_type:string,scratchpad_dir:string,session_id:string,transcript_path:string}
+SubagentStart => object{agent_id:string,agent_type:string,cwd:string,hook_event_name:string,prompt_id:string,scratchpad_dir:string,session_id:string,transcript_path:string}
+SubagentStop => object{agent_id:string,agent_transcript_path:string,agent_type:string,background_tasks:array,cwd:string,effort:object{level:string},hook_event_name:string,last_assistant_message:string,permission_mode:string,prompt_id:string,scratchpad_dir:string,session_crons:array,session_id:string,stop_hook_active:bool,transcript_path:string}
+SubagentStop => object{agent_id:string,agent_transcript_path:string,agent_type:string,background_tasks:array,cwd:string,effort:object{level:string},hook_event_name:string,permission_mode:string,prompt_id:string,scratchpad_dir:string,session_crons:array,session_id:string,stop_hook_active:bool,transcript_path:string}
+PreCompact => object{custom_instructions:null,cwd:string,hook_event_name:string,prompt_id:string,scratchpad_dir:string,session_id:string,transcript_path:string,trigger:string}
+PostCompact => object{compact_summary:string,cwd:string,hook_event_name:string,prompt_id:string,scratchpad_dir:string,session_id:string,transcript_path:string,trigger:string}
+SessionEnd => object{cwd:string,hook_event_name:string,prompt_id:string,reason:string,scratchpad_dir:string,session_id:string,transcript_path:string}
