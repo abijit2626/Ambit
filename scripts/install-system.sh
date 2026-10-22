@@ -6,6 +6,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BIN_PATH=/usr/local/bin/ambitd
 BUNDLE="$ROOT/deploy/claude-code/managed-settings.m0.json"
 
+EARLIER_BUNDLES="44fccfc3cec5e1b35c32c51d7a676ca9214eb15b3fe3099cd5298f2a28a56ed5"
+
 case "$(uname -s)" in
   Linux)
     OS=linux
@@ -55,6 +57,8 @@ What install does, in this order:
 It refuses to replace managed settings that already exist and differ from the bundle:
 an organization's own policy may be in that file, and overwriting it would silently
 drop that policy. Merge the bundle's "env" and "hooks" blocks into it by hand instead.
+The one exception is the earlier bundle this installer shipped (SessionStart over http,
+which Claude Code does not deliver): a file with exactly that content is upgraded.
 
 Uninstall reverses the order: managed settings first, then the service. The spool and
 the fingerprint key stay unless --purge is given, because they are the evidence a
@@ -135,10 +139,34 @@ service_state() {
   fi
 }
 
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+is_earlier_bundle() {
+  local h
+  h=$(sha256_of "$1")
+  case " $EARLIER_BUNDLES " in *" $h "*) return 0 ;; *) return 1 ;; esac
+}
+
+bundle_problem() {
+  local want="\"command\": \"$BIN_PATH hook-forward\""
+  if ! grep -qF "$want" "$BUNDLE"; then
+    echo "the bundle does not run $BIN_PATH hook-forward for SessionStart (it looks for: $want), so SessionStart would go missing"
+  fi
+}
+
 install_managed_settings() {
   if [ -f "$MANAGED" ]; then
     if cmp -s "$BUNDLE" "$MANAGED"; then
       say "managed settings already match the M0 bundle: $MANAGED"
+      return 0
+    fi
+    if is_earlier_bundle "$MANAGED"; then
+      install -m 0644 "$BUNDLE" "$MANAGED.new"
+      mv -f "$MANAGED.new" "$MANAGED"
+      say "upgraded managed settings from the earlier ambit bundle (SessionStart over http, which Claude Code does not deliver): $MANAGED"
       return 0
     fi
     die "managed settings already exist at $MANAGED and differ from the M0 bundle.
@@ -154,7 +182,7 @@ install_managed_settings() {
 
 remove_managed_settings() {
   if [ -f "$MANAGED" ]; then
-    if cmp -s "$BUNDLE" "$MANAGED"; then
+    if cmp -s "$BUNDLE" "$MANAGED" || is_earlier_bundle "$MANAGED"; then
       rm -f "$MANAGED"
       say "removed managed settings: $MANAGED"
     else
@@ -171,6 +199,9 @@ do_install() {
   [ -f "$bin" ] || die "no such file: $bin"
   [ -f "$UNIT_SRC" ] || die "missing $UNIT_SRC; run this from a checkout of the repository"
   [ -f "$BUNDLE" ] || die "missing $BUNDLE"
+  local problem
+  problem=$(bundle_problem)
+  [ -z "$problem" ] || die "$problem"
   local ver
   ver=$("$bin" -version 2>/dev/null) || die "$bin does not run here: wrong OS or CPU architecture?"
   PROBE_BIN=$bin
@@ -195,8 +226,8 @@ do_install() {
 
   install_managed_settings
   say "done. Data: $DATA_DIR. Start a Claude Code session and send one prompt: $DATA_DIR/events.jsonl
-  should gain a prompt_submit line."
-  say "A session_start line is not expected: that event does not reach ambitd over the http hook (README, Known limitations)."
+  should gain a session_start line and a prompt_submit line."
+  say "session_start arrives through the hook-forward command hook (README, Known limitations); if only prompt_submit appears, run the hook command from the managed settings by hand."
 }
 
 do_uninstall() {
@@ -220,7 +251,9 @@ do_status() {
   if healthy; then echo "health endpoint:  answers on $(hook_url)"; else echo "health endpoint:  no answer on $(hook_url)"; fi
   if [ -x "$BIN_PATH" ]; then echo "binary:           $BIN_PATH ($("$BIN_PATH" -version 2>/dev/null || echo '?'))"; else echo "binary:           not installed"; fi
   if [ -f "$MANAGED" ]; then
-    if cmp -s "$BUNDLE" "$MANAGED"; then echo "managed settings: the M0 bundle ($MANAGED)"; else echo "managed settings: present, not the M0 bundle ($MANAGED)"; fi
+    if cmp -s "$BUNDLE" "$MANAGED"; then echo "managed settings: the M0 bundle ($MANAGED)"
+    elif is_earlier_bundle "$MANAGED"; then echo "managed settings: an earlier ambit bundle whose SessionStart hook is not delivered; run the installer again to upgrade ($MANAGED)"
+    else echo "managed settings: present, not the M0 bundle ($MANAGED)"; fi
   else
     echo "managed settings: absent"
   fi
