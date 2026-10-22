@@ -499,9 +499,9 @@ team executes a runbook against a sample alert.
 One run, by one person, in October 2026: Windows 10 Pro 22H2; `ambitd` built from commit
 `32ee5399` with Go 1.26.7 (`go.mod` says 1.24); a single-node Wazuh 4.14.8 manager in Docker
 and a Wazuh 4.14.8 Windows agent. Rules were exercised with `wazuh-logtest` on
-`deploy/wazuh/fixtures/events.sample.jsonl`. An alert from a live event travelling from the
-agent to the manager has **not** been shown yet. Each item says whether it was *observed*
-(seen directly), *inferred* (a reading of what was seen) or *untested*.
+`deploy/wazuh/fixtures/events.sample.jsonl`. Alerts from live events travelling from the
+agent to the manager are described under the D2 sweep item below. Each item says whether it
+was *observed* (seen directly), *inferred* (a reading of what was seen) or *untested*.
 
 Worked as designed (observed): `go test ./...` passes natively on Windows (26 packages), and
 `ambitd.exe` built there has the same SHA-256 as a Linux cross-build with `-trimpath
@@ -540,15 +540,27 @@ Open problems:
   rules): level 0 first, then the highest level, with file order only breaking ties. The
   live results above fit that and also fit "file order wins", because the winner was
   both earlier and higher.
-- **The D2 sweep was blind in `bypassPermissions` sessions (observed live; fixed, proven
-  offline only).** Ten Read-tool reads of decoy credential files gave ten 100201 alerts
-  and no 100211, because a bypass-mode read alerts as 100201 and 100211 counted only
-  100210. A session that switched mode partway was blind the same way (observed offline).
+- **The D2 sweep was blind in `bypassPermissions` sessions (observed live; fixed; the fix
+  shown live, one session per mode).** Ten Read-tool reads of decoy credential files gave
+  ten 100201 alerts and no 100211, because a bypass-mode read alerts as 100201 and 100211
+  counted only 100210. A session that switched mode partway was blind the same way
+  (observed offline).
   100211 now counts the group `ambit_cred_read`, carried by 100201 (now reads only) and
   100210; bypass-mode writes and other operations alert as a new 100205. Replayed through
   `wazuh-logtest` on the 4.14.8 image, 100211 fires on the 8th read in bypass, default and
   mode-switching sessions and never counts writes (`deploy/wazuh/fixtures/d2-sweeps.jsonl`).
-  Not yet shown on a live manager.
+  On the lab manager with the fixed rules loaded (100205 exists only in the fixed file),
+  the 50-line fixture through one `wazuh-logtest` process gave 100201=19, 100205=15,
+  100210=13 and 100211=3, the same tally as the offline image (observed). Two sessions then
+  ran on the Windows agent (observed, one session each, 2026-10-22). In a
+  `--dangerously-skip-permissions` session, ten Read-tool reads of the decoy files alerted as
+  100201 x7, 100211 (level 12) on the 8th read, then 100201 x2, and the spool held ten
+  credential Read `tool_pre` events with `permission_mode` `bypassPermissions`. In a session
+  whose `permission_mode` was `auto`, the mode this PC starts in, ten reads gave 100210 x7,
+  100211, 100210 x2. Alerts followed the spool events by 0.7 to 1.8 s, and reads issued in
+  parallel did not change the count. A session in `default` mode has not been run; 100210
+  has no `permission_mode` condition, so it should behave like `auto` (inferred; untested).
+  The docs and fixtures do not mention `auto` yet. Other session shapes are untested.
 - **`ignore` on 100211 silenced every other session's sweep (observed offline; removed).**
   After one session's sweep fired, a second session's sweep matched and raised no alert:
   `ignore` is per rule, not per `same_field` value. Without it, 100211 still fires once per
