@@ -95,7 +95,13 @@ try {
     $landed = $false
     for ($i = 0; $i -lt 30 -and -not $landed; $i++) {
         if (Test-Path -LiteralPath $spool) {
-            $landed = [System.IO.File]::ReadAllText($spool).Contains('"kind":"session_start"')
+            # ambitd keeps the spool open for writing, and ReadAllText refuses a file another process
+            # has open that way on Windows, so read it with a share mode that allows the writer.
+            $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+            $fsSpool = New-Object System.IO.FileStream($spool, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+            $rdSpool = New-Object System.IO.StreamReader($fsSpool)
+            $landed = $rdSpool.ReadToEnd().Contains('"kind":"session_start"')
+            $rdSpool.Close()
         }
         if (-not $landed) { Start-Sleep -Milliseconds 100 }
     }
