@@ -566,18 +566,24 @@ Open problems:
   folder, and a fresh install restored all three byte for byte. Whether the repeating
   trigger or restart-on-failure brought `ambitd` back after the kill is untested.
 - **`session_start` arrives through a command hook, with an empty mode (observed, 2026-10-22,
-  Claude Code v2.1.278, Windows 10).** In a throwaway project with both hook kinds registered,
-  the `SessionStart` command hook ran and the `http` one added no `session_start` event, while
-  the `SessionEnd` `http` hook did arrive. Built from the hook-forward commit and registered as
-  a `SessionStart` command, `ambitd hook-forward` delivered one `session_start` to the spool,
-  with an empty `permission_mode`, about half a second before a PowerShell logging hook in the
-  same group wrote its line (the hooks seem to start together; inferred). The session's
-  `session_end` also had an empty mode: ambitd sets a session's mode from a payload that
-  carries one, and a session that never calls a tool may never see one (inferred from the
-  source, untested). One session produced two `session_end` events with identical timestamps
-  (observed; cause unknown). Untested: the bundle's own command
-  (`"C:/Program Files/ambit/ambitd.exe" hook-forward`) under Git Bash from a real install,
-  the Linux and macOS bundle, and what the model sees on a session start.
+  Claude Code v2.1.278, Windows 10).** First run: in a throwaway project with both hook kinds
+  registered, the `SessionStart` command hook ran and the `http` one added no `session_start`
+  event, while the `SessionEnd` `http` hook did arrive. Built from the hook-forward commit and
+  registered as a `SessionStart` command, `ambitd hook-forward` delivered one `session_start`
+  to the spool with an empty `permission_mode`, about half a second before a PowerShell logging
+  hook in the same group wrote its line (the hooks seem to start together; inferred). Second
+  run, after `install-system.ps1` replaced the earlier bundle with the new Windows one (it
+  recognised the old file by its SHA-256, one `ambitd` came back, and the installed command run
+  by Git Bash exited 0, printed nothing and landed one synthetic `session_start`): a real
+  session in an empty folder produced exactly one `session_start` (empty mode), two
+  `prompt_submit`, a `Glob` `tool_pre` and `tool_post`, a `subagent_stop` and one
+  `session_end`. Those events are attributed to the session by shape and timing, not by
+  session id, because other Claude processes were open. `prompt_submit`, `tool_pre` and
+  `session_end` all carried `permission_mode` `auto`, so a session's mode is first learned from
+  its first prompt, not from `session_start` and not only after a tool call. The earlier
+  probe session had two `session_end` events with identical timestamps; that did not recur in
+  the clean run (cause unknown). Untested: the Linux and macOS bundle, and what the model
+  sees at a session start.
 - **The Windows FIM block was not deployed on the lab agent (observed).** Neither the
   agent's `ossec.conf` nor the manager's shared `agent.conf` named
   `C:\Program Files\ClaudeCode`, and the reinstall's delete and re-add of
