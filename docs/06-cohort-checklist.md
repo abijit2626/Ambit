@@ -141,8 +141,10 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
    `trusted_content_domains` and, if you classify MCP servers or tools, `trusted_mcp_servers` and
    `mcp_tool_labels`. An unset trusted-repo list makes D8 mostly noise early on, as its runbook
    says. Then run one Claude Code session, send one prompt, and check that `events.jsonl` gains a
-   `prompt_submit` line. Do not wait for a `session_start` line: that event did not reach
-   `ambitd` over the `http` hook in the lab (see the README's known limitations).
+   `session_start` line and a `prompt_submit` line. `session_start` comes from the bundle's
+   `SessionStart` command hook (`ambitd hook-forward`), because Claude Code does not deliver
+   that event to an `http` hook; if only `prompt_submit` appears, that hook is not running (see
+   the README's known limitations). Its `permission_mode` is empty, by design of the payload.
 4. For each MCP server the volunteer uses, wrap its command in `mcp-interpose -server NAME`
    in the MCP configuration (the README's "Classifying MCP servers and tools" section shows the
    shape), run a session so the surface is recorded, review it with `-show`,
