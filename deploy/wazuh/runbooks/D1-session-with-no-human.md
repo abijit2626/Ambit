@@ -1,6 +1,6 @@
 # Runbook D1 — session with no human
 
-**Rules:** 100200–100204 (group `ambit_d1`). **MITRE:** T1059, plus T1552.001 where
+**Rules:** 100200–100205 (group `ambit_d1`). **MITRE:** T1059, plus T1552.001 where
 credentials are involved.
 
 An agent running with no permission prompts does whatever it is told without a human
@@ -13,10 +13,11 @@ then did.
 | Rule | Level | Means |
 | --- | --- | --- |
 | 100200 | 5 | A session started in `bypassPermissions` |
-| 100201 | 13 | **Credential-zone access in such a session** — the core alert |
+| 100201 | 13 | **Credential-zone read in such a session** — the core alert |
 | 100202 | 12 | Outbound network command in such a session |
 | 100203 | 12 | Secret material in a tool call from such a session |
 | 100204 | 12 | Non-interactive entrypoint — **inert, see below** |
+| 100205 | 13 | **Any other credential-zone operation in such a session** (a write, or a `path_op` that is not a read) |
 
 **100200 cannot fire on a live endpoint (inferred).** It needs `permission_mode` to be
 `bypassPermissions` on a `session_start`, and the `SessionStart` payload Claude Code sends
@@ -30,8 +31,12 @@ unaffected.
 - `permission_mode` was `bypassPermissions` for the session the event belongs to. This
   field is repeated on every event by design, so a tool call carries the shape of the
   session it happened in and no correlation is needed.
-- For 100201: the tool touched a path in the `credential` zone, and `path_op` says
-  whether it read or wrote. The zone label is cleartext; the path is a keyed digest.
+- For 100201: the tool read a path in the `credential` zone. For 100205: it did something
+  else to one, and `path_op` says what (`write`, or `unknown` for a tool ambitd has no
+  operation for). The zone label is cleartext; the path is a keyed digest.
+- A bypass-mode credential read also counts toward the D2 sweep (100211), and a
+  bypass-mode credential write alerts here as 100205 rather than as D2's 100212: Wazuh
+  alerts one rule per event, and these level-13 rules outrank the D2 ones.
 - For 100203: `secret_hit_kinds` names the *kind* of secret the edge classifier
   recognized. The value never leaves the endpoint and is not in any event.
 
@@ -56,7 +61,7 @@ unaffected.
    the customer, answered once, removes most of this detector's volume. If the answer is
    yes for CI-shaped endpoints, ask for the endpoint_ids so 100200 can be routed
    differently for them.
-2. **Read what the session did, not only how it started.** 100201, 100202 and 100203 are
+2. **Read what the session did, not only how it started.** 100201, 100205, 100202 and 100203 are
    the alerts that matter. A bypass session that reads only workdir files is a
    configuration choice; one that reads `~/.ssh` in its first minute is the documented
    attack.
@@ -73,7 +78,7 @@ unaffected.
 
 ## What requires us
 
-- **Digest resolution** for `path_digest` on 100201, to name the credential file.
+- **Digest resolution** for `path_digest` on 100201 and 100205, to name the credential file.
 - **Spool pull** for the session: the prompts, the tool inputs, and the ordering the
   flattened stream summarizes. For this detector the prompt text is the decisive artifact
   and it never crosses to Wazuh.
@@ -83,8 +88,8 @@ unaffected.
 
 Not automatic, not yours to execute. Recommend, in order:
 
-1. Revoke the credentials whose paths were touched. For 100201 this is the first action
-   and it does not wait for full analysis.
+1. Revoke the credentials whose paths were touched. For 100201 and 100205 this is the
+   first action and it does not wait for full analysis.
 2. Ask us to confirm managed settings still disable `bypassPermissions` where they should
    — that is SCA check 10002, and a D12 alert in the same window changes this from a
    configuration choice into a control failure.
@@ -93,7 +98,10 @@ Not automatic, not yours to execute. Recommend, in order:
 
 ## Escalation
 
-**Page** on 100201, and on 100202 or 100203 in a session with no prompt events.
+**Page** on 100201 or 100205, and on 100202 or 100203 in a session with no prompt events.
+A bypass session that sweeps credentials raises one 100201 or 100205 per file, so group
+pages by `rule.id` and `session_id` in alert routing: the rules deliberately do not use
+`ignore`, which would silence them for every session on every host.
 
 **Queue** 100200 on endpoints not known to run in bypass mode, and 100202 or 100203 where
 prompts are present.

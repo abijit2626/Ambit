@@ -437,13 +437,36 @@ All verified against the 4.x ruleset documentation and the shipped ruleset:
   as working on **dynamic** fields (what the JSON decoder produces) and explicitly
   **not** on static fields — which is exactly our case.
 - `ignore="N"`: rule attribute suppressing repeat alerts for N seconds. Used in the
-  shipped ruleset (e.g. rule 80443) and necessary to stop a noisy detector
-  self-DoSing the review queue.
+  shipped ruleset (e.g. rule 80443) to stop a noisy detector self-DoSing the review
+  queue. **It is global, not per `same_field` value** (observed with wazuh-logtest on
+  4.14.8): after one session's sweep fired, a second session's sweep matched but raised
+  no alert. On a per-session correlation rule that means one sweep hides every other one
+  on every host for N seconds, so D2's sweep does not use it.
+- `if_matched_group`: like `if_matched_sid`, but counts earlier events whose **alerting**
+  rule carries the group. An event counts by the rule that alerted on it, so a rule that
+  takes events away from the counted ones without carrying the group blinds the
+  correlation (observed, 4.14.8).
+
+### Which rule alerts when several match
+
+Wazuh alerts one rule per event. Among rules that could match the same event (the
+top-level rules, or the children of one parent), it tries level-0 rules first, then the
+rest from the highest level down; file order only breaks ties. A child that matches
+replaces its parent whatever the levels. All observed with wazuh-logtest on 4.14.8 by
+swapping the order and levels of two otherwise identical rules. The consequence that
+matters here: a high-level rule shadows a lower-level one on every event both match,
+wherever they sit in the files, so a correlation counting the lower one stops seeing
+those events. D1's level-13 credential rule shadowed D2's level-5 read rule this way
+until the sweep was moved to counting a group.
 
 ### D2 — credential sweep, as frequency + timeframe
 
+Abridged from `deploy/wazuh/rules/ambit_agent_rules.xml`, which is authoritative. A
+credential read alerts as 100210 in a prompting session and as D1's 100201 in a
+`bypassPermissions` one; both carry `ambit_cred_read`, and the sweep counts that group.
+
 ```xml
-<group name="ambit,ambit_credential,">
+<group name="ambit,ambit_agent,">
   <!-- Base: ambitd reported a credential-zone read. -->
   <rule id="100210" level="5">
     <decoded_as>json</decoded_as>
@@ -454,12 +477,12 @@ All verified against the 4.x ruleset documentation and the shipped ruleset:
     <mitre>
       <id>T1552.001</id>
     </mitre>
-    <group>ambit_d2,runbook_D2,</group>
+    <group>ambit_d2,ambit_cred_read,runbook_D2,</group>
   </rule>
 
-  <!-- D2: many of them, same session, short window. -->
-  <rule id="100211" level="12" frequency="8" timeframe="120" ignore="300">
-    <if_matched_sid>100210</if_matched_sid>
+  <!-- D2: many of them, same session, short window. No ignore: it is global. -->
+  <rule id="100211" level="12" frequency="8" timeframe="120">
+    <if_matched_group>ambit_cred_read</if_matched_group>
     <same_field>session_id</same_field>
     <description>ambit D2: credential sweep - 8+ credential-zone reads in one session within 120s</description>
     <mitre>
