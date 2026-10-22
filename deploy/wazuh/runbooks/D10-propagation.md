@@ -14,37 +14,53 @@ intersection is a scheduled job over the feature columns and lands in M5.
 
 | Rule | Level | Means |
 | --- | --- | --- |
-| 100280 | 0 | An event carries a notable fingerprint (context only, no alert) |
-| 100281 | 10 | The same fingerprint seen **twice** within 3600s |
-| 100282 | 12 | The same fingerprint seen **5+ times** within 7200s |
+| 100280 | 1 | An event carries a notable fingerprint. Counted by the two rules below; below the default log alert level of 3, so it does not alert unless the manager's `log_alert_level` is set to 1 or 2 |
+| 100281 | 10 | The same fingerprint seen in **two different sessions** within 3600s |
+| 100282 | 12 | The **fifth sighting** of the same fingerprint across sessions within 7200s. That event alerts as 100282 instead of 100281 |
 | 100283 | 12 | A provenance edge: the action carried a value that untrusted content introduced earlier in the same session |
 
 ## What this alert asserts
 
-- The same value of `prov_fp_notable` appeared on two or more events inside the window.
+- The same value of `prov_fp_notable` was sent by two or more different `session_id` values inside
+  the window. A session that repeats a fingerprint does not raise 100281: ambitd sends a
+  fingerprint once per session, and the rule also requires the session to differ.
 - `prov_fp_notable` is a **keyed digest** of one high-specificity feature — a domain, an email
-  address, or a high-entropy token — selected from the content of a tool result or input. Equality
-  is all an analyst gets: two events saw the same thing. What that thing was requires resolution.
-- `prov_fp_role` says whether the fingerprint was seen on the ingest or the output side of the
-  event that carried it.
+  address, or a high-entropy token — selected from the content of a tool result. Equality is all an
+  analyst gets: two sessions saw the same thing. What that thing was requires resolution.
+- 100282 means a fifth sighting of one fingerprint, across sessions, inside two hours: the event
+  that brings 100281's conditions to a fourth match alerts as 100282. With each session sending a
+  fingerprint once, it is a count of sessions seeing the same content.
 
 ## What it does not assert
 
-Three limitations, all structural rather than tuning problems, and all worth stating before you
-spend time on an alert:
-
-- **It does not assert two different sessions.** `same_field` takes one field name, and whether it
-  composes with a test for a *differing* session id is unverified. So 100281 fires just as
-  readily when one session ingests a fingerprint and later re-emits it — which is ordinary
-  behavior, not propagation. **Checking whether the correlated events share a `session_id` is
-  therefore triage step 1, not an afterthought.**
-- **It does not assert direction.** D10 means "ingested in X, emitted by Y". The rule sees two
-  occurrences of a value and cannot order them. `prov_fp_role` carries direction per event, so
-  you can recover it by reading the events; the rule cannot require it.
-- **It does not assert the content was malicious.** A shared internal domain appearing in two
-  agents' tool results is what a company wiki looks like. This detector's false-positive rate is
-  expected to be high, which is why 100281 is level 10 and not 12, and why the scalar tripwire
-  exists only because it is nearly free.
+- **It does not assert direction.** D10 means "ingested in X, emitted by Y". The rule sees sightings
+  of a value and cannot order them. `prov_fp_role` is always `ingest` today: ambitd only looks at
+  tool *results*, so the field cannot tell you which session emitted the content. Event
+  timestamps order the sightings, but the earlier session is only a candidate origin, not proof of
+  one.
+- **It does not assert the content was malicious.** A shared internal domain in two agents' tool
+  results is what a company wiki looks like. This detector's false-positive rate is expected to be
+  high, which is why 100281 is level 10 and not 12.
+- **A quiet D10 means little.** Four reasons it can stay silent while propagation happens:
+  - An event that carries a fingerprint and also matches a higher-level rule alerts as that rule
+    and is not counted here. Measured offline on a constructed event: a network `curl` result with a secret in it
+    alerts as 100302 and its fingerprint never reaches 100281. D10 undercounts exactly when something more
+    serious already alerted on the same event.
+  - ambitd only fingerprints tool *results*. Content that reaches an agent another way, a user
+    prompt for example, carries no fingerprint.
+  - Each session's memory of fingerprints it already sent is bounded (256 by default,
+    `fp_notable_session_cap`). A full set forgets the oldest, so that fingerprint is sent again
+    the next time the session sees it. That costs a repeat sighting and never a missed one. A
+    repeat from a session that already paired with another can raise 100281 again for the same
+    two sessions, and add to 100282's count with fewer than five sessions involved (inferred; the
+    cap has not been exercised against Wazuh). ambitd's memory also resets when it restarts; the
+    different-session test is what keeps a restart from alerting by itself.
+  - An ambitd build older than the once-per-session change sends the fingerprint on every result.
+    Measured offline: one session sees it, then a second session sees it 20 times, which gave
+    15 alerts as 100281 and 5 as 100282 from only two sessions. Read 100282 as "five sightings"
+    rather than "five sessions" for hosts on those builds.
+- **The windows have not been exercised.** The rules were replayed offline, and replay is instant,
+  so the 3600s and 7200s expiry is untested.
 - **Rule 100283 is live, and is evidence, not proof.** A provenance edge is ambitd's own
   statement that an action carried a value which also appeared in untrusted content it ingested
   earlier in the same session — the signal this tripwire approximates. It cannot say the value
@@ -60,20 +76,20 @@ spend time on an alert:
 
 ## Triage
 
-1. **Same session or different?** Pull both correlated events by `prov_fp_notable`. Same
-   `session_id` — close it, that is one agent handling the same content twice. Different
-   `session_id`, and especially different `endpoint_id`, is the case worth working.
-2. **Read the roles.** `prov_fp_role` = `ingest` on the earlier event and `output` on the later
-   one, in different sessions, is propagation in the direction D10 means. The reverse ordering, or
-   two ingests, is two agents reading the same source — which is normal.
-3. **Count the endpoints.** One fingerprint across five sessions on five endpoints (rule 100282)
-   is either a widely shared internal resource or something spreading. The distinction is what the
-   fingerprint resolves to.
+1. **Collect the sightings.** Pull every event with this `prov_fp_notable` in the window, one per
+   session. Note each `session_id`, `endpoint_id` and `user_id`. Different sessions are
+   guaranteed by the rule; the question is how different. Two sessions on one endpoint and one
+   user is usually one developer with two terminals. Different `endpoint_id` or `user_id` is the
+   case worth working.
+2. **Order them by timestamp.** The earliest sighting is the candidate origin. It is not proof of
+   direction (see above): all you know is who saw it first.
+3. **Count the sessions and endpoints.** One fingerprint across five sessions on five endpoints
+   (rule 100282) is either a widely shared internal resource or something spreading. The
+   distinction is what the fingerprint resolves to.
 4. **Resolve the fingerprint.** Until you know whether it is the company wiki domain or an
    attacker's host, nothing else is decidable. This requires us and it is the whole alert.
-5. **Check the ingest side for a known-bad origin.** If the earliest event carrying the
-   fingerprint also has a D8 or D4 alert in its session, you have a candidate origin and the
-   propagation is worth treating as real.
+5. **Check the earliest session for a known-bad origin.** If it also has a D8 or D4 alert, or a
+   100283 edge, you have a candidate origin and the propagation is worth treating as real.
 
 ## What requires us
 
@@ -101,7 +117,8 @@ content has already moved. Recommend:
 **Page** only on 100282 where the fingerprint resolves to something attacker-controlled, or where
 the ingest side has a D4, D5 or D8 alert in its session.
 
-**Queue** 100281 with differing session ids.
+**Queue** 100281. Every one is already a different-session pair.
 
-**Close without escalation** 100281 where both events share a session id. That is the expected
-majority, and the tripwire's caveat rather than a finding.
+**Close without escalation** a 100281 whose fingerprint resolves to a shared internal resource
+(the company wiki, a common vendor domain) and whose sessions are all one user's. Record what
+it resolved to in the ticket, so the next alert for the same fingerprint closes faster.

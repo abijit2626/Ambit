@@ -1,0 +1,9 @@
+scenario	first	last	description
+one-session-x12	1	12	one session repeats a fingerprint 12 times
+twelve-sessions	13	24	12 different sessions each see it once
+a-once-then-b-x20	25	45	session A once, then session B 20 times (ambitd without emit-once)
+a-x20-then-b-once	46	66	session A 20 times, then session B once (ambitd without emit-once)
+emit-once-a-then-b	67	68	what ambitd emits for the two scenarios above with emit-once: A once, B once
+two-fingerprints	69	72	two fingerprints, each seen in sessions A then B: each must alert on its own
+unrelated-fingerprints	73	75	three sessions, each sees a different fingerprint: same_field must keep these apart
+collision-100302-alternate	76	87	12 sessions; the even-numbered events also match 100302

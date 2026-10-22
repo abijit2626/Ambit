@@ -40,6 +40,34 @@ func TestLoadOverlaysOntoDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultFingerprintCapAndOverlay(t *testing.T) {
+	if got := Default().FPNotableSessionCap; got != 256 {
+		t.Errorf("default fp_notable_session_cap = %d, want 256", got)
+	}
+	path := filepath.Join(t.TempDir(), "ambit.json")
+	if err := os.WriteFile(path, []byte(`{"fp_notable_session_cap": 32}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.FPNotableSessionCap != 32 {
+		t.Errorf("fp_notable_session_cap = %d, want the configured 32", cfg.FPNotableSessionCap)
+	}
+	// a config file written before the field existed keeps the default rather than reading as zero
+	if err := os.WriteFile(path, []byte(`{"sample_rate": 0.1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.FPNotableSessionCap != 256 {
+		t.Errorf("an older config gave fp_notable_session_cap = %d, want the default 256", cfg.FPNotableSessionCap)
+	}
+}
+
 func TestDerivedDurations(t *testing.T) {
 	cfg, err := Load("")
 	if err != nil {
@@ -68,6 +96,10 @@ func TestValidate(t *testing.T) {
 		{"negative sample rate", func(c *Config) { c.SampleRate = -0.1 }, false, "out of range"},
 		{"sample rate above one", func(c *Config) { c.SampleRate = 1.5 }, false, "out of range"},
 		{"sample rate one", func(c *Config) { c.SampleRate = 1 }, true, "everything crossing is valid, if unwise"},
+		{"zero fingerprint cap", func(c *Config) { c.FPNotableSessionCap = 0 }, false,
+			"a session that remembers nothing would resend every repeat, defeating the once-per-session rule"},
+		{"negative fingerprint cap", func(c *Config) { c.FPNotableSessionCap = -1 }, false, "same"},
+		{"fingerprint cap one", func(c *Config) { c.FPNotableSessionCap = 1 }, true, "the smallest set that still dedupes back-to-back repeats"},
 		{"zero health seconds", func(c *Config) { c.HealthSeconds = 0 }, false,
 			"the heartbeat is D7's fine half and must not be silently disabled"},
 	}

@@ -54,7 +54,8 @@ describes is not something a rule can do.
    download.
 3. **Check the session's ingest side.** Same `session_id`: a D8 untrusted instruction file, a D4
    drift, or a `tool_post` carrying `prov_fp_notable` before the egress tells you the session had
-   ingested untrusted content first. Egress after ingest is the shape the whole system exists to
+   ingested untrusted content first. (Only a session's first sighting of a fingerprint carries it,
+   so a later `tool_post` without one is not evidence of nothing ingested.) Egress after ingest is the shape the whole system exists to
    catch; egress alone, in a session doing ordinary work, usually is not.
 4. **Check for credential reads before the egress.** A D2 alert or a `path_zone` = `credential`
    read in the same session, followed by network commands, is the staging-then-exfiltration

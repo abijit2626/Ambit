@@ -13,6 +13,8 @@ import (
 // scripts/gen-correlation-fixtures.sh and scripts/record-correlation-alerts.sh.
 
 const (
+	d10Manifest         = "fixtures/g-d10.tsv"
+	d10Alerts           = "fixtures/g-d10.alerts"
 	correlationManifest = "fixtures/g-correlation.tsv"
 	twoKeysAlerts       = "fixtures/g-two-keys.alerts"
 	floodAlerts         = "fixtures/g-flood.alerts"
@@ -22,12 +24,7 @@ const (
 // safe to change, and each needs a decision of its own; the list may only shrink.
 var ignoreStillPresent = map[int]string{
 	100271: "parent 19007 is Wazuh's own SCA rule; an SCA event cannot be replayed offline, so the effect was not measured",
-	100281: "its parent 100280 is level 0 and level-0 matches are not counted, so the rule never fires; ignore is moot until that is redesigned",
-	100282: "same as 100281",
 }
-
-// Rules the recorded run shows never firing at all, for the reason above.
-var knownSilent = map[int]bool{100281: true, 100282: true}
 
 func TestNoCorrelationRuleSilencesOtherKeysWithIgnore(t *testing.T) {
 	seen := map[int]bool{}
@@ -134,12 +131,6 @@ func TestEachKeyRaisesItsOwnCorrelationAlert(t *testing.T) {
 			t.Fatalf("rule %d: manifest block holds %d events, want two keys of %d", row.rule, got, row.threshold)
 		}
 		alerted, suppressed := countAlerts(block, row.rule)
-		if knownSilent[row.rule] {
-			if alerted+suppressed != 0 {
-				t.Errorf("rule %d now matches in the recorded run (%d alerted, %d suppressed); take it out of knownSilent and expect one alert per key", row.rule, alerted, suppressed)
-			}
-			continue
-		}
 		if suppressed != 0 || alerted != 2 {
 			t.Errorf("rule %d: %d alerted and %d suppressed for two keys, want 2 and 0 (suppression is ignore hiding the second key)", row.rule, alerted, suppressed)
 		}
@@ -151,13 +142,143 @@ func TestEachKeyRaisesItsOwnCorrelationAlert(t *testing.T) {
 func TestOneKeyFloodAlertsOncePerThreshold(t *testing.T) {
 	lines := readAlerts(t, floodAlerts)
 	for _, row := range readManifest(t) {
-		if knownSilent[row.rule] {
-			continue
-		}
 		block := lines[row.floodFirst-1 : row.floodLast]
 		alerted, suppressed := countAlerts(block, row.rule)
 		if suppressed != 0 || alerted != 4 {
 			t.Errorf("rule %d: %d alerted and %d suppressed over %d events from one key, want 4 and 0 (one per %d)", row.rule, alerted, suppressed, len(block), row.threshold)
+		}
+	}
+}
+
+// D10 (100281, 100282) is not one key sent N times, so it has its own scenarios: g-d10.tsv names each
+// scenario's lines in g-d10.jsonl and g-d10.alerts records the replay, one wazuh-logtest process per
+// scenario. 100280 (level 1, below the default log alert level) is counted but never alerts.
+type d10Want struct {
+	r281, r282 int // alerts raised by 100281 and 100282
+	r302       int // events won by 100302 instead (the fingerprint was on an event that also matched it)
+	r280       int // events that matched only 100280, so were counted and not alerted
+}
+
+var d10Expected = map[string]d10Want{
+	// one session repeating a fingerprint is ordinary behavior, not propagation
+	"one-session-x12": {r280: 12},
+	// a different session each time: 100281 from the 2nd sighting, 100282 on the 5th and 9th
+	"twelve-sessions": {r281: 9, r282: 2, r280: 1},
+	// without emit-once in ambitd, session B repeating a fingerprint A saw keeps alerting
+	"a-once-then-b-x20": {r281: 15, r282: 5, r280: 1},
+	"a-x20-then-b-once": {r281: 1, r280: 20},
+	// with emit-once the same two scenarios reach Wazuh as A, B
+	"emit-once-a-then-b": {r281: 1, r280: 1},
+	// ignore would have let one fingerprint's alert hide the other's
+	"two-fingerprints": {r281: 2, r280: 2},
+	// different sessions seeing different fingerprints is not propagation: same_field keeps them apart
+	"unrelated-fingerprints": {r280: 3},
+	// an event that also matches 100302 is won by it and never counted toward D10
+	"collision-100302-alternate": {r281: 4, r282: 1, r302: 6, r280: 1},
+}
+
+type d10Scenario struct {
+	name        string
+	first, last int
+}
+
+func readD10Manifest(t *testing.T) []d10Scenario {
+	t.Helper()
+	raw, err := os.ReadFile(d10Manifest)
+	if err != nil {
+		t.Fatalf("read %s: %v (regenerate with scripts/gen-correlation-fixtures.sh)", d10Manifest, err)
+	}
+	var out []d10Scenario
+	for i, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if i == 0 {
+			continue
+		}
+		c := strings.Split(line, "\t")
+		if len(c) != 4 {
+			t.Fatalf("%s line %d: want 4 columns, got %d", d10Manifest, i+1, len(c))
+		}
+		first, err1 := strconv.Atoi(c[1])
+		last, err2 := strconv.Atoi(c[2])
+		if err1 != nil || err2 != nil {
+			t.Fatalf("%s line %d: first and last must be numbers", d10Manifest, i+1)
+		}
+		out = append(out, d10Scenario{c[0], first, last})
+	}
+	return out
+}
+
+func TestD10ScenariosAlertAsDesigned(t *testing.T) {
+	lines := readAlerts(t, d10Alerts)
+	scenarios := readD10Manifest(t)
+	seen := map[string]bool{}
+	for _, sc := range scenarios {
+		seen[sc.name] = true
+		want, ok := d10Expected[sc.name]
+		if !ok {
+			t.Errorf("scenario %q in %s has no expectation in d10Expected", sc.name, d10Manifest)
+			continue
+		}
+		if sc.last > len(lines) {
+			t.Fatalf("scenario %q ends at line %d but %s records %d lines; re-record with scripts/record-correlation-alerts.sh", sc.name, sc.last, d10Alerts, len(lines))
+		}
+		block := lines[sc.first-1 : sc.last]
+		var got d10Want
+		for _, l := range block {
+			switch {
+			case l.rule == 100281 && l.alert:
+				got.r281++
+			case l.rule == 100282 && l.alert:
+				got.r282++
+			case l.rule == 100302 && l.alert:
+				got.r302++
+			case l.rule == 100280 && !l.alert:
+				got.r280++
+			default:
+				t.Errorf("scenario %q: unexpected line rule %d alert=%v", sc.name, l.rule, l.alert)
+			}
+		}
+		if got != want {
+			t.Errorf("scenario %q: got %+v, want %+v", sc.name, got, want)
+		}
+	}
+	for name := range d10Expected {
+		if !seen[name] {
+			t.Errorf("d10Expected names scenario %q that is not in %s", name, d10Manifest)
+		}
+	}
+}
+
+// The recorded run proves what the rules did when it was made; this proves the rules still say it.
+// Each assertion is the property a scenario above depends on, so a rule edit that is not re-recorded
+// fails here and one that is re-recorded fails there.
+func TestD10RuleShape(t *testing.T) {
+	byID := indexRules(loadRules(t))
+	r280, r281, r282 := byID[100280], byID[100281], byID[100282]
+
+	if r280.Level < 1 {
+		t.Errorf("rule 100280 is level %d; a level 0 match is not counted by if_matched_sid, so 100281 and 100282 can never fire", r280.Level)
+	}
+	if r280.Level >= 3 {
+		t.Errorf("rule 100280 is level %d; it must stay below the default log alert level of 3 or every notable fingerprint becomes an alert", r280.Level)
+	}
+	if got := strings.TrimSpace(r281.IfMatchedSI); got != "100280" {
+		t.Errorf("rule 100281 if_matched_sid = %q, want 100280", got)
+	}
+	if r281.SameField != "prov_fp_notable" || r281.NotSameFld != "session_id" {
+		t.Errorf("rule 100281 same_field=%q not_same_field=%q, want prov_fp_notable and session_id: the same fingerprint in a different session", r281.SameField, r281.NotSameFld)
+	}
+	if got := strings.TrimSpace(r282.IfMatchedSI); got != "100281" {
+		t.Errorf("rule 100282 if_matched_sid = %q, want 100281: once 100281 alerts on an event it is no longer a 100280 match, so counting 100280 never reaches 5", got)
+	}
+	if r282.SameField != "prov_fp_notable" {
+		t.Errorf("rule 100282 same_field = %q, want prov_fp_notable", r282.SameField)
+	}
+	if r282.Level <= r281.Level {
+		t.Errorf("rule 100282 (level %d) must outrank 100281 (level %d)", r282.Level, r281.Level)
+	}
+	for _, r := range []rule{r281, r282} {
+		if r.Ignore != 0 {
+			t.Errorf("rule %d has ignore=%d; it silences every fingerprint, not one", r.ID, r.Ignore)
 		}
 	}
 }
