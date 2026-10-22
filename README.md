@@ -193,7 +193,7 @@ same JSON Claude Code posts, optionally wrapped with ground truth and assertions
 
 ```jsonc
 {"scenario": {"name": "exfil-url", "config": {"trusted_content_domains": ["example.com"]}}}
-{"hook_event_name": "UserPromptSubmit", "session_id": "s1", "user_input": "fix the billing test"}
+{"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "fix the billing test"}
 {"payload": {"hook_event_name": "PostToolUse", "session_id": "s1", "tool_name": "WebFetch", ...},
  "expect": {"r2": "A", "taint": "web:"}}
 {"payload": {"hook_event_name": "PreToolUse", "session_id": "s1", "tool_name": "Bash", ...},
@@ -558,6 +558,19 @@ Open problems:
 - **A `sink_gap` marker line matches no rule (observed; intent unclear).** The docs pair the
   markers with rule 100313, which matches `health_dropped_events` on an `ambitd_health`
   event, not the marker itself.
+- **The hook payload key names were wrong for the prompt, the tool output and the tool error
+  (observed; fixed).** In a real session both `prompt_submit` events had `prompt.bytes` 0 and no
+  text. A probe that recorded only key names and value types on Claude Code v2.1.278 (Windows,
+  2026-10-22) showed it sends `prompt`, `tool_response` (an object for a Bash call: `stdout`,
+  `stderr` and three booleans) and `error`, where the code read `user_input`, `tool_result`
+  and `tool_error`; it also sends `reason` for `SessionEnd` and `trigger` for the compact
+  events. Because tool output was never read, provenance ingest recorded nothing on real
+  sessions (inferred from the code path; no missed alert was observed). The collector now
+  reads the real names and still accepts the old ones. Its tests are built from the recorded
+  key sets (`internal/hook/testdata/claude-code-2.1.278-shapes.txt`), and replaying the corpus
+  with the real names failed 14 of 26 scenarios on the old code. Untested: `PermissionRequest`,
+  `PermissionDenied` and `ConfigChange` were not triggered, so `config_source` and
+  `change_type` are still unverified names.
 
 ## Non-goals
 

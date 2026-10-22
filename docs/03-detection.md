@@ -386,7 +386,7 @@ Reasoning-level monitoring is fragile. Action-level monitoring is durable. So:
 
 **Does this action serve the objective the user actually stated?**
 
-- `UserPromptSubmit` gives `user_input` — the declared objective, verbatim, before
+- `UserPromptSubmit` gives `prompt` — the declared objective, verbatim, before
   the model has touched it.
 - Each subsequent tool call is scored for relevance by a small cheap model, given
   the objective, the action, and a compact session summary.
