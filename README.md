@@ -432,14 +432,21 @@ team executes a runbook against a sample alert.
   (observed); a new data directory, a reboot and which mechanism restarts `ambitd` are
   untested. The macOS installer has not been run on a real machine, and no Linux or macOS
   restart has been observed. See [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md).
-- **The `SessionStart` hook event does not reach `ambitd` (observed in 3+ sessions on Claude
-  Code v2.1.278; cause documented, not yet tested).** `UserPromptSubmit`, `PreToolUse`,
-  `PostToolUse`, `SubagentStop` and `SessionEnd` arrive, `SessionStart` does not, so a
-  `session_start` event never appears and rule 100200 cannot fire on a live endpoint. Claude
-  Code's hooks reference says `SessionStart` accepts only `command` and `mcp_tool` hooks, and the
-  bundle registers it as `http`. The installers therefore tell the operator to look for a
-  `prompt_submit` line, not a `session_start` one. Until a `command` hook forwards the event, treat
-  D1's session-start rules as inert.
+- **`SessionStart` reaches `ambitd` only through a `command` hook, and it carries no
+  `permission_mode`.** Claude Code v2.1.278 fires it but does not deliver it to an `http` hook
+  (observed in 3+ sessions, then isolated on Windows: the same event ran a `command` hook and
+  never reached `ambitd` over `http`). Both bundles therefore register `SessionStart` as a
+  command that runs `ambitd hook-forward`: the payload on stdin is posted unchanged to
+  `ambitd`, nothing is printed (a SessionStart hook's stdout becomes model context), and the
+  exit code is always 0, so a stopped `ambitd` costs one stderr line and never blocks a
+  session. There is one bundle per OS family because the command names the installed binary by
+  absolute path; like the `http` hooks it uses the default hook address. In the lab a
+  `session_start` reached the spool this way (observed with a probe project; the installed
+  bundle's exact command is untested). The real payload has no `permission_mode`, so rule
+  100200, which needs `bypassPermissions` on a `session_start`, cannot fire on a live endpoint
+  (inferred from the rule's condition). D1 rests on 100201 to 100203, which read the mode from
+  tool events. The installers upgrade a managed-settings file that is exactly the earlier
+  bundle and refuse to touch any other.
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
   and validates rule fields against a closed schema. See
@@ -558,6 +565,25 @@ Open problems:
   `-Purge` removed the task, the binary folder and the managed settings and kept the data
   folder, and a fresh install restored all three byte for byte. Whether the repeating
   trigger or restart-on-failure brought `ambitd` back after the kill is untested.
+- **`session_start` arrives through a command hook, with an empty mode (observed, 2026-10-22,
+  Claude Code v2.1.278, Windows 10).** First run: in a throwaway project with both hook kinds
+  registered, the `SessionStart` command hook ran and the `http` one added no `session_start`
+  event, while the `SessionEnd` `http` hook did arrive. Built from the hook-forward commit and
+  registered as a `SessionStart` command, `ambitd hook-forward` delivered one `session_start`
+  to the spool with an empty `permission_mode`, about half a second before a PowerShell logging
+  hook in the same group wrote its line (the hooks seem to start together; inferred). Second
+  run, after `install-system.ps1` replaced the earlier bundle with the new Windows one (it
+  recognised the old file by its SHA-256, one `ambitd` came back, and the installed command run
+  by Git Bash exited 0, printed nothing and landed one synthetic `session_start`): a real
+  session in an empty folder produced exactly one `session_start` (empty mode), two
+  `prompt_submit`, a `Glob` `tool_pre` and `tool_post`, a `subagent_stop` and one
+  `session_end`. Those events are attributed to the session by shape and timing, not by
+  session id, because other Claude processes were open. `prompt_submit`, `tool_pre` and
+  `session_end` all carried `permission_mode` `auto`, so a session's mode is first learned from
+  its first prompt, not from `session_start` and not only after a tool call. The earlier
+  probe session had two `session_end` events with identical timestamps; that did not recur in
+  the clean run (cause unknown). Untested: the Linux and macOS bundle, and what the model
+  sees at a session start.
 - **The Windows FIM block was not deployed on the lab agent (observed).** Neither the
   agent's `ossec.conf` nor the manager's shared `agent.conf` named
   `C:\Program Files\ClaudeCode`, and the reinstall's delete and re-add of

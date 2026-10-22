@@ -13,6 +13,8 @@ import (
 const (
 	scaDir     = "sca"
 	m0BundleFn = "../claude-code/managed-settings.m0.json"
+
+	m0BundleWindowsFn = "../claude-code/managed-settings.m0.windows.json"
 )
 
 type scaCheck struct {
@@ -164,18 +166,18 @@ func failingChecks(t *testing.T, p scaPolicy, bundle []string) []int {
 	return out
 }
 
-func loadBundle(t *testing.T) []string {
+func loadBundle(t *testing.T, path string) []string {
 	t.Helper()
-	raw, err := os.ReadFile(m0BundleFn)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read M0 bundle: %v", err)
 	}
 	return strings.Split(string(raw), "\n")
 }
 
-var scaPairs = []struct{ name, full, m0 string }{
-	{"unix", "ambit_managed_settings.yml", "ambit_managed_settings_m0.yml"},
-	{"windows", "ambit_managed_settings_windows.yml", "ambit_managed_settings_windows_m0.yml"},
+var scaPairs = []struct{ name, full, m0, bundle string }{
+	{"unix", "ambit_managed_settings.yml", "ambit_managed_settings_m0.yml", m0BundleFn},
+	{"windows", "ambit_managed_settings_windows.yml", "ambit_managed_settings_windows_m0.yml", m0BundleWindowsFn},
 }
 
 func TestM0PoliciesAreVerbatimSubsetsOfTheFullPolicies(t *testing.T) {
@@ -204,14 +206,13 @@ func TestM0PoliciesAreVerbatimSubsetsOfTheFullPolicies(t *testing.T) {
 }
 
 func TestFullPoliciesFailTheM0BundleOnlyWhereEnforcementIsAsserted(t *testing.T) {
-	bundle := loadBundle(t)
 	want := map[string][]int{
 		"unix":    {10002, 10003, 10004},
 		"windows": {10002},
 	}
 	for _, pair := range scaPairs {
 		t.Run(pair.name, func(t *testing.T) {
-			got := failingChecks(t, parseSCA(t, filepath.Join(scaDir, pair.full)), bundle)
+			got := failingChecks(t, parseSCA(t, filepath.Join(scaDir, pair.full)), loadBundle(t, pair.bundle))
 			if !equalInts(got, want[pair.name]) {
 				t.Errorf("the full %s policy fails checks %v on the M0 bundle, want %v.\n"+
 					"If the M0 bundle now carries enforcement keys, the M0 policies and docs/06 blocker 1 are out of date; "+
@@ -222,9 +223,9 @@ func TestFullPoliciesFailTheM0BundleOnlyWhereEnforcementIsAsserted(t *testing.T)
 }
 
 func TestM0PoliciesPassTheM0BundleAndDropNothingItCouldKeep(t *testing.T) {
-	bundle := loadBundle(t)
 	for _, pair := range scaPairs {
 		t.Run(pair.name, func(t *testing.T) {
+			bundle := loadBundle(t, pair.bundle)
 			full := parseSCA(t, filepath.Join(scaDir, pair.full))
 			m0 := parseSCA(t, filepath.Join(scaDir, pair.m0))
 

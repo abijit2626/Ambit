@@ -284,18 +284,6 @@ func TestPowerShellInstallerDisablesTheTaskBeforeReplacingTheBinary(t *testing.T
 	}
 }
 
-func TestInstallersDoNotSendAnOperatorLookingForSessionStart(t *testing.T) {
-	for _, path := range []string{psScript, shScript} {
-		text := read(t, path)
-		if strings.Contains(text, "gains a session_start") {
-			t.Errorf("%s tells the operator to look for a session_start line, but SessionStart never reached ambitd in the lab, so a healthy install would look broken", path)
-		}
-		if !strings.Contains(text, "prompt_submit") {
-			t.Errorf("%s does not name an event that does arrive (prompt_submit) as the post-install check", path)
-		}
-	}
-}
-
 func TestKeepAliveCheckAcceptsOnlyTheRightTask(t *testing.T) {
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {
