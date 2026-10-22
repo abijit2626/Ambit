@@ -211,6 +211,195 @@ func TestPowerShellInstallerKeepsTheTaskAlive(t *testing.T) {
 	}
 }
 
+func functionBody(t *testing.T, script, name string) string {
+	t.Helper()
+	start := strings.Index(script, "function "+name+" ")
+	if start < 0 {
+		start = strings.Index(script, "function "+name+"(")
+	}
+	if start < 0 {
+		t.Fatalf("install-system.ps1 has no function %s", name)
+	}
+	rest := script[start+len("function "):]
+	if end := strings.Index(rest, "\nfunction "); end >= 0 {
+		return rest[:end]
+	}
+	if end := strings.Index(rest, "\nif ($MyInvocation"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
+func TestPowerShellInstallerRegistersTheKeepAliveItself(t *testing.T) {
+	ps := read(t, psScript)
+	for _, want := range []string{
+		"New-ScheduledTaskTrigger -Once",
+		"-RepetitionInterval (New-TimeSpan -Minutes 1)",
+		"-MultipleInstances IgnoreNew",
+		"Get-KeepAliveProblem",
+		"Export-ScheduledTask",
+	} {
+		if !strings.Contains(ps, want) {
+			t.Errorf("install-system.ps1 does not contain %q: the task's restart-on-failure setting did not restart ambitd on a real machine, so the installer must register the repeating trigger that did", want)
+		}
+	}
+	register := functionBody(t, ps, "Register-AmbitdTask")
+	if !strings.Contains(register, "-AtStartup") || !strings.Contains(register, "-Once") {
+		t.Error("Register-AmbitdTask must register both the boot trigger and the repeating trigger")
+	}
+}
+
+func TestPowerShellInstallerDisablesTheTaskBeforeReplacingTheBinary(t *testing.T) {
+	ps := read(t, psScript)
+
+	stop := functionBody(t, ps, "Stop-Ambitd")
+	disable := strings.Index(stop, "Disable-ScheduledTask")
+	stopTask := strings.Index(stop, "Stop-ScheduledTask")
+	kill := strings.Index(stop, "Stop-Process")
+	if disable < 0 || stopTask < 0 || kill < 0 || !(disable < stopTask && stopTask < kill) {
+		t.Errorf("Stop-Ambitd must disable the task, then stop it, then stop the process (positions %d, %d, %d): with the repeating trigger in place, a running task is restarted within a minute and the binary copy fails", disable, stopTask, kill)
+	}
+	if !strings.Contains(stop, "Get-AmbitdProcess") || !strings.Contains(stop, "Start-Sleep") || !strings.Contains(stop, "Die ") {
+		t.Error("Stop-Ambitd must wait until the process has exited and fail if it has not, not only ask it to stop")
+	}
+	if !strings.Contains(functionBody(t, ps, "Get-AmbitdProcess"), "Get-Process") {
+		t.Error("Get-AmbitdProcess must look the process up with Get-Process")
+	}
+
+	install := functionBody(t, ps, "Invoke-Install")
+	stopAt := strings.Index(install, "Stop-Ambitd")
+	copyAt := strings.Index(install, "Copy-Item -LiteralPath $src")
+	if stopAt < 0 || copyAt < 0 || stopAt > copyAt {
+		t.Errorf("Invoke-Install must stop ambitd before it copies the new binary (positions %d, %d)", stopAt, copyAt)
+	}
+	if !strings.Contains(install, "Enable-ScheduledTask") {
+		t.Error("Invoke-Install must re-enable the previous task if the upgrade fails, or the endpoint stays unobserved")
+	}
+
+	uninstall := functionBody(t, ps, "Invoke-Uninstall")
+	stopAt = strings.Index(uninstall, "Stop-Ambitd")
+	unregister := strings.Index(uninstall, "Unregister-ScheduledTask")
+	if stopAt < 0 || unregister < 0 || stopAt > unregister {
+		t.Errorf("Invoke-Uninstall must stop ambitd before it unregisters the task (positions %d, %d)", stopAt, unregister)
+	}
+}
+
+func TestKeepAliveCheckAcceptsOnlyTheRightTask(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("pwsh not installed")
+	}
+	dir := t.TempDir()
+
+	task := func(boot, repeat, policy, enabled string) string {
+		return `<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>` + boot + repeat + `
+  </Triggers>
+  <Settings>` + policy + enabled + `
+  </Settings>
+</Task>`
+	}
+	const (
+		bootOK   = `<BootTrigger><Enabled>true</Enabled></BootTrigger>`
+		repeatOK = `<TimeTrigger><Repetition><Interval>PT1M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>2026-10-20T10:00:00</StartBoundary><Enabled>true</Enabled></TimeTrigger>`
+		policyOK = `<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`
+		enabled  = `<Enabled>true</Enabled>`
+	)
+	cases := []struct {
+		name, xml, problem string
+	}{
+		{"boot trigger plus one-minute repeat, IgnoreNew", task(bootOK, repeatOK, policyOK, enabled), ""},
+		{"the stock task, boot trigger only", task(bootOK, "", policyOK, enabled), "repeating"},
+		{"repeat every five minutes", task(bootOK, strings.Replace(repeatOK, "PT1M", "PT5M", 1), policyOK, enabled), "repeating"},
+		{"no boot trigger", task("", repeatOK, policyOK, enabled), "boot"},
+		{"parallel instances", task(bootOK, repeatOK, strings.Replace(policyOK, "IgnoreNew", "Parallel", 1), enabled), "MultipleInstances"},
+		{"policy missing", task(bootOK, repeatOK, "", enabled), "MultipleInstances"},
+		{"task disabled", task(bootOK, repeatOK, policyOK, `<Enabled>false</Enabled>`), "disabled"},
+		{"not XML", "this is not xml", "XML"},
+	}
+
+	env := append(os.Environ(),
+		"ProgramW6432="+dir, "ProgramFiles="+dir, "ProgramData="+dir, "SystemRoot="+dir)
+	script, err := filepath.Abs(psScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range cases {
+		xmlPath := filepath.Join(dir, "task"+string(rune('a'+i))+".xml")
+		if err := os.WriteFile(xmlPath, []byte(c.xml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command",
+			". '"+script+"'; Get-KeepAliveProblem ([System.IO.File]::ReadAllText('"+xmlPath+"'))")
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Errorf("%s: pwsh failed: %v\n%s", c.name, err, out)
+			continue
+		}
+		got := strings.TrimSpace(string(out))
+		switch {
+		case c.problem == "" && got != "":
+			t.Errorf("%s: the check rejected a correct task: %q", c.name, got)
+		case c.problem != "" && !strings.Contains(got, c.problem):
+			t.Errorf("%s: want a problem mentioning %q, got %q", c.name, c.problem, got)
+		}
+	}
+}
+
+func TestStopAmbitdReturnsOnceTheProcessHasExited(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("pwsh not installed")
+	}
+	dir := t.TempDir()
+	env := append(os.Environ(),
+		"ProgramW6432="+dir, "ProgramFiles="+dir, "ProgramData="+dir, "SystemRoot="+dir)
+	script, err := filepath.Abs(psScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubs := `
+$script:alive = $true
+function Get-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) [pscustomobject]@{ State = 'Running' } }
+function Disable-ScheduledTask { param($TaskName, $TaskPath) }
+function Stop-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) }
+function Start-Sleep { param($Milliseconds) }
+function Get-Process { param($Name, $ErrorAction) if ($script:alive) { [pscustomobject]@{ Path = $BinPath } } }
+`
+	cases := []struct {
+		name, afterKill, want string
+	}{
+		{"the process exits when killed", "$false", "stopped"},
+		{"the process never exits", "$true", "still running"},
+	}
+	for _, c := range cases {
+		cmd := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command",
+			". '"+script+"'"+stubs+
+				"function Stop-Process { [CmdletBinding()] param([Parameter(ValueFromPipeline)]$InputObject, [switch]$Force) process { $script:alive = "+c.afterKill+" } }\n"+
+				"try { Stop-Ambitd; 'stopped' } catch { $_.Exception.Message }")
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Errorf("%s: pwsh failed: %v\n%s", c.name, err, out)
+			continue
+		}
+		if got := strings.TrimSpace(string(out)); !strings.Contains(got, c.want) {
+			t.Errorf("%s: want %q, got %q; under Set-StrictMode an empty Get-AmbitdProcess result is $null and has no Count, which made the first live upgrade fail after the kill", c.name, c.want, got)
+		}
+	}
+}
+
+func TestPowerShellInstallerWrapsCommandResultsBeforeCount(t *testing.T) {
+	unwrapped := regexp.MustCompile(`(^|[^@])\(\s*[A-Z][a-z]+-[A-Za-z]+[^()]*\)\.Count\b`)
+	for i, line := range strings.Split(read(t, psScript), "\n") {
+		if unwrapped.MatchString(line) {
+			t.Errorf("%s:%d reads .Count on a bare command result: %s; wrap it in @() so zero or one result still has a Count under Set-StrictMode", psScript, i+1, strings.TrimSpace(line))
+		}
+	}
+}
+
 func TestPowerShellInstallerIsASCII(t *testing.T) {
 	for i, b := range []byte(read(t, psScript)) {
 		if b > 0x7f {
