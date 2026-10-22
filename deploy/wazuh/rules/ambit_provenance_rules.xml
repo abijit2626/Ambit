@@ -11,16 +11,32 @@
   prov_fp_notable, and the rules below are a tripwire on that scalar. The real detector is
   a scheduled job over the feature columns, not a rule, and it lands in M5.
 
-  Two limitations of the tripwire, both structural:
+  What the tripwire asserts, and what it does not:
 
-  - "Different session" is not expressible alongside "same fingerprint". same_field takes
-    one field name, and whether it composes with a negated session test is unverified. So
-    100281 also fires when one session ingests a fingerprint and later re-emits it, which
-    is ordinary behavior. The runbook's first triage step is therefore to check whether
-    the two events share a session_id.
-  - Direction is lost. D10 means "ingest in X, output in Y", and the rule sees two
-    occurrences of a value without ordering them. prov_fp_role carries the direction per
-    event, so the runbook can recover it; the rule cannot require it.
+  - 100281 means the same fingerprint was seen in two different sessions inside an hour.
+    "Different session" is expressed with not_same_field on session_id next to same_field on
+    prov_fp_notable. Both were accepted by wazuh-analysisd -t and behaved as intended under
+    wazuh-logtest on 4.14.8 (observed offline): one session repeating a fingerprint raises
+    nothing, a second session raising it does. The 3600s and 7200s windows themselves were
+    not exercised, because logtest replays instantly.
+  - 100282 counts 100281 alerts, not raw sightings. It fires on the fifth sighting across
+    sessions: by then 100281's conditions have matched four times counting that event, and
+    that event alerts as 100282. It cannot count 100280 events directly: once 100281 alerts
+    on an event, that event is no longer a 100280 match, so a rule counting 100280 would
+    never see it.
+  - Wazuh counts an event toward if_matched_sid only if that rule was the one that alerted on
+    it. An event that carries a fingerprint and also matches a higher-level rule (100302,
+    secret material in a network command, is the one measured) alerts as that rule and is
+    never counted here. D10 therefore undercounts exactly when something more serious already
+    alerted on the same event.
+  - Direction is lost. D10 means "ingest in X, output in Y", and the rule sees sightings of a
+    value without ordering them. ambitd emits prov_fp_role "ingest" only, so there is no
+    direction to recover from the event either.
+  - Repeats inside one session are suppressed at the source: ambitd emits prov_fp_notable
+    only the first time a session sees a fingerprint, so a session re-reading the same
+    content adds no further sightings. Its per-session memory is bounded, so a full set can
+    cause a repeat sighting but never a missed one, and it resets when ambitd restarts;
+    not_same_field is what covers that case.
 -->
 
 <group name="ambit,ambit_provenance,">
@@ -28,26 +44,17 @@
   <!-- ===================== D10 — propagation tripwire ===================== -->
 
   <!--
-    Base: an event carrying a notable fingerprint. Level 0 — this is most tool results
-    with a domain or an email address in them, which is ordinary. It exists to be
-    correlated.
+    Base: an event carrying a notable fingerprint. Level 1, not 0: if_matched_sid counts only
+    events whose final alert was exactly the named rule, and a level 0 match is not counted,
+    so at level 0 the two rules below could never fire (observed offline). Level 1 is below
+    Wazuh's default log alert level of 3, so these events are counted without alerting
+    (alert=no under logtest). A manager configured with a lower log_alert_level would write
+    each one out; that setting was not tested.
   -->
-  <rule id="100280" level="0">
+  <rule id="100280" level="1">
     <decoded_as>json</decoded_as>
     <field name="prov_fp_notable">\.+</field>
     <description>ambit: event carries a notable fingerprint ($(prov_fp_role))</description>
-    <group>ambit_d10,</group>
-  </rule>
-
-  <!--
-    The tripwire: the same high-specificity fingerprint seen twice within an hour. Read
-    the caveats in the file header before treating this as propagation — most hits will
-    be one session handling the same content twice.
-  -->
-  <rule id="100281" level="10" frequency="2" timeframe="3600" ignore="600">
-    <if_matched_sid>100280</if_matched_sid>
-    <same_field>prov_fp_notable</same_field>
-    <description>ambit D10: fingerprint $(prov_fp_notable) seen twice within 3600s - possible cross-agent propagation</description>
     <mitre>
       <id>T1105</id>
     </mitre>
@@ -55,14 +62,34 @@
   </rule>
 
   <!--
-    The same fingerprint across many events is a stronger signal than two, and cheap to
-    add: propagation between several agents produces more than one pair. Higher threshold,
-    higher level, same caveats.
+    The tripwire: the same high-specificity fingerprint seen in two different sessions within
+    an hour. Read the caveats in the file header before treating this as propagation: a shared
+    internal domain in two agents' tool results is what a company wiki looks like.
+
+    No ignore: ignore silences the rule for every fingerprint, not per same_field value, so
+    one fingerprint's alert would hide every other fingerprint's for its whole duration.
   -->
-  <rule id="100282" level="12" frequency="5" timeframe="7200" ignore="3600">
+  <rule id="100281" level="10" frequency="2" timeframe="3600">
     <if_matched_sid>100280</if_matched_sid>
     <same_field>prov_fp_notable</same_field>
-    <description>ambit D10: fingerprint $(prov_fp_notable) seen 5+ times within 7200s - propagation candidate across sessions</description>
+    <not_same_field>session_id</not_same_field>
+    <description>ambit D10: fingerprint $(prov_fp_notable) seen in two sessions within 3600s - possible cross-agent propagation</description>
+    <mitre>
+      <id>T1105</id>
+    </mitre>
+    <group>ambit_d10,runbook_D10,</group>
+  </rule>
+
+  <!--
+    The same fingerprint across several sessions is a stronger signal than two, and cheap to
+    add: propagation between several agents produces more than one pair. Higher level, same
+    caveats. It counts 100281 matches (see the file header for why it cannot count 100280): the
+    fourth within two hours, counting the current event, is the fifth sighting across sessions.
+  -->
+  <rule id="100282" level="12" frequency="4" timeframe="7200">
+    <if_matched_sid>100281</if_matched_sid>
+    <same_field>prov_fp_notable</same_field>
+    <description>ambit D10: fingerprint $(prov_fp_notable) seen 5+ times across sessions within 7200s - propagation candidate</description>
     <mitre>
       <id>T1105</id>
       <id>T1570</id>

@@ -627,17 +627,39 @@ timeframe — the shipped ruleset uses exactly this pattern (rule 80443:
 `aws.httpRequest.clientIp`). So a rule of this shape is expressible:
 
 ```xml
-<!-- D10 (partial): the same notable fingerprint seen twice, in different sessions. -->
-<rule id="100280" level="12" frequency="2" timeframe="3600" ignore="600">
-  <if_matched_sid>100279</if_matched_sid>
+<!-- D10 (partial): the same notable fingerprint seen in two different sessions. -->
+<rule id="100280" level="1">
+  <decoded_as>json</decoded_as>
+  <field name="prov_fp_notable">\.+</field>
+  <description>ambit: event carries a notable fingerprint ($(prov_fp_role))</description>
+</rule>
+
+<rule id="100281" level="10" frequency="2" timeframe="3600">
+  <if_matched_sid>100280</if_matched_sid>
   <same_field>prov_fp_notable</same_field>
-  <description>ambit D10: fingerprint $(prov_fp_notable) seen in two sessions - possible cross-agent propagation</description>
-  <mitre>
-    <id>T1105</id>
-  </mitre>
-  <group>ambit_d10,runbook_D10,</group>
+  <not_same_field>session_id</not_same_field>
+  <description>ambit D10: fingerprint $(prov_fp_notable) seen in two sessions within 3600s</description>
+</rule>
+
+<rule id="100282" level="12" frequency="4" timeframe="7200">
+  <if_matched_sid>100281</if_matched_sid>
+  <same_field>prov_fp_notable</same_field>
+  <description>ambit D10: fingerprint $(prov_fp_notable) seen 5+ times across sessions within 7200s</description>
 </rule>
 ```
+
+(The shipped rules in `ambit_provenance_rules.xml` also carry MITRE and runbook groups.) The
+first draft of this section used a single rule with `ignore`, and a parent that did not exist.
+Building it for real changed three things, each measured with `wazuh-logtest` on the 4.14.8
+image:
+
+- **The base rule cannot be level 0.** `if_matched_sid` counts only events whose final alert was
+  exactly the named rule, and a level 0 match is not counted, so 100281 never fired. At level 1
+  the events are counted and, being below the default log alert level of 3, not alerted.
+- **`ignore` is per rule, not per `same_field` value.** One fingerprint's alert silenced every
+  other fingerprint's for the whole window. It is not used.
+- **100282 counts 100281, not 100280.** Once 100281 alerts on an event, that event is no longer a
+  100280 match, so a rule counting 100280 never reaches five.
 
 Three limitations, and they are structural rather than tuning problems:
 
@@ -646,24 +668,31 @@ Three limitations, and they are structural rather than tuning problems:
    two sets intersect. Rule syntax cannot express that, and Wazuh's JSON decoder
    does not support an array of objects ([04](04-data-model.md)), so the sets cannot
    even be represented usefully in the event.
-2. **"Different session" is not expressible alongside "same fingerprint."**
-   `same_field` takes one field name. Whether `<same_field>prov_fp_notable</same_field>`
-   and `<different_field>session_id</different_field>` compose is **unverified** —
-   the docs describe each independently and the shipped ruleset does not use them
-   together. Without it, the rule also fires on one session that ingests and then
-   re-emits the same fingerprint, which is ordinary behavior, not propagation.
-3. **Direction is lost.** D10 means "ingest in X, output in Y." The rule sees two
-   occurrences of a value and cannot order them by role without separate parent
-   SIDs for ingest and output, which doubles the rule count and still does not fix
-   (1).
+2. **"Different session" alongside "same fingerprint" is expressible, with `not_same_field`.**
+   This was unverified when this section was first written. `<same_field>prov_fp_notable</same_field>`
+   with `<not_same_field>session_id</not_same_field>` was accepted by `wazuh-analysisd -t` and
+   behaved as intended under `wazuh-logtest` (observed offline): one session repeating a
+   fingerprint 12 times raised nothing; twelve sessions each seeing it raised 9 alerts as 100281
+   and 2 as 100282. The 3600 s and 7200 s windows were not exercised, because replay is instant
+   (untested). It also needs `ambitd` to send a fingerprint only once per session, or one
+   session's repeats keep alerting once any other session has seen it (measured: 20 alerts for
+   one session after another had seen it once).
+3. **Direction is lost.** D10 means "ingest in X, output in Y." The rule sees sightings of a
+   value and cannot order them by role. `ambitd` only fingerprints tool results, so
+   `prov_fp_role` is always `ingest` and carries no direction either.
+
+A fourth limit appeared in testing: a `tool_post` that carries a fingerprint and also matches a
+higher-level rule (100302, a secret in a network command, was measured) alerts as that rule and
+is never counted here.
 
 **Resolution.** Split it:
 
 - `ambitd` pre-selects, per event, at most one **notable fingerprint** — from the
   high-specificity classes only (domain, email, high-entropy token) — and emits it
-  as the scalar field `prov_fp_notable`, with `prov_fp_role` of `ingest` or `output`.
-  The Wazuh rule above then works as a cheap first-pass tripwire on high-value
-  fingerprints.
+  as the scalar field `prov_fp_notable`, with `prov_fp_role` of `ingest`, and only the
+  first time a session sees that fingerprint (the set of fingerprints sent is bounded per
+  session, `fp_notable_session_cap`, default 256). The Wazuh rules above then work as a
+  cheap first-pass tripwire on high-value fingerprints.
 - The **full set intersection stays out of the SIEM.** Cross-session set matching
   runs as a scheduled job over the indexer's feature columns, or locally over the
   spool. This is the honest version of D10 and it is not a rule.
