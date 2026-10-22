@@ -360,6 +360,58 @@ func TestKeepAliveCheckAcceptsOnlyTheRightTask(t *testing.T) {
 	}
 }
 
+func TestStopAmbitdReturnsOnceTheProcessHasExited(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("pwsh not installed")
+	}
+	dir := t.TempDir()
+	env := append(os.Environ(),
+		"ProgramW6432="+dir, "ProgramFiles="+dir, "ProgramData="+dir, "SystemRoot="+dir)
+	script, err := filepath.Abs(psScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubs := `
+$script:alive = $true
+function Get-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) [pscustomobject]@{ State = 'Running' } }
+function Disable-ScheduledTask { param($TaskName, $TaskPath) }
+function Stop-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) }
+function Start-Sleep { param($Milliseconds) }
+function Get-Process { param($Name, $ErrorAction) if ($script:alive) { [pscustomobject]@{ Path = $BinPath } } }
+`
+	cases := []struct {
+		name, afterKill, want string
+	}{
+		{"the process exits when killed", "$false", "stopped"},
+		{"the process never exits", "$true", "still running"},
+	}
+	for _, c := range cases {
+		cmd := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command",
+			". '"+script+"'"+stubs+
+				"function Stop-Process { [CmdletBinding()] param([Parameter(ValueFromPipeline)]$InputObject, [switch]$Force) process { $script:alive = "+c.afterKill+" } }\n"+
+				"try { Stop-Ambitd; 'stopped' } catch { $_.Exception.Message }")
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Errorf("%s: pwsh failed: %v\n%s", c.name, err, out)
+			continue
+		}
+		if got := strings.TrimSpace(string(out)); !strings.Contains(got, c.want) {
+			t.Errorf("%s: want %q, got %q; under Set-StrictMode an empty Get-AmbitdProcess result is $null and has no Count, which made the first live upgrade fail after the kill", c.name, c.want, got)
+		}
+	}
+}
+
+func TestPowerShellInstallerWrapsCommandResultsBeforeCount(t *testing.T) {
+	unwrapped := regexp.MustCompile(`(^|[^@])\(\s*[A-Z][a-z]+-[A-Za-z]+[^()]*\)\.Count\b`)
+	for i, line := range strings.Split(read(t, psScript), "\n") {
+		if unwrapped.MatchString(line) {
+			t.Errorf("%s:%d reads .Count on a bare command result: %s; wrap it in @() so zero or one result still has a Count under Set-StrictMode", psScript, i+1, strings.TrimSpace(line))
+		}
+	}
+}
+
 func TestPowerShellInstallerIsASCII(t *testing.T) {
 	for i, b := range []byte(read(t, psScript)) {
 		if b > 0x7f {
