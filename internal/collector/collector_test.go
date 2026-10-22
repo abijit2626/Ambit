@@ -657,7 +657,7 @@ func TestSessionEndDropsSessionStateAndStillReportsItsFinalBits(t *testing.T) {
 		t.Fatalf("Sessions = %d, want 1", c.Stats().Sessions)
 	}
 
-	c.Handle(&hook.Payload{HookEventName: hook.EvSessionEnd, SessionID: "s1", EndReason: "clear"})
+	c.Handle(&hook.Payload{HookEventName: hook.EvSessionEnd, SessionID: "s1", Reason: "clear"})
 	if c.Stats().Sessions != 0 {
 		t.Errorf("Sessions = %d after SessionEnd, want 0: the daemon would grow without bound", c.Stats().Sessions)
 	}
