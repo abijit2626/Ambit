@@ -243,7 +243,7 @@
     <mitre>
       <id>T1195.002</id>
     </mitre>
-    <group>ambit_d5,runbook_D5,</group>
+    <group>ambit_d5,ambit_d5_hidden,runbook_D5,</group>
   </rule>
 
   <rule id="100242" level="10">
@@ -310,16 +310,25 @@
     server's behavior, it is ours: somebody approved instruction-shaped metadata, or a
     scan rule was added after the approval. Routed to review rather than paged,
     because the action is an approval review or a rule retirement, not an incident.
+
+    This is a CHILD of 100241 on purpose. Wazuh alerts one rule per event and, among
+    siblings that match, takes the highest level, so a sibling at level 8 behind
+    100241 at level 10 could never win (observed with wazuh-logtest on 4.14.8: an
+    approved tool with hidden_instruction alerted as 100241 and 100247 never fired).
+    A matching child replaces its parent whatever the levels, which is what lets the
+    review finding stand in for the page. A negated mcp_baseline_state on 100241
+    would not do: a negated field that is absent from the event does not match, so
+    an event with no baseline state would stop alerting at all.
   -->
   <rule id="100247" level="8">
-    <if_sid>100230</if_sid>
+    <if_sid>100241</if_sid>
     <field name="mcp_baseline_state">^approved$</field>
     <field name="mcp_scan_classes">hidden_instruction</field>
     <description>ambit D5: instruction-shaped metadata on an APPROVED, unchanged MCP tool - $(tool_name); review the approval or retire the rule</description>
     <mitre>
       <id>T1195.002</id>
     </mitre>
-    <group>ambit_d5,runbook_D5,</group>
+    <group>ambit_d5,ambit_d5_hidden,runbook_D5,</group>
   </rule>
 
   <!--
@@ -328,7 +337,7 @@
     or its supply chain, rather than one bad entry.
   -->
   <rule id="100248" level="12" frequency="3" timeframe="300" ignore="600">
-    <if_matched_sid>100241</if_matched_sid>
+    <if_matched_group>ambit_d5_hidden</if_matched_group>
     <same_field>tool_mcp_server</same_field>
     <description>ambit D5: MCP server $(tool_mcp_server) advertises concealed instructions in 3+ tools within 300s</description>
     <mitre>
