@@ -1,0 +1,10 @@
+# Recorded with wazuh-logtest on the wazuh/wazuh-manager:4.14.8 image: one logtest process fed the
+# fixture of the same name, one event per line, and this is the id of the rule that alerted on each
+# (- when no rule matched). Correlation rules show up here too. If you change a rule, re-record this
+# file the same way; TestWinnerModelAgreesWithWazuh compares the Go model against it.
+100300
+100203
+100212
+100320
+100321
+100322
