@@ -160,7 +160,7 @@ Snake_case, scalar values only, no arrays of objects, no nesting beyond what a
   "prov_edge_confidence": 0.9,
   "prov_edge_from": "01JD...",
   "prov_fp_notable": "hmac:...",
-  "prov_fp_role": "output",
+  "prov_fp_role": "ingest",
 
   "r2_a": true,
   "r2_b": true,
@@ -259,7 +259,7 @@ any of:
 - `secret_hit_kinds` is non-empty
 - `bash_command_class` is `network`
 - `tool_mcp_destructive_hint` is true, or the MCP server is not `internal`
-- `prov_fp_notable` is present (D10's scalar tripwire)
+- `prov_fp_notable` is present (D10's scalar tripwire). Only a session's first sighting of a fingerprint carries it, so a repeat in the same session crosses only for another reason
 - it falls in a **sampled remainder**, at a low rate (start 0.5%), so the SIEM holds
   enough ordinary traffic to baseline against
 
