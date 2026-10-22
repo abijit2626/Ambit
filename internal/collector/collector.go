@@ -47,6 +47,15 @@ type sessionState struct {
 	prov *prov.Set
 
 	sens *prov.Set
+
+	fpSent *fpSet
+}
+
+// firstFingerprintSighting reports whether this session has not yet sent fp as its notable fingerprint.
+func (s *sessionState) firstFingerprintSighting(fp string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fpSent.add(fp)
 }
 
 type priorBits struct {
@@ -332,8 +341,10 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 		t.ResultBytes = len(resultText)
 		resultFeatures = c.ext.Extract(cleanResult)
 		t.InputFeatures.SecretHits = append(t.InputFeatures.SecretHits, toSecretHits(resultHits)...)
-		e.Provenance.FPNotable = features.NotableFingerprint(resultFeatures)
-		if e.Provenance.FPNotable != "" {
+		// only the first sighting in a session is sent: rule 100281 is "the same fingerprint in a
+		// different session", and a session repeating itself is not that
+		if fp := features.NotableFingerprint(resultFeatures); fp != "" && st.firstFingerprintSighting(fp) {
+			e.Provenance.FPNotable = fp
 			e.Provenance.FPRole = "ingest"
 		}
 	}
@@ -549,6 +560,7 @@ func (c *Collector) session(p *hook.Payload) *sessionState {
 			model:    p.Model,
 			permMode: p.PermissionMode,
 			prov:     prov.New(prov.Options{CommonDomains: c.webDomainTrust}),
+			fpSent:   newFPSet(c.cfg.FPNotableSessionCap),
 
 			sens: prov.New(prov.Options{CommonDomains: c.webDomainTrust, Exclude: map[string]bool{prov.ClassDomain: true}}),
 		}

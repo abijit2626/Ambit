@@ -638,17 +638,41 @@ Open problems:
   event. 100261 was driven with a synthetic `policy_decision` of `fail_open`, since nothing emits
   it yet. Times were not varied: logtest replays instantly, so the 300 s windows were not tested
   (untested). The fixtures are `deploy/wazuh/fixtures/g-*.jsonl`, the recorded results `g-*.alerts`.
-- **Three correlation rules still carry `ignore` (100271, 100281, 100282).** 100281 and 100282
-  never fired in the recorded run: their parent 100280 is level 0, and level-0 matches are not
-  counted by `if_matched_sid` (observed offline). Making 100280 level 1 made 100281 fire, but then
-  on nearly every repeat of a fingerprint, and 100282 never fired because 100281 replaces the
-  events it counts (observed offline). That needs a redesign, not a deletion. 100271's parent is
-  Wazuh's own SCA rule 19007, which was not replayed (untested).
+- **One correlation rule still carries `ignore` (100271).** Its parent is Wazuh's own SCA rule
+  19007, which cannot be replayed offline, so the effect of removing it was not measured
+  (untested).
+- **D10's two rules fire now (observed offline, wazuh-logtest 4.14.8).** On main they were dead:
+  their parent 100280 was level 0, and level-0 matches are not counted by `if_matched_sid`.
+  With 100280 at level 1, 100281 fired on nearly every repeat of a fingerprint and 100282 never
+  fired, because 100281's alert replaces the events 100282 would count. The fix: 100281 now
+  requires the same fingerprint in a *different* session (`not_same_field` on `session_id`),
+  and 100282 counts 100281's matches, so it fires on the fifth sighting across sessions. No
+  `ignore` on either. Eight scenarios, one logtest process each (`deploy/wazuh/fixtures/g-d10.*`):
+  one session repeating a fingerprint 12 times raised nothing; twelve sessions each seeing it
+  raised 9 alerts as 100281 and 2 as 100282; two fingerprints each seen in two sessions raised one
+  alert each; three sessions seeing three different fingerprints raised none. Windows were not
+  exercised: logtest replays instantly, so the 3600 s and 7200 s expiry is untested.
+- **ambitd sends a notable fingerprint once per session (unit-tested; not run against a live
+  manager).** Without it, a session that sees a fingerprint another session saw once keeps
+  alerting: one session, then a second seeing it 20 times, gave 20 alerts (15 as 100281, 5 as
+  100282) from two sessions (observed offline). Each session remembers up to
+  `fp_notable_session_cap` fingerprints (default 256) and forgets the oldest first, which can
+  cost a repeat alert and not a missed one; ambitd's memory resets on restart. The local spool
+  loses the repeats' `prov_fp_notable` too. If the events sink fails to write the first
+  sighting, later repeats from that session are not resent (read from code; sink failure
+  untested).
+- **A fingerprint on an event that also matches a higher-level rule is not counted (observed
+  offline, constructed event).** A `tool_post` of a network `curl` carrying a secret alerts as
+  100302, and its fingerprint never reaches 100281. D10 undercounts exactly when something more
+  serious already alerted on the same event. Only 100302 was tried.
+- **The lab manager runs none of this.** Whether 100280 stays silent depends on the manager's
+  `log_alert_level`; at the default of 3 it does under logtest, and the live setting was not
+  checked (untested).
 - **Array matching works in the case tried (observed).** 100241, an unanchored literal,
   matched an event whose `mcp_scan_classes` is a two-element array. Only the first element,
   and one class at a time, were tried.
-- **Fixture coverage is partial (observed).** Of 43 lines, 33 produced an alert, 3 matched a
-  level-0 rule and 7 matched no rule. Rules 100203, 100204, 100210, 100211, 100212, 100221,
+- **Fixture coverage is partial (observed).** Of 43 lines, 34 produced an alert, 1 matched a
+  level-0 rule, 1 matched 100280 (level 1, counted and not alerted) and 7 matched no rule. Rules 100203, 100204, 100210, 100211, 100212, 100221,
   100242 to 100245 and 100247 among others did not fire on any line. That is not a failure
   of those rules: the fixtures do not exercise them.
 - **The hook response exceeded its latency budget (observed).** `ambitd` logged two lines

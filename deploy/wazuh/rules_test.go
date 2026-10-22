@@ -60,6 +60,7 @@ type rule struct {
 	IfMatchedSI string  `xml:"if_matched_sid"`
 	IfMatchedGr string  `xml:"if_matched_group"`
 	SameField   string  `xml:"same_field"`
+	NotSameFld  string  `xml:"not_same_field"`
 	Description string  `xml:"description"`
 	Groups      string  `xml:"group"`
 	Fields      []field `xml:"field"`
