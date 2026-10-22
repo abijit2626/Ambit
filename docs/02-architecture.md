@@ -108,9 +108,9 @@ per event.
 | Event | Use | Can block? |
 | --- | --- | --- |
 | `PreToolUse` | The enforcement point. Gets `tool_name`, `tool_input`, `tool_use_id`. Returns `permissionDecision`: `allow` / `deny` / `block`. | **Yes** |
-| `PostToolUse` | The observation point. Adds `tool_result` — where untrusted content enters and provenance ingest is recorded. | No |
-| `PostToolUseFailure` | Same, with `tool_error`. Blocked-attempt signal. | No |
-| `UserPromptSubmit` | Captures `user_input` — the declared objective goal-drift scoring measures against. | Yes |
+| `PostToolUse` | The observation point. Adds `tool_response` — where untrusted content enters and provenance ingest is recorded. | No |
+| `PostToolUseFailure` | Same, with `error`. Blocked-attempt signal. | No |
+| `UserPromptSubmit` | Captures `prompt` — the declared objective goal-drift scoring measures against. | Yes |
 | `PermissionRequest` | Fires when a call needs a permission decision; returns `decision`. | No (use `decision`) |
 | `PermissionDenied` | Fires when auto mode denies a call. Attack-attempt signal. | No |
 | `SessionStart` | Session provenance: `cwd`, `model`, `source`. The payload has no `permission_mode` (observed on v2.1.278), and Claude Code delivers this event only to a `command` hook, so the bundle runs `ambitd hook-forward` for it. | No |
