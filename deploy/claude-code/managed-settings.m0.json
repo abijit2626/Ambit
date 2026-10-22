@@ -58,7 +58,17 @@
       "pipeline behaves exactly as it would with no hook installed.",
       "",
       "An empty response is NOT the same as returning allow. Returning allow",
-      "would suppress the permission prompt a developer would otherwise see."
+      "would suppress the permission prompt a developer would otherwise see.",
+      "",
+      "SessionStart is the one event registered as a command, not http. Claude",
+      "Code v2.1.278 fires it but does not deliver it to an http hook (observed on",
+      "Windows: the same event reached a command hook and never an http one).",
+      "`ambitd hook-forward` reads the payload on stdin, posts it unchanged to",
+      "ambitd, prints nothing (a SessionStart hook's stdout becomes model",
+      "context) and always exits 0. The binary is named by absolute path, where",
+      "the system installer puts it, because a managed hook must not depend on",
+      "whose PATH Claude Code was started with. There is one bundle per OS family",
+      "for that reason; they differ only in that command."
     ],
 
     "PreToolUse": [
@@ -83,7 +93,7 @@
     ],
     "SessionStart": [
       { "matcher": ".*", "hooks": [
-        { "type": "http", "url": "http://127.0.0.1:7777/hook" } ] }
+        { "type": "command", "command": "/usr/local/bin/ambitd hook-forward" } ] }
     ],
     "SessionEnd": [
       { "matcher": ".*", "hooks": [

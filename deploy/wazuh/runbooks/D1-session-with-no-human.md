@@ -18,6 +18,13 @@ then did.
 | 100203 | 12 | Secret material in a tool call from such a session |
 | 100204 | 12 | Non-interactive entrypoint — **inert, see below** |
 
+**100200 cannot fire on a live endpoint (inferred).** It needs `permission_mode` to be
+`bypassPermissions` on a `session_start`, and the `SessionStart` payload Claude Code sends
+has no such key (observed: `cwd`, `hook_event_name`, `model`, `scratchpad_dir`, `session_id`,
+`source`, `transcript_path`). The `session_start` event does arrive through the bundle's
+command hook, with an empty mode. 100201 to 100203 read the mode from tool events and are
+unaffected.
+
 ## What this alert asserts
 
 - `permission_mode` was `bypassPermissions` for the session the event belongs to. This
