@@ -89,7 +89,7 @@ function Stop-Ambitd {
     }
     Get-AmbitdProcess | Stop-Process -Force -ErrorAction SilentlyContinue
     for ($i = 0; $i -lt 40; $i++) {
-        if ((Get-AmbitdProcess).Count -eq 0) { return }
+        if (@(Get-AmbitdProcess).Count -eq 0) { return }
         Start-Sleep -Milliseconds 250
     }
     Die 'ambitd is still running 10 seconds after it was stopped, so its binary cannot be replaced'
