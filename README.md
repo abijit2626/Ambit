@@ -568,9 +568,13 @@ Open problems:
   sessions (inferred from the code path; no missed alert was observed). The collector now
   reads the real names and still accepts the old ones. Its tests are built from the recorded
   key sets (`internal/hook/testdata/claude-code-2.1.278-shapes.txt`), and replaying the corpus
-  with the real names failed 14 of 26 scenarios on the old code. Untested: `PermissionRequest`,
-  `PermissionDenied` and `ConfigChange` were not triggered, so `config_source` and
-  `change_type` are still unverified names.
+  with the real names failed 14 of 26 scenarios on the old code. Live check (2026-10-22, one
+  Windows machine): with a build that has the fix installed, a real session recorded its two
+  prompts at 31 and 88 bytes, as typed, and found a marker word in their stored text; a Bash
+  call's tool output was counted at 30 bytes, larger than the 19 bytes the command printed
+  (the difference is unexplained). Before the fix the same fields were 0. Untested:
+  `PermissionRequest`, `PermissionDenied` and `ConfigChange` were not triggered, so
+  `config_source` and `change_type` are still unverified names.
 
 ## Non-goals
 
