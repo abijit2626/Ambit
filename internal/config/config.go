@@ -58,6 +58,10 @@ type Config struct {
 
 	DriftThreshold float64 `json:"drift_threshold"`
 
+	// FPNotableSessionCap bounds how many notable fingerprints each session remembers having sent;
+	// a session sends prov_fp_notable only the first time it sees a fingerprint. See internal/collector/fpseen.go.
+	FPNotableSessionCap int `json:"fp_notable_session_cap"`
+
 	HealthInterval time.Duration `json:"-"`
 	HealthSeconds  int           `json:"health_seconds"`
 
@@ -69,20 +73,21 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		HookAddr:           "127.0.0.1:7777",
-		EventsPath:         defaultPath("events.jsonl"),
-		TrajectoryPath:     defaultPath("trajectory.jsonl"),
-		EventsMaxBytes:     64 << 20,
-		EventsMaxFiles:     8,
-		TrajectoryMaxBytes: 256 << 20,
-		TrajectoryMaxFiles: 16,
-		BaselineDir:        defaultBaselineDir(runtime.GOOS, os.UserHomeDir),
-		FingerprintKeyPath: defaultPath("fingerprint.key"),
-		SampleRate:         0.005,
-		DriftThreshold:     0.7,
-		HealthSeconds:      60,
-		LatencyBudgetMS:    5,
-		Enforce:            false,
+		HookAddr:            "127.0.0.1:7777",
+		EventsPath:          defaultPath("events.jsonl"),
+		TrajectoryPath:      defaultPath("trajectory.jsonl"),
+		EventsMaxBytes:      64 << 20,
+		EventsMaxFiles:      8,
+		TrajectoryMaxBytes:  256 << 20,
+		TrajectoryMaxFiles:  16,
+		BaselineDir:         defaultBaselineDir(runtime.GOOS, os.UserHomeDir),
+		FingerprintKeyPath:  defaultPath("fingerprint.key"),
+		SampleRate:          0.005,
+		DriftThreshold:      0.7,
+		FPNotableSessionCap: 256,
+		HealthSeconds:       60,
+		LatencyBudgetMS:     5,
+		Enforce:             false,
 	}
 }
 
@@ -166,6 +171,9 @@ func (c *Config) Validate() error {
 	}
 	if c.SampleRate < 0 || c.SampleRate > 1 {
 		return fmt.Errorf("config: sample_rate %v out of range [0,1]", c.SampleRate)
+	}
+	if c.FPNotableSessionCap < 1 {
+		return fmt.Errorf("config: fp_notable_session_cap %d must be at least 1; a session that remembers nothing would resend every repeat", c.FPNotableSessionCap)
 	}
 	if c.HealthSeconds <= 0 {
 		return errors.New("config: health_seconds must be positive; the heartbeat is D7's fine half")
