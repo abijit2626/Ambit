@@ -22,6 +22,7 @@ $Trajectory = Join-Path $AmbitDir 'trajectory.jsonl'
 $Bin        = Join-Path $AmbitDir 'ambitd.exe'
 $Backup     = "$ClaudeSettings.ambit-backup"
 $HookUrl    = "http://127.0.0.1:$HookPort/hook"
+$ForwardCmd = '"' + $Bin.Replace('\', '/') + '" hook-forward -addr 127.0.0.1:' + $HookPort
 
 function Write-Bold($text) { Write-Host $text -ForegroundColor White }
 function Write-Warn($text) { Write-Host $text -ForegroundColor Yellow }
@@ -310,16 +311,35 @@ foreach ($ev in $hookEvents) {
     if ($hooks.Contains($ev) -and $null -ne $hooks[$ev]) {
         foreach ($e in @($hooks[$ev])) { [void]$existing.Add($e) }
     }
+    # Claude Code does not deliver SessionStart to an http hook, so that one event is a command
+    # that hands the payload to ambitd. An http entry an earlier run added for it never worked
+    # and is dropped, so a re-run leaves one working hook rather than a dead one beside it.
+    $wantCommand = $ev -eq 'SessionStart'
+    if ($wantCommand) {
+        $kept = New-Object System.Collections.ArrayList
+        foreach ($e in $existing) {
+            $ours = $false
+            if ($e -is [System.Collections.IDictionary] -and $e.Contains('hooks')) {
+                $inner = @($e['hooks'])
+                if ($inner.Count -gt 0 -and @($inner | Where-Object { $_ -is [System.Collections.IDictionary] -and $_['url'] -eq $HookUrl }).Count -eq $inner.Count) { $ours = $true }
+            }
+            if (-not $ours) { [void]$kept.Add($e) }
+        }
+        $existing = $kept
+    }
     $already = $false
     foreach ($e in $existing) {
         if ($e -is [System.Collections.IDictionary] -and $e.Contains('hooks')) {
             foreach ($h in @($e['hooks'])) {
-                if ($h -is [System.Collections.IDictionary] -and $h['url'] -eq $HookUrl) { $already = $true }
+                if ($h -isnot [System.Collections.IDictionary]) { continue }
+                if ($wantCommand) { if ($h['command'] -eq $ForwardCmd) { $already = $true } }
+                elseif ($h['url'] -eq $HookUrl) { $already = $true }
             }
         }
     }
     if (-not $already) {
-        $entry = [ordered]@{ type = 'http'; url = $HookUrl }
+        if ($wantCommand) { $entry = [ordered]@{ type = 'command'; command = $ForwardCmd } }
+        else { $entry = [ordered]@{ type = 'http'; url = $HookUrl } }
         if ($noMatcher -contains $ev) {
             $block = [ordered]@{ hooks = @($entry) }
         } else {

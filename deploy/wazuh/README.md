@@ -97,16 +97,36 @@ go test ./deploy/wazuh/
 # 2. On the manager, with the real rule engine.
 sudo cp rules/ambit_*.xml /var/ossec/etc/rules/
 sudo systemctl restart wazuh-manager
+n=0
 while read -r line; do
-  echo "$line" | /var/ossec/bin/wazuh-logtest -q
+  n=$((n + 1))
+  echo "$line" | /var/ossec/bin/wazuh-logtest 2>&1 | awk -v n="$n" '
+    /^[[:space:]]+name: /  { d = $2 }
+    /^\*\*Phase 3/         { p3 = 1 }
+    p3 && /^[[:space:]]+id: /    { id = $2 }
+    p3 && /^[[:space:]]+level: / { lv = $2 }
+    END { gsub(/\047/, "", d); gsub(/\047/, "", id); gsub(/\047/, "", lv)
+          printf "line %d decoder=%s rule=%s level=%s\n", n, (d ? d : "none"), (id ? id : "none"), (lv ? lv : "-") }'
 done < fixtures/events.sample.jsonl
 ```
 
-Expect, from the 22 fixture lines: rule 100231 on the summaries, 100232 on a new tool,
+That prints one line per fixture line: the decoder that matched, the rule that fired and its
+level. `rule=none` means no rule matched; `level=0` means a level-0 rule matched, which raises
+no alert. **Do not use `wazuh-logtest -q` for this.** On Wazuh 4.14.8 it prints nothing about
+the match, and without `-q` the result goes to stderr, hence `2>&1`; a loop that uses `-q` looks
+like a fleet where nothing fires. Run against the committed fixtures in a container of the
+4.14.8 manager image, the loop printed `decoder=json` on all 43 lines, 33 lines with a rule above
+level 0, 3 with a level-0 rule and 7 with no rule; running those fixtures through `wazuh-logtest`
+by hand on the lab manager gave the same tally. It is a figure to compare with, not a pass mark:
+regenerate the fixtures and it changes. This loop has not itself been run on a lab manager.
+
+Expect, among the fixture lines: rule 100231 on the summaries, 100232 on a new tool,
 100234 on each drifted tool, 100236 on the destructive one, 100237 on the mid-session
 one, 100239 on the unavailable one, 100241–100245 on the scanned classes, 100246 on the
 tool that drifted into concealed instructions, and **no D5 rule at all** on the
-findings-free drift.
+findings-free drift. On the current fixtures, only 100241 and 100246 of the D5 rules appeared in
+the container run; 100242–100245 and 100247 have no fixture line that reaches them, so their
+absence from the loop's output says nothing about whether array matching works.
 
 **Three things to confirm on a live manager**, all of which fail silently rather than
 erroring, and all of which the runbooks tell an analyst to suspect if a rule has never
@@ -240,10 +260,7 @@ over-wide event is the manager **dropping** it, which is silent detection loss.
 /var/ossec/bin/wazuh-logtest -v
 # paste one line from fixtures/events.sample.jsonl
 
-# Or non-interactively:
-while read -r line; do
-  echo "$line" | /var/ossec/bin/wazuh-logtest -q
-done < fixtures/events.sample.jsonl
+# Or non-interactively: run the loop under "Verify the D4/D5 rules" above.
 ```
 
 What to check in the output:

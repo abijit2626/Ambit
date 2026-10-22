@@ -19,11 +19,17 @@ $DataDir  = Join-Path $env:ProgramData 'ambit'
 $Config   = Join-Path $DataDir 'config.json'
 $LogPath  = Join-Path $DataDir 'ambitd.log'
 $Managed  = Join-Path $ProgramFiles 'ClaudeCode\managed-settings.json'
-$Bundle   = Join-Path $Root 'deploy\claude-code\managed-settings.m0.json'
+$Bundle   = Join-Path $Root 'deploy\claude-code\managed-settings.m0.windows.json'
 $TaskName = 'ambitd'
 $TaskPath = '\ambit\'
 $Icacls   = Join-Path $env:SystemRoot 'System32\icacls.exe'
 $Cmd      = Join-Path $env:SystemRoot 'System32\cmd.exe'
+
+# SHA-256 of the one bundle earlier versions of this installer shipped, which registered
+# SessionStart as an http hook. Claude Code does not deliver that event to an http hook, so a
+# file with exactly this content is ours and safe to upgrade; anything else may be an
+# organization's own policy and is left alone.
+$EarlierBundles = @('44FCCFC3CEC5E1B35C32C51D7A676CA9214EB15B3FE3099CD5298F2A28A56ED5')
 
 $SidSystem = 'S-1-5-18'
 $SidAdmins = 'S-1-5-32-544'
@@ -77,14 +83,43 @@ function Wait-Healthy {
     return $false
 }
 
+function Get-AmbitdProcess {
+    return @(Get-Process -Name ambitd -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $BinPath })
+}
+
 function Stop-Ambitd {
     $t = Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
     if ($null -ne $t) {
+        Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null
         Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
     }
-    Get-Process -Name ambitd -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -eq $BinPath } |
-        Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-AmbitdProcess | Stop-Process -Force -ErrorAction SilentlyContinue
+    for ($i = 0; $i -lt 40; $i++) {
+        if (@(Get-AmbitdProcess).Count -eq 0) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    Die 'ambitd is still running 10 seconds after it was stopped, so its binary cannot be replaced'
+}
+
+function Get-KeepAliveProblem([string]$TaskXml) {
+    $doc = New-Object System.Xml.XmlDocument
+    try { $doc.LoadXml($TaskXml) } catch { return 'the task definition is not readable XML' }
+    if ($doc.SelectNodes('//*[local-name()=''BootTrigger'']').Count -lt 1) {
+        return 'no boot trigger'
+    }
+    $intervals = @($doc.SelectNodes('//*[local-name()=''TimeTrigger'']/*[local-name()=''Repetition'']/*[local-name()=''Interval'']'))
+    if (@($intervals | Where-Object { $_.InnerText -eq 'PT1M' }).Count -lt 1) {
+        return 'no one-minute repeating trigger, so a killed ambitd is not brought back'
+    }
+    $policy = $doc.SelectSingleNode('//*[local-name()=''Settings'']/*[local-name()=''MultipleInstancesPolicy'']')
+    if ($null -eq $policy -or $policy.InnerText -ne 'IgnoreNew') {
+        return 'MultipleInstances is not IgnoreNew, so an overlapping start could run two daemons'
+    }
+    $enabled = $doc.SelectSingleNode('//*[local-name()=''Settings'']/*[local-name()=''Enabled'']')
+    if ($null -ne $enabled -and $enabled.InnerText -eq 'false') {
+        return 'the task is disabled'
+    }
+    return ''
 }
 
 function New-DataDir {
@@ -103,14 +138,31 @@ function New-DataDir {
 function Register-AmbitdTask {
     $arg = '/d /c ""' + $BinPath + '" -config "' + $Config + '" >> "' + $LogPath + '" 2>&1"'
     $action    = New-ScheduledTaskAction -Execute $Cmd -Argument $arg
-    $trigger   = New-ScheduledTaskTrigger -AtStartup
+    $startup   = New-ScheduledTaskTrigger -AtStartup
     $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
     $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
         -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
         -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -MultipleInstances IgnoreNew
-    Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Action $action `
-        -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+
+    $registered = $false
+    $lastError = ''
+    foreach ($span in @([TimeSpan]::MaxValue, (New-TimeSpan -Days 3650))) {
+        try {
+            $repeat = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1)) `
+                -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration $span
+            Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Action $action `
+                -Trigger @($startup, $repeat) -Principal $principal -Settings $settings -Force | Out-Null
+            $registered = $true
+            break
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+    }
+    if (-not $registered) { Die ('could not register the task with a one-minute repeating trigger: ' + $lastError) }
+
+    $problem = Get-KeepAliveProblem ([string](Export-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath))
+    if ($problem) { Die ('the registered task has no working keep-alive: ' + $problem) }
     Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
 }
 
@@ -118,10 +170,39 @@ function Test-SameFile([string]$a, [string]$b) {
     return (Get-FileHash -LiteralPath $a).Hash -eq (Get-FileHash -LiteralPath $b).Hash
 }
 
+function Test-EarlierBundle([string]$path) {
+    return $EarlierBundles -contains (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+}
+
+# The bundle's SessionStart command names the installed binary by absolute path. If this machine
+# keeps Program Files somewhere else, Claude Code would run a path that does not exist and
+# SessionStart would go quietly missing, so refuse before anything is changed.
+function Get-BundleProblem {
+    $want = '"' + $BinPath.Replace('\', '/') + '" hook-forward'
+    $got = ''
+    try {
+        $j = [System.IO.File]::ReadAllText($Bundle) | ConvertFrom-Json
+        $got = [string]$j.hooks.SessionStart[0].hooks[0].command
+    } catch {
+        return 'the bundle is unreadable or has no SessionStart command hook'
+    }
+    if ($got -cne $want) {
+        return ('the bundle runs [' + $got + '] for SessionStart, but ambitd installs to ' + $BinPath + ', so it would have to run [' + $want + ']')
+    }
+    return ''
+}
+
 function Install-ManagedSettings {
     if (Test-Path -LiteralPath $Managed) {
         if (Test-SameFile $Bundle $Managed) {
             Say "managed settings already match the M0 bundle: $Managed"
+            return
+        }
+        if (Test-EarlierBundle $Managed) {
+            $staged = $Managed + '.new'
+            Copy-Item -LiteralPath $Bundle -Destination $staged -Force
+            Move-Item -LiteralPath $staged -Destination $Managed -Force
+            Say "upgraded managed settings from the earlier ambit bundle (SessionStart over http, which Claude Code does not deliver): $Managed"
             return
         }
         Die ("managed settings already exist at $Managed and differ from the M0 bundle. " +
@@ -136,7 +217,7 @@ function Install-ManagedSettings {
 
 function Remove-ManagedSettings {
     if (-not (Test-Path -LiteralPath $Managed)) { return }
-    if (Test-SameFile $Bundle $Managed) {
+    if ((Test-SameFile $Bundle $Managed) -or (Test-EarlierBundle $Managed)) {
         Remove-Item -LiteralPath $Managed -Force
         Say "removed managed settings: $Managed"
     } else {
@@ -149,6 +230,8 @@ function Invoke-Install {
     if (-not $Binary) { Die '-Binary is required: the ambitd.exe built for this CPU (make cross writes bin\ambitd-windows-<arch>.exe)' }
     if (-not (Test-Path -LiteralPath $Binary)) { Die "no such file: $Binary" }
     if (-not (Test-Path -LiteralPath $Bundle)) { Die "missing $Bundle; run this from a checkout of the repository" }
+    $bundleProblem = Get-BundleProblem
+    if ($bundleProblem) { Die $bundleProblem }
     $src = (Resolve-Path -LiteralPath $Binary).Path
 
     $ver = ''
@@ -162,9 +245,20 @@ function Invoke-Install {
     }
 
     New-DataDir
-    Stop-Ambitd
-    New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-    Copy-Item -LiteralPath $src -Destination $BinPath -Force
+    $hadTask = (Get-TaskState) -ne 'not registered'
+    try {
+        Stop-Ambitd
+        New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+        Copy-Item -LiteralPath $src -Destination $BinPath -Force
+    } catch {
+        $why = $_.Exception.Message
+        if ($hadTask) {
+            Enable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue | Out-Null
+            Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
+            Say 'the upgrade failed; the previous task was re-enabled so the endpoint is not left unobserved'
+        }
+        Die ('upgrade failed: ' + $why)
+    }
     Say "installed $BinPath ($ver)"
 
     Register-AmbitdTask
@@ -174,7 +268,8 @@ function Invoke-Install {
     Say "task running, health endpoint answers on $(Get-HookUrl)"
 
     Install-ManagedSettings
-    Say "done. Data: $DataDir. Start a Claude Code session and check that events.jsonl there gains a session_start line."
+    Say "done. Data: $DataDir. Start a Claude Code session and send one prompt: events.jsonl there should gain a session_start line and a prompt_submit line."
+    Say 'session_start arrives through the hook-forward command hook (README, Known limitations); if only prompt_submit appears, run the hook command from the managed settings by hand.'
 }
 
 function Invoke-Uninstall {
@@ -196,18 +291,26 @@ function Invoke-Uninstall {
 
 function Show-Status {
     Write-Host ("task:             " + (Get-TaskState))
+    if ((Get-TaskState) -ne 'not registered') {
+        $p = Get-KeepAliveProblem ([string](Export-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath))
+        if ($p) { Write-Host ("keep-alive:       NOT in place: " + $p) }
+        else { Write-Host 'keep-alive:       ok (boot trigger, one-minute repeat, IgnoreNew)' }
+    }
     if (Test-Healthy) { Write-Host ("health endpoint:  answers on " + (Get-HookUrl)) }
     else { Write-Host ("health endpoint:  no answer on " + (Get-HookUrl)) }
     if (Test-Path -LiteralPath $BinPath) { Write-Host "binary:           $BinPath" }
     else { Write-Host 'binary:           not installed' }
     if (Test-Path -LiteralPath $Managed) {
         if (Test-SameFile $Bundle $Managed) { Write-Host "managed settings: the M0 bundle ($Managed)" }
+        elseif (Test-EarlierBundle $Managed) { Write-Host "managed settings: an earlier ambit bundle whose SessionStart hook is not delivered; run the installer again to upgrade ($Managed)" }
         else { Write-Host "managed settings: present, not the M0 bundle ($Managed)" }
     } else {
         Write-Host 'managed settings: absent'
     }
     Write-Host "data:             $DataDir"
 }
+
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 if ($Purge -and -not $Uninstall) { Die '-Purge only goes with -Uninstall' }
 if ($Status) { Show-Status }
