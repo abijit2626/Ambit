@@ -113,7 +113,7 @@ per event.
 | `UserPromptSubmit` | Captures `prompt` — the declared objective goal-drift scoring measures against. | Yes |
 | `PermissionRequest` | Fires when a call needs a permission decision; returns `decision`. | No (use `decision`) |
 | `PermissionDenied` | Fires when auto mode denies a call. Attack-attempt signal. | No |
-| `SessionStart` | Session provenance: `permission_mode`, `cwd`, `model`. | No |
+| `SessionStart` | Session provenance: `cwd`, `model`, `source`. The payload has no `permission_mode` (observed on v2.1.278), and Claude Code delivers this event only to a `command` hook, so the bundle runs `ambitd hook-forward` for it. | No |
 | `InstructionsLoaded` | Fires when a `CLAUDE.md` or `.claude/rules/*.md` loads, with `file_path` and `load_reason`. **A poisoned `CLAUDE.md` in a cloned repo is an injection vector and this is the only event that reports it.** | No |
 | `ConfigChange` | Settings changed mid-session, with `config_source`. | No |
 | `FileChanged` | Watched file changed on disk. | No |
