@@ -19,11 +19,17 @@ $DataDir  = Join-Path $env:ProgramData 'ambit'
 $Config   = Join-Path $DataDir 'config.json'
 $LogPath  = Join-Path $DataDir 'ambitd.log'
 $Managed  = Join-Path $ProgramFiles 'ClaudeCode\managed-settings.json'
-$Bundle   = Join-Path $Root 'deploy\claude-code\managed-settings.m0.json'
+$Bundle   = Join-Path $Root 'deploy\claude-code\managed-settings.m0.windows.json'
 $TaskName = 'ambitd'
 $TaskPath = '\ambit\'
 $Icacls   = Join-Path $env:SystemRoot 'System32\icacls.exe'
 $Cmd      = Join-Path $env:SystemRoot 'System32\cmd.exe'
+
+# SHA-256 of the one bundle earlier versions of this installer shipped, which registered
+# SessionStart as an http hook. Claude Code does not deliver that event to an http hook, so a
+# file with exactly this content is ours and safe to upgrade; anything else may be an
+# organization's own policy and is left alone.
+$EarlierBundles = @('44FCCFC3CEC5E1B35C32C51D7A676CA9214EB15B3FE3099CD5298F2A28A56ED5')
 
 $SidSystem = 'S-1-5-18'
 $SidAdmins = 'S-1-5-32-544'
@@ -164,10 +170,39 @@ function Test-SameFile([string]$a, [string]$b) {
     return (Get-FileHash -LiteralPath $a).Hash -eq (Get-FileHash -LiteralPath $b).Hash
 }
 
+function Test-EarlierBundle([string]$path) {
+    return $EarlierBundles -contains (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+}
+
+# The bundle's SessionStart command names the installed binary by absolute path. If this machine
+# keeps Program Files somewhere else, Claude Code would run a path that does not exist and
+# SessionStart would go quietly missing, so refuse before anything is changed.
+function Get-BundleProblem {
+    $want = '"' + $BinPath.Replace('\', '/') + '" hook-forward'
+    $got = ''
+    try {
+        $j = [System.IO.File]::ReadAllText($Bundle) | ConvertFrom-Json
+        $got = [string]$j.hooks.SessionStart[0].hooks[0].command
+    } catch {
+        return 'the bundle is unreadable or has no SessionStart command hook'
+    }
+    if ($got -cne $want) {
+        return ('the bundle runs [' + $got + '] for SessionStart, but ambitd installs to ' + $BinPath + ', so it would have to run [' + $want + ']')
+    }
+    return ''
+}
+
 function Install-ManagedSettings {
     if (Test-Path -LiteralPath $Managed) {
         if (Test-SameFile $Bundle $Managed) {
             Say "managed settings already match the M0 bundle: $Managed"
+            return
+        }
+        if (Test-EarlierBundle $Managed) {
+            $staged = $Managed + '.new'
+            Copy-Item -LiteralPath $Bundle -Destination $staged -Force
+            Move-Item -LiteralPath $staged -Destination $Managed -Force
+            Say "upgraded managed settings from the earlier ambit bundle (SessionStart over http, which Claude Code does not deliver): $Managed"
             return
         }
         Die ("managed settings already exist at $Managed and differ from the M0 bundle. " +
@@ -182,7 +217,7 @@ function Install-ManagedSettings {
 
 function Remove-ManagedSettings {
     if (-not (Test-Path -LiteralPath $Managed)) { return }
-    if (Test-SameFile $Bundle $Managed) {
+    if ((Test-SameFile $Bundle $Managed) -or (Test-EarlierBundle $Managed)) {
         Remove-Item -LiteralPath $Managed -Force
         Say "removed managed settings: $Managed"
     } else {
@@ -195,6 +230,8 @@ function Invoke-Install {
     if (-not $Binary) { Die '-Binary is required: the ambitd.exe built for this CPU (make cross writes bin\ambitd-windows-<arch>.exe)' }
     if (-not (Test-Path -LiteralPath $Binary)) { Die "no such file: $Binary" }
     if (-not (Test-Path -LiteralPath $Bundle)) { Die "missing $Bundle; run this from a checkout of the repository" }
+    $bundleProblem = Get-BundleProblem
+    if ($bundleProblem) { Die $bundleProblem }
     $src = (Resolve-Path -LiteralPath $Binary).Path
 
     $ver = ''
@@ -231,8 +268,8 @@ function Invoke-Install {
     Say "task running, health endpoint answers on $(Get-HookUrl)"
 
     Install-ManagedSettings
-    Say "done. Data: $DataDir. Start a Claude Code session and send one prompt: events.jsonl there should gain a prompt_submit line."
-    Say 'A session_start line is not expected: that event does not reach ambitd over the http hook (README, Known limitations).'
+    Say "done. Data: $DataDir. Start a Claude Code session and send one prompt: events.jsonl there should gain a session_start line and a prompt_submit line."
+    Say 'session_start arrives through the hook-forward command hook (README, Known limitations); if only prompt_submit appears, run the hook command from the managed settings by hand.'
 }
 
 function Invoke-Uninstall {
@@ -265,6 +302,7 @@ function Show-Status {
     else { Write-Host 'binary:           not installed' }
     if (Test-Path -LiteralPath $Managed) {
         if (Test-SameFile $Bundle $Managed) { Write-Host "managed settings: the M0 bundle ($Managed)" }
+        elseif (Test-EarlierBundle $Managed) { Write-Host "managed settings: an earlier ambit bundle whose SessionStart hook is not delivered; run the installer again to upgrade ($Managed)" }
         else { Write-Host "managed settings: present, not the M0 bundle ($Managed)" }
     } else {
         Write-Host 'managed settings: absent'
