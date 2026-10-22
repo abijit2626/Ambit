@@ -177,6 +177,25 @@ func shellLibrary(t *testing.T) string {
 	return path
 }
 
+// shellEnv is the environment for a bash that sources install-system.sh as a library. The script
+// refuses any OS but Linux and macOS at its first line, and Git Bash on a Windows runner answers
+// MINGW64_NT-..., so a uname that says Linux goes first on the PATH: the functions under test
+// (the bundle choice, the hash check, the install and remove steps) do not depend on the OS. Paths
+// are passed with forward slashes, which both Git Bash and a Unix shell read.
+func shellEnv(t *testing.T, kv ...string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "uname"), []byte("#!/bin/sh\necho Linux\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, e := range kv {
+		k, v, _ := strings.Cut(e, "=")
+		env = append(env, k+"="+filepath.ToSlash(v))
+	}
+	return env
+}
+
 func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not installed")
@@ -226,7 +245,7 @@ func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 			}
 			script := `. "$LIB"; BUNDLE="$NEWBUNDLE"; MANAGED="$MANAGED_PATH"; install_managed_settings`
 			cmd := exec.Command("bash", "-c", script)
-			cmd.Env = append(os.Environ(), "LIB="+lib, "NEWBUNDLE="+newBundle, "MANAGED_PATH="+managed)
+			cmd.Env = shellEnv(t, "LIB="+lib, "NEWBUNDLE="+newBundle, "MANAGED_PATH="+managed)
 			out, err := cmd.CombinedOutput()
 			if c.wantErr != (err != nil) {
 				t.Fatalf("error = %v, want error %v\n%s", err, c.wantErr, out)
@@ -255,7 +274,7 @@ func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("bash", "-c", `. "$LIB"; BUNDLE="$NEWBUNDLE"; MANAGED="$MANAGED_PATH"; remove_managed_settings`)
-			cmd.Env = append(os.Environ(), "LIB="+lib, "NEWBUNDLE="+newBundle, "MANAGED_PATH="+p)
+			cmd.Env = shellEnv(t, "LIB="+lib, "NEWBUNDLE="+newBundle, "MANAGED_PATH="+p)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("%s: %v\n%s", name, err, out)
 			}
@@ -274,7 +293,7 @@ func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 		}
 		for name, path := range map[string]string{"wrong": wrong, "right": newBundle} {
 			cmd := exec.Command("bash", "-c", `. "$LIB"; BUNDLE="$B"; bundle_problem`)
-			cmd.Env = append(os.Environ(), "LIB="+lib, "B="+path)
+			cmd.Env = shellEnv(t, "LIB="+lib, "B="+path)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("%s: %v\n%s", name, err, out)
