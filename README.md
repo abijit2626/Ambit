@@ -629,9 +629,21 @@ Open problems:
 - **`ignore` on 100211 silenced every other session's sweep (observed offline; removed).**
   After one session's sweep fired, a second session's sweep matched and raised no alert:
   `ignore` is per rule, not per `same_field` value. Without it, 100211 still fires once per
-  eight fresh reads, not on every read. Eleven other correlation rules use `ignore`
-  (100221, 100240, 100248, 100252, 100261, 100271, 100281, 100282, 100292, 100301, 100312)
-  and probably blind each other the same way (inferred; untested).
+  eight fresh reads, not on every read.
+- **Eight more correlation rules had the same `ignore`; removed (observed offline, wazuh-logtest
+  4.14.8).** Two keys each sent the rule's threshold of events: with `ignore`, the second key's
+  match was recorded as the rule with `alert=no` for 100221, 100301, 100252, 100292, 100240,
+  100248, 100312 and 100261; without it both keys alerted. One key sent four times the threshold
+  alerted four times (once per threshold), so removing `ignore` does not give one alert per
+  event. 100261 was driven with a synthetic `policy_decision` of `fail_open`, since nothing emits
+  it yet. Times were not varied: logtest replays instantly, so the 300 s windows were not tested
+  (untested). The fixtures are `deploy/wazuh/fixtures/g-*.jsonl`, the recorded results `g-*.alerts`.
+- **Three correlation rules still carry `ignore` (100271, 100281, 100282).** 100281 and 100282
+  never fired in the recorded run: their parent 100280 is level 0, and level-0 matches are not
+  counted by `if_matched_sid` (observed offline). Making 100280 level 1 made 100281 fire, but then
+  on nearly every repeat of a fingerprint, and 100282 never fired because 100281 replaces the
+  events it counts (observed offline). That needs a redesign, not a deletion. 100271's parent is
+  Wazuh's own SCA rule 19007, which was not replayed (untested).
 - **Array matching works in the case tried (observed).** 100241, an unanchored literal,
   matched an event whose `mcp_scan_classes` is a two-element array. Only the first element,
   and one class at a time, were tried.

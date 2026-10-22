@@ -44,7 +44,7 @@
     A burst of outbound commands from one session. Not a volume profile — that needs a
     baseline — but a rate that is hard to produce by hand and easy to produce in a loop.
   -->
-  <rule id="100301" level="12" frequency="10" timeframe="300" ignore="600">
+  <rule id="100301" level="12" frequency="10" timeframe="300">
     <if_matched_sid>100300</if_matched_sid>
     <same_field>session_id</same_field>
     <description>ambit D9: 10+ network-capable commands in one session within 300s</description>

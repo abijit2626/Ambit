@@ -236,7 +236,7 @@
     Repeated denials in one session is probing: something is trying actions until one is
     allowed. This is the shape that distinguishes an attack from a developer clicking no.
   -->
-  <rule id="100221" level="13" frequency="5" timeframe="300" ignore="600">
+  <rule id="100221" level="13" frequency="5" timeframe="300">
     <if_matched_sid>100220</if_matched_sid>
     <same_field>session_id</same_field>
     <description>ambit D3: 5+ denied tool calls in one session within 300s - probing for an allowed path</description>
