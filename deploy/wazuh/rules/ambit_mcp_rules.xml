@@ -214,7 +214,7 @@
     unrelated drifts across the fleet. The threshold is a placeholder to be set from
     M1 data: a server that renames its tools in a major release will trip it legitimately.
   -->
-  <rule id="100240" level="12" frequency="3" timeframe="300" ignore="600">
+  <rule id="100240" level="12" frequency="3" timeframe="300">
     <if_matched_sid>100234</if_matched_sid>
     <same_field>tool_mcp_server</same_field>
     <description>ambit D4: MCP server $(tool_mcp_server) changed 3+ approved tool descriptions within 300s - surface-wide drift</description>
@@ -336,7 +336,7 @@
     description is one tool; a pattern across the surface suggests the server itself,
     or its supply chain, rather than one bad entry.
   -->
-  <rule id="100248" level="12" frequency="3" timeframe="300" ignore="600">
+  <rule id="100248" level="12" frequency="3" timeframe="300">
     <if_matched_group>ambit_d5_hidden</if_matched_group>
     <same_field>tool_mcp_server</same_field>
     <description>ambit D5: MCP server $(tool_mcp_server) advertises concealed instructions in 3+ tools within 300s</description>

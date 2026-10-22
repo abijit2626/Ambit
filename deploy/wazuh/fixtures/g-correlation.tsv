@@ -1,0 +1,11 @@
+rule	key_field	threshold	two_first	two_last	flood_first	flood_last	source
+100221	session_id	5	1	10	1	20	ambitd
+100301	session_id	10	11	30	21	60	ambitd
+100252	session_id	3	31	36	61	72	ambitd
+100292	session_id	3	37	42	73	84	ambitd
+100240	tool_mcp_server	3	43	48	85	96	ambitd
+100248	tool_mcp_server	3	49	54	97	108	ambitd
+100312	endpoint_id	3	55	60	109	120	ambitd
+100281	prov_fp_notable	2	61	64	121	128	ambitd
+100282	prov_fp_notable	5	65	74	129	148	ambitd
+100261	endpoint_id	5	75	84	149	168	synthetic

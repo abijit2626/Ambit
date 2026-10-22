@@ -141,7 +141,7 @@
     working in a repo nobody has added to the trusted list; a handful in minutes is a
     session pulling in instructions from everywhere it can reach.
   -->
-  <rule id="100292" level="12" frequency="3" timeframe="600" ignore="600">
+  <rule id="100292" level="12" frequency="3" timeframe="600">
     <if_matched_sid>100290</if_matched_sid>
     <same_field>session_id</same_field>
     <description>ambit D8: 3+ untrusted instruction files loaded in one session within 600s</description>
