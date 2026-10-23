@@ -248,6 +248,7 @@ Filtering happens in `ambitd`, by event kind:
 | `compact` | **yes** | Low volume; needed to interpret R2 state ([03](03-detection.md#layer-1--rule-of-two-accounting)) |
 | `ambitd_health` | **yes** | D7, D11 |
 | `goal_drift_score` | **only above threshold** | One score per tool call is the firehose again |
+| `fp_sighting` | **yes** (SIEM only, not the spool) | D10. ambitd's own event: a session's first sighting of a notable fingerprint, one per session and fingerprint. Carries identity, session, `tool_name`, `tool_use_id` (the `tool_post` it came from), `prov_fp_notable` and `prov_fp_role`, and nothing a tool, policy, edge or taint rule keys on, so only rule 100280 can match it. Rebuildable from the spool as the first `tool_post` per session carrying that fingerprint |
 
 A `tool_pre` or `tool_post` event is **interesting** — and therefore crosses — when
 any of:
@@ -259,9 +260,10 @@ any of:
 - `secret_hit_kinds` is non-empty
 - `bash_command_class` is `network`
 - `tool_mcp_destructive_hint` is true, or the MCP server is not `internal`
-- `prov_fp_notable` is present (D10's scalar tripwire). Only a session's first sighting of a fingerprint carries it, so a repeat in the same session crosses only for another reason
 - it falls in a **sampled remainder**, at a low rate (start 0.5%), so the SIEM holds
   enough ordinary traffic to baseline against
+
+A tool event carrying `prov_fp_notable` no longer crosses for that alone: the fingerprint crosses as the `fp_sighting` event above, once per session and fingerprint, and the tool event keeps it for context when it crosses for another reason.
 
 Everything else — the overwhelming majority: reading source files in the working
 directory, ordinary edits, allowed local commands — stays in the local spool.
