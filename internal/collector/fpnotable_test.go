@@ -5,114 +5,180 @@ import (
 	"testing"
 
 	"github.com/abijit2626/ambit/internal/config"
+	"github.com/abijit2626/ambit/internal/event"
+	"github.com/abijit2626/ambit/internal/filter"
+	"github.com/abijit2626/ambit/internal/hook"
 )
 
 // A result with one email address in it: the email is the event's notable fingerprint.
 func resultWith(addr string) string { return "contact " + addr + " for access" }
 
-func fpOf(t *testing.T, s *memSink, i int) (fp, role string) {
+// siemLines decodes what reached the SIEM sink, optionally only one kind.
+func siemLines(t *testing.T, s *memSink, kind event.Kind) []map[string]any {
 	t.Helper()
-	e := richEvent(t, s, i)
-	return e.Provenance.FPNotable, e.Provenance.FPRole
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []map[string]any
+	for i, raw := range s.lines {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("decode SIEM line %d: %v", i, err)
+		}
+		if kind == "" || m["kind"] == string(kind) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
-func TestSessionSendsAFingerprintOnlyTheFirstTime(t *testing.T) {
+func sightingFPs(t *testing.T, s *memSink) []string {
+	t.Helper()
+	var fps []string
+	for _, m := range siemLines(t, s, event.KindFPSighting) {
+		fp, _ := m["prov_fp_notable"].(string)
+		fps = append(fps, fp)
+	}
+	return fps
+}
+
+// The tool event keeps its fingerprint on every sighting, so the spool has the full record.
+func TestToolEventCarriesItsFingerprintEveryTime(t *testing.T) {
 	c, _, traj := newTestCollector(t)
 	for i := 0; i < 5; i++ {
 		c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test")))
 	}
-	first, role := fpOf(t, traj, 0)
-	if first == "" || role != "ingest" {
-		t.Fatalf("first sighting carries fp %q role %q, want a fingerprint and role ingest", first, role)
+	if traj.count() != 5 {
+		t.Fatalf("spool holds %d lines, want 5: the fp_sighting event must not be written to the spool", traj.count())
 	}
-	for i := 1; i < 5; i++ {
-		if fp, role := fpOf(t, traj, i); fp != "" || role != "" {
-			t.Errorf("repeat %d in the same session carries fp %q role %q, want neither", i, fp, role)
+	first := richEvent(t, traj, 0).Provenance.FPNotable
+	if first == "" {
+		t.Fatal("the tool event carries no fingerprint")
+	}
+	for i := 0; i < 5; i++ {
+		e := richEvent(t, traj, i)
+		if e.Kind != event.KindToolPost || e.Provenance.FPNotable != first || e.Provenance.FPRole != "ingest" {
+			t.Errorf("spool line %d: kind %s fp %q role %q, want tool_post %q ingest", i, e.Kind, e.Provenance.FPNotable, e.Provenance.FPRole, first)
 		}
+	}
+}
+
+func TestOnlyASessionsFirstSightingProducesAnFPSighting(t *testing.T) {
+	c, events, traj := newTestCollector(t)
+	for i := 0; i < 5; i++ {
+		c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test")))
+	}
+	got := siemLines(t, events, event.KindFPSighting)
+	if len(got) != 1 {
+		t.Fatalf("%d fp_sighting events reached the SIEM, want 1", len(got))
+	}
+	s, post := got[0], richEvent(t, traj, 0)
+	if s["prov_fp_notable"] != post.Provenance.FPNotable || s["prov_fp_role"] != "ingest" {
+		t.Errorf("sighting carries fp %v role %v, want the tool event's %q and ingest", s["prov_fp_notable"], s["prov_fp_role"], post.Provenance.FPNotable)
+	}
+	if s["session_id"] != "s1" || s["src"] != string(event.SourceAmbitd) || s["tool_name"] != "WebFetch" {
+		t.Errorf("sighting session %v src %v tool %v, want s1, ambitd, WebFetch", s["session_id"], s["src"], s["tool_name"])
 	}
 }
 
 // 100281 is the same fingerprint in a different session, so each session's first sighting must go out.
-func TestEverySessionSendsItsOwnFirstSighting(t *testing.T) {
-	c, _, traj := newTestCollector(t)
+func TestEverySessionSendsItsOwnSighting(t *testing.T) {
+	c, events, _ := newTestCollector(t)
 	for _, sid := range []string{"s1", "s2", "s3"} {
 		c.Handle(fetchPost(sid, pageURL, resultWith("a@evil.test")))
 	}
-	var want string
-	for i := 0; i < 3; i++ {
-		fp, _ := fpOf(t, traj, i)
-		if fp == "" {
-			t.Fatalf("session %d sent no fingerprint: another session's sighting must not suppress it", i+1)
-		}
-		if want == "" {
-			want = fp
-		}
-		if fp != want {
-			t.Errorf("session %d sent %q, want the same digest %q for the same content", i+1, fp, want)
+	got := siemLines(t, events, event.KindFPSighting)
+	if len(got) != 3 {
+		t.Fatalf("%d sightings, want one per session", len(got))
+	}
+	for i, sid := range []string{"s1", "s2", "s3"} {
+		if got[i]["session_id"] != sid || got[i]["prov_fp_notable"] != got[0]["prov_fp_notable"] {
+			t.Errorf("sighting %d: session %v fp %v, want %s and the same digest for the same content", i, got[i]["session_id"], got[i]["prov_fp_notable"], sid)
 		}
 	}
 }
 
-func TestDifferentFingerprintsInOneSessionAreEachSent(t *testing.T) {
-	c, _, traj := newTestCollector(t)
-	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test")))
-	c.Handle(fetchPost("s1", pageURL, resultWith("b@evil.test")))
-	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test")))
-	fa, _ := fpOf(t, traj, 0)
-	fb, _ := fpOf(t, traj, 1)
-	fa2, _ := fpOf(t, traj, 2)
-	if fa == "" || fb == "" || fa == fb {
-		t.Fatalf("want two different fingerprints, got %q and %q", fa, fb)
-	}
-	if fa2 != "" {
-		t.Errorf("a's second sighting carries %q; b in between must not make a new again", fa2)
-	}
-}
-
-// With a full set the oldest fingerprint is forgotten, so it is sent again: a repeat, never a miss.
-func TestFullSetResendsTheOldestAndNeverDropsANewFingerprint(t *testing.T) {
-	c, _, traj := newTestCollectorWith(t, func(cfg *config.Config) { cfg.FPNotableSessionCap = 2 })
-	for _, addr := range []string{"a@evil.test", "b@evil.test", "c@evil.test"} { // c evicts a
+func TestDifferentFingerprintsInOneSessionEachGetASighting(t *testing.T) {
+	c, events, _ := newTestCollector(t)
+	for _, addr := range []string{"a@evil.test", "b@evil.test", "a@evil.test"} {
 		c.Handle(fetchPost("s1", pageURL, resultWith(addr)))
 	}
-	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test"))) // evicted: sent again, evicts b
-	c.Handle(fetchPost("s1", pageURL, resultWith("c@evil.test"))) // still remembered
-	for i, wantSent := range []bool{true, true, true, true, false} {
-		fp, _ := fpOf(t, traj, i)
-		if (fp != "") != wantSent {
-			t.Errorf("event %d: sent=%v, want %v", i, fp != "", wantSent)
+	fps := sightingFPs(t, events)
+	if len(fps) != 2 || fps[0] == fps[1] {
+		t.Errorf("sightings %q, want two different fingerprints: a, then b, and not a again", fps)
+	}
+}
+
+// With a full set the oldest fingerprint is forgotten, so it is sighted again: a repeat, never a miss.
+func TestFullSetResightsTheOldestAndNeverDropsANewFingerprint(t *testing.T) {
+	c, events, traj := newTestCollectorWith(t, func(cfg *config.Config) { cfg.FPNotableSessionCap = 2 })
+	addrs := []string{"a@evil.test", "b@evil.test", "c@evil.test", "a@evil.test", "c@evil.test"}
+	for _, addr := range addrs { // c evicts a; a returns and evicts b; c is still remembered
+		c.Handle(fetchPost("s1", pageURL, resultWith(addr)))
+	}
+	fp := func(i int) string { return richEvent(t, traj, i).Provenance.FPNotable }
+	want := []string{fp(0), fp(1), fp(2), fp(3)}
+	got := sightingFPs(t, events)
+	if len(got) != len(want) {
+		t.Fatalf("sightings %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("sighting %d = %q, want %q", i, got[i], want[i])
 		}
 	}
 }
 
-func TestForgetClearsWhatASessionHasSent(t *testing.T) {
-	c, _, traj := newTestCollector(t)
+func TestForgetClearsWhatASessionHasSighted(t *testing.T) {
+	c, events, _ := newTestCollector(t)
 	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test")))
 	c.Forget("s1")
 	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test")))
-	if fp, _ := fpOf(t, traj, 1); fp == "" {
-		t.Error("a session reusing an id after Forget was treated as having sent the fingerprint already")
+	if n := len(sightingFPs(t, events)); n != 2 {
+		t.Errorf("%d sightings, want 2: a session id reused after Forget starts with nothing sighted", n)
 	}
 }
 
-// What reaches the SIEM: the first sighting, carrying the fingerprint, and nothing for the repeats. Before
-// this change every repeat crossed as a notable fingerprint.
-func TestRepeatSightingsDoNotReachTheSIEM(t *testing.T) {
-	c, events, _ := newTestCollector(t)
+// The reason fp_sighting exists: a curl whose result holds a secret alerts as 100302 on the tool_post,
+// and Wazuh counts only the rule that won. The sighting must carry nothing 100302, or any rule keyed on
+// tool, policy, edge or taint fields, could match.
+func TestSightingCarriesNoFieldAnotherRuleKeysOn(t *testing.T) {
+	c, events, traj := newTestCollector(t)
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPostToolUse,
+		SessionID:     "s1",
+		CWD:           "/home/dev/src/myrepo",
+		ToolName:      "Bash",
+		ToolUseID:     "t_curl",
+		ToolInput:     map[string]any{"command": "curl https://collect.evil.test/keys"},
+		ToolResult:    "aws_access_key_id = AKIAQWERTYUIOPASDFGH\nowner admin@evil.test",
+	})
+	post := last(t, traj)
+	if post.Tool == nil || post.Tool.Bash == nil || post.Tool.InputFeatures == nil || len(post.Tool.InputFeatures.SecretHits) == 0 || post.Provenance.FPNotable == "" {
+		t.Fatalf("precondition: the tool_post must be a network command with a secret hit and a fingerprint, got %+v", post.Tool)
+	}
+	got := siemLines(t, events, event.KindFPSighting)
+	if len(got) != 1 {
+		t.Fatalf("%d sightings, want 1", len(got))
+	}
+	s := got[0]
+	if s["tool_use_id"] != "t_curl" {
+		t.Errorf("sighting tool_use_id = %v, want t_curl so the tool event can be found", s["tool_use_id"])
+	}
+	for _, f := range []string{"bash_command_class", "bash_argv0", "secret_hit_kinds", "path_zone", "tool_mcp_server",
+		"policy_decision", "policy_shadow", "prov_edge_count", "taint_labels", "result_bytes"} {
+		if v, ok := s[f]; ok {
+			t.Errorf("sighting carries %s = %v; a rule keyed on it could win the event and D10 would not count it", f, v)
+		}
+	}
+}
+
+// Repeats no longer cross for their fingerprint; only the sighting does.
+func TestOnlyTheSightingCrossesAsANotableFingerprint(t *testing.T) {
+	c, _, _ := newTestCollector(t)
 	for i := 0; i < 5; i++ {
 		c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test")))
 	}
-	if events.count() != 1 {
-		t.Fatalf("%d events reached the SIEM sink, want 1: the first sighting only", events.count())
-	}
-	var line map[string]any
-	events.mu.Lock()
-	err := json.Unmarshal(events.lines[0], &line)
-	events.mu.Unlock()
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if line["prov_fp_notable"] == nil || line["prov_fp_role"] != "ingest" {
-		t.Errorf("the event that crossed carries prov_fp_notable=%v prov_fp_role=%v, want a fingerprint and ingest", line["prov_fp_notable"], line["prov_fp_role"])
+	if got := c.Stats().CrossReasons[filter.ReasonNotableFP]; got != 1 {
+		t.Errorf("%d events crossed as %s, want 1: the fp_sighting", got, filter.ReasonNotableFP)
 	}
 }

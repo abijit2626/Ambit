@@ -34,6 +34,18 @@ func TestOrdinaryToolCallDoesNotCross(t *testing.T) {
 	}
 }
 
+// The fingerprint rides on the tool event every time it is seen; only the fp_sighting event, one per
+// session and fingerprint, crosses for it.
+func TestToolEventDoesNotCrossForItsFingerprintAlone(t *testing.T) {
+	v := testFilter().Decide(toolEvent(func(e *event.Event) {
+		e.Kind = event.KindToolPost
+		e.Provenance.FPNotable = "hmac:f"
+	}))
+	if v.Cross {
+		t.Errorf("a tool_post carrying only a fingerprint crossed (%s); repeats would reach the SIEM again", v.Reason)
+	}
+}
+
 func TestInterestingCriteria(t *testing.T) {
 	yes := true
 	cases := []struct {
@@ -48,7 +60,11 @@ func TestInterestingCriteria(t *testing.T) {
 			e.Provenance.Edges = []event.Edge{{MatchClass: "domain", Confidence: 0.9}}
 		}, ReasonProvEdge},
 		{"r2 transition", func(e *event.Event) { e.R2.Transition = true }, ReasonR2Transition},
-		{"notable fingerprint", func(e *event.Event) { e.Provenance.FPNotable = "hmac:f" }, ReasonNotableFP},
+		{"fingerprint sighting", func(e *event.Event) {
+			e.Kind = event.KindFPSighting
+			e.Tool = nil
+			e.Provenance.FPNotable = "hmac:f"
+		}, ReasonNotableFP},
 		{"credential zone", func(e *event.Event) {
 			e.Tool.Paths = []event.PathRef{{Zone: event.ZoneCredential, Op: "read"}}
 		}, ReasonSevereZone},

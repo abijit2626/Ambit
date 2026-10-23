@@ -59,7 +59,7 @@ type Config struct {
 	DriftThreshold float64 `json:"drift_threshold"`
 
 	// FPNotableSessionCap bounds how many notable fingerprints each session remembers having sent;
-	// a session sends prov_fp_notable only the first time it sees a fingerprint. See internal/collector/fpseen.go.
+	// a session sends an fp_sighting event only the first time it sees a fingerprint. See internal/collector/fpseen.go.
 	FPNotableSessionCap int `json:"fp_notable_session_cap"`
 
 	HealthInterval time.Duration `json:"-"`
