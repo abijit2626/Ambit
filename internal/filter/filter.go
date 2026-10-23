@@ -85,6 +85,10 @@ func (f *Filter) Decide(e *event.Event) Verdict {
 		return Verdict{false, ReasonNotInteresting}
 	case event.KindToolPre, event.KindToolPost:
 		return f.decideTool(e)
+	case event.KindFPSighting:
+		// D10 counts these; ambitd emits one per session and fingerprint, so this is not a firehose.
+		// A tool event carrying a fingerprint no longer crosses for that alone.
+		return Verdict{true, ReasonNotableFP}
 	case event.KindMCPList:
 		return f.decideMCPList(e)
 	}
@@ -132,9 +136,6 @@ func (f *Filter) decideTool(e *event.Event) Verdict {
 
 	if e.R2.Transition {
 		return Verdict{true, ReasonR2Transition}
-	}
-	if e.Provenance.FPNotable != "" {
-		return Verdict{true, ReasonNotableFP}
 	}
 
 	if t := e.Tool; t != nil {
