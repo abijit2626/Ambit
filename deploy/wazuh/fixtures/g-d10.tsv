@@ -6,4 +6,5 @@ a-x20-then-b-once	46	66	session A 20 times, then session B once (ambitd without 
 emit-once-a-then-b	67	68	what ambitd emits for the two scenarios above with emit-once: A once, B once
 two-fingerprints	69	72	two fingerprints, each seen in sessions A then B: each must alert on its own
 unrelated-fingerprints	73	75	three sessions, each sees a different fingerprint: same_field must keep these apart
-collision-100302-alternate	76	87	12 sessions; the even-numbered events also match 100302
+collision-100302-alternate	76	99	12 sessions, each a tool_post then its fp_sighting; the even-numbered tool_posts also match 100302
+tool-post-only	100	111	12 sessions whose ambitd puts the fingerprint only on the tool_post (older builds): D10 does not count these

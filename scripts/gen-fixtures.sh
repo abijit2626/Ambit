@@ -172,7 +172,7 @@ pick '"kind":"permission_denied"'
 pick '"kind":"permission_request"'
 pick '"kind":"config_change"'
 pick '"kind":"file_changed"'
-pick '"prov_fp_notable"'
+pickre '"kind":"tool_post".*"prov_fp_notable"'
 pick '"prov_edge_count"'
 pick '"policy_decision":"deny"'
 pick '"policy_decision":"ask"'
@@ -217,5 +217,8 @@ cat >> "$OUT" <<'SYNTHETIC'
 {"schema_v":2,"ts":"2026-09-27T11:51:00.000Z","kind":"sink_gap","dropped_events":142,"note":"sink queue full; events were dropped and are not recoverable"}
 {"schema_v":2,"event_id":"01JSYNTH2","ts":"2026-09-27T11:51:00.100Z","src":"ambitd","kind":"ambitd_health","endpoint_id":"ep_7f3a1c","os":"linux","ambitd_version":"0.2.0","user_id":"u_1a2b","org_id":"o_9x8y","agent_kind":"claude-code","sandbox_enabled":false,"sandbox_strict_allowlist":false,"sequence":0,"r2_a":false,"r2_b":false,"r2_c":false,"health_status":"degraded","health_queue_depth":4096,"health_dropped_events":142}
 SYNTHETIC
+
+# the D10 event, appended after the synthetic lines so that adding it moved no earlier line number
+grep -m1 -F '"kind":"fp_sighting"' "$D/events.jsonl" >> "$OUT" || echo "  (no fp_sighting line)" >&2
 
 echo "wrote $(wc -l < "$OUT" | tr -d ' ') fixture lines to $OUT"
