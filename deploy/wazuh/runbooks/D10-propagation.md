@@ -48,11 +48,11 @@ intersection is a scheduled job over the feature columns and lands in M5.
 - **A quiet D10 means little.** Three reasons it can stay silent while propagation happens:
   - ambitd only fingerprints tool *results*. Content that reaches an agent another way, a user
     prompt for example, carries no fingerprint.
-  - A refused sighting is not retried. If the events sink's queue is full, the session's
-    `fp_sighting` is dropped and that session never sends it again (measured with a sink that
-    refuses every write). Rule 100313 alerts on the drop, but not on which session was affected,
-    so a pair involving that session is missed by D10. Check the drop alert and rebuild the sighting
-    from the spool.
+  - A refused sighting is retried only when the session sees the fingerprint again. If the events
+    sink's queue is full, the session's `fp_sighting` is dropped; the session then sends it with the
+    next tool result that carries the fingerprint. If it never sees the fingerprint again, that
+    session is never counted. Rule 100313 alerts on the drop, but not on which session was affected,
+    so check the drop alert and rebuild the sighting from the spool.
   - Each session's memory of fingerprints it already sent is bounded (256 by default,
     `fp_notable_session_cap`). A full set forgets the oldest, so that fingerprint is sent again
     the next time the session sees it. That costs a repeat `fp_sighting` and never a missed one. A
