@@ -313,6 +313,12 @@ function Show-Status {
         & $BinPath report -config $Config
         if ($LASTEXITCODE -ne 0) { Write-Warning 'ambitd report failed' }
     }
+    if (Test-Path -LiteralPath $BinPath) {
+        Write-Host ''
+        Write-Host "(doctor runs as $env:USERNAME here; run 'ambitd doctor' as each developer to read their own settings too)"
+        & $BinPath doctor -config $Config
+        if ($LASTEXITCODE -ne 0) { Write-Warning 'ambitd doctor found a problem (above)' }
+    }
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }
