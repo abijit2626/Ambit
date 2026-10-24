@@ -846,7 +846,7 @@ of time when three public ones exist:
 feeds trajectories to the real collector in-process and reports precision, recall, a
 confidence-floor sweep and Rule-of-Two saturation depth; the README documents the format.
 It measures the provenance engine and R2 accounting. It does not yet measure the Wazuh rules
-(those have their own fixture path below) or goal drift (M4). `testdata/replay` holds 18 scenarios written alongside the engine, by the same author,
+(those have their own fixture path below) or goal drift (M4). `testdata/replay` holds 33 scenarios written alongside the engine, by the same author,
 which is exactly the bias NIST's finding below warns about, so its numbers pin behavior and
 must not be read as a detection rate. The AgentDojo adapter is the first corpus that avoids
 that bias. Its attacks are AgentDojo's, not adapted to ambit, and that cuts both ways: by the
@@ -918,6 +918,16 @@ What the first runs found, recorded because they are the reason a harness is wor
     agent's answer.* The travel injections that only change what the agent says produce no
     action, so an action monitor cannot see them. (4) Paraphrase, as above, which the hand-written
     corpus already records.
+- **Seven more adapted attacks, written to get around the engine** (`testdata/replay/attack-*`,
+  pinned to what it does today). Three are caught for reasons worth knowing: a fresh subdomain
+  of a host the page named (domains match on the registrable part), a host split across two
+  pages (caught only because the second half carried the registrable domain), and an IP
+  literal. Four are known misses: a host the agent percent-decoded; a value the user pasted into
+  the prompt, which the novelty rule treats as theirs; a host laundered through a repo file into
+  a second session, since fingerprints are per session (M5's cross-session intersection is the
+  answer); and a secret sent through an MCP message as `token: <value>`, which the redactor
+  strips before features, so the sensitive-data edge cannot match it, though the shadow gate
+  still asks.
 - **No property of the edge itself separates the false positives on AgentDojo either.** Every
   edge in a labelled Claude 3.7 run was joined back to its action and the result it came from,
   and broken down by match class, acting tool, and the input field that carried the value. The
