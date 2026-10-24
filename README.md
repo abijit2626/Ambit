@@ -187,7 +187,7 @@ sudo ./scripts/install-system.sh --uninstall                       # remove it; 
 make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 make replay   # replay testdata/replay through the collector; precision, recall, R2 saturation
-make fuzz     # each fuzz target for FUZZTIME (default 30s): redactor, bash classifier, MCP relay, no cleartext to the SIEM
+make fuzz     # every fuzz target (17) for FUZZTIME, default 30s: parsers, equivalence, no cleartext to the SIEM
 ```
 
 ### Replay harness

@@ -74,7 +74,13 @@ FUZZ_TARGETS := \
 	./internal/mcp:FuzzParseNeverPanics \
 	./internal/collector:FuzzSandboxDenialsStayClean \
 	./internal/collector:FuzzNoContentCrossesToTheSIEMInCleartext \
-	./internal/collector:FuzzHandleArbitraryHookJSON
+	./internal/collector:FuzzHandleArbitraryHookJSON \
+	./internal/otlp:FuzzDecodeNeverPanics \
+	./internal/toolscan:FuzzScanFieldsNeverPanics \
+	./internal/baseline:FuzzFileNameStaysInTheDirectory \
+	./internal/baseline:FuzzObserveWithAnyRecordOnDisk \
+	./internal/config:FuzzLoadAnyFile \
+	./internal/m0report:FuzzBuildFromAnySpool
 
 fuzz:
 	@for t in $(FUZZ_TARGETS); do \
