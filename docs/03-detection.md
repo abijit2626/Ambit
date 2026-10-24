@@ -852,7 +852,14 @@ must not be read as a detection rate. The AgentDojo adapter is the first corpus 
 that bias. Its attacks are AgentDojo's, not adapted to ambit, and that cuts both ways: by the
 warning below, a generic baseline overstates a detector's coverage, so the AgentDojo recall is
 an upper bound against an attacker who knows to paraphrase. SHADE-Arena and ControlArena have
-no adapter yet.
+no adapter yet, and the reason is data, not code: neither project's repository ships model run
+logs (SHADE-Arena's public repository has task environments and no transcripts; ControlArena's has
+eight hand-written trajectories). The closest public run data is the control leaderboard's:
+bashbench2 (UK AISI and Redwood Research, MIT, 1,200 Bash-agent trajectories, 600 honest and 600
+attack) and the MonitoringBench set (CC BY 4.0, 3,244 trajectories). Bash-agent trajectories map
+onto hook payloads more directly than AgentDojo's MCP calls do. They are hosted on Hugging Face and
+the leaderboard's own site, which the environment this was checked from could not reach, so the
+adapter is unbuilt and their format unread.
 
 What the first runs found, recorded because they are the reason a harness is worth having:
 

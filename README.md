@@ -249,7 +249,8 @@ which AgentDojo scores `security: true`. Attack runs mark their calls unlabeled,
 the only per-call label the log allows, "the arguments contain injected text", is the
 signal the engine computes itself. [docs/03-detection.md](docs/03-detection.md#validating-the-detectors)
 has the first results. They are the first numbers here not written by the engine's author,
-and they are not flattering. SHADE-Arena and ControlArena have no adapter yet.
+and they are not flattering. SHADE-Arena and ControlArena have no adapter yet: neither publishes run
+logs, and the nearest public set, bashbench2, was not reachable from where it was checked (docs/03).
 
 ### Windows
 
