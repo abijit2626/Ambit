@@ -7,7 +7,7 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
 EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 
-.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures replay
+.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures replay fuzz
 
 all: check build
 
@@ -61,3 +61,21 @@ clean:
 
 replay: build
 	./bin/$(BIN3)$(EXE) $(ARGS) testdata/replay
+
+FUZZTIME ?= 30s
+FUZZ_TARGETS := \
+	./internal/redact:FuzzRedactIsAFixedPoint \
+	./internal/redact:FuzzRedactStripsADelimitedSecret \
+	./internal/classify:FuzzBashWrappingNeverLowersTheClass \
+	./internal/mcp:FuzzRelayIsByteExact \
+	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \
+	./internal/mcp:FuzzParseNeverPanics \
+	./internal/collector:FuzzSandboxDenialsStayClean \
+	./internal/collector:FuzzNoContentCrossesToTheSIEMInCleartext
+
+fuzz:
+	@for t in $(FUZZ_TARGETS); do \
+		pkg=$${t%%:*}; name=$${t##*:}; \
+		echo "== $$name ($(FUZZTIME))"; \
+		go test $$pkg -run '^$$' -fuzz "^$$name\$$" -fuzztime $(FUZZTIME) -fuzzminimizetime 10s || exit 1; \
+	done
