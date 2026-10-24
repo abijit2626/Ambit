@@ -80,6 +80,7 @@ type Summary struct {
 
 	Handled      int64               `json:"handled"`
 	Crossed      int64               `json:"crossed"`
+	Derived      int64               `json:"derived"`
 	CrossReasons map[string]int64    `json:"cross_reasons"`
 	Provenance   collector.ProvStats `json:"provenance"`
 }
@@ -148,6 +149,7 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 		}
 		s.Handled += r.Stats.Handled
 		s.Crossed += r.Stats.Crossed
+		s.Derived += r.Stats.Derived
 		for k, v := range r.Stats.CrossReasons {
 			s.CrossReasons[k] += v
 		}
@@ -482,7 +484,7 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 	}
 	fmt.Fprint(w, "\n")
 
-	fmt.Fprintf(w, "\ncollection (a corpus is dense with events built to be interesting, so this fraction is NOT\ncomparable to the M0 interesting-fraction estimate from a real cohort)\n  handled %d, crossed %d (%s)\n", s.Handled, s.Crossed, pct(s.Crossed, s.Handled))
+	fmt.Fprintf(w, "\ncollection (a corpus is dense with events built to be interesting, so this fraction is NOT\ncomparable to the M0 interesting-fraction estimate from a real cohort)\n  handled %d, crossed %d (%s), plus %d events ambitd derived (session_mode, fp_sighting and the like)\n", s.Handled, s.Crossed, pct(s.Crossed, s.Handled), s.Derived)
 	if len(s.CrossReasons) > 0 {
 		var parts []string
 		for _, k := range sortedKeys(s.CrossReasons) {
