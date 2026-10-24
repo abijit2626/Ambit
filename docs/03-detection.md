@@ -736,7 +736,16 @@ reads an inert rule as a quiet fleet.
 3. **Sandbox allowlist denials have no field at all.** D9 lists them as a signal; the
    schema has nowhere to put one, so a *blocked* exfiltration attempt is invisible to the
    detector. This is a schema addition, not an unpopulated field, and it is the one gap
-   here with nothing to mark.
+   here with nothing to mark. Where the signal would come from is now known in part:
+   Claude Code (v2.1.310, read from the installed package) appends a
+   `<sandbox_violations>` block, with `Filesystem:` and `Network:` sections, to a sandboxed
+   command's stderr in the tool result it gives the model, and on Windows a denied
+   connection shows only as the proxy's own 403 in the command's error. Whether a
+   `PostToolUse` hook receives that block in `tool_response` is not known (unobserved), and
+   it decides whether ambitd can see a denial at all. Two cautions for whoever adds it:
+   a program can print a block of its own, so a parsed denial is a claim from the
+   command's output, not from the sandbox; and the field must fit the 70-field ceiling
+   on the flattened event, which the union of every block already reaches.
 4. **An untrusted zone now overrides a trusted-repo prefix**, which was a bug rather than a
    gap. A `CLAUDE.md` inside `node_modules` of a trusted repository was being reported as
    trusted, because the prefix check matched the dependency's parent path — which would

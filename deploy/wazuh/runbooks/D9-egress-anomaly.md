@@ -32,8 +32,10 @@ describes is not something a rule can do.
   "unusual for this endpoint" — read it as "a rate that is hard to produce by hand".
 - **Sandbox denials are not here at all.** The catalogue lists "any sandbox allowlist denial" as
   a D9 signal. Claude Code's sandbox denies outbound connections, and ambit has no schema field
-  to carry that — not an unpopulated field, an absent one. Adding it is an M2 schema change. So a
-  *blocked* exfiltration attempt does not appear in this detector today.
+  to carry that — not an unpopulated field, an absent one. So a *blocked* exfiltration attempt
+  does not appear in this detector today. Until it does, a Bash `tool_post` whose result
+  mentions `<sandbox_violations>` or a proxy 403 (in the spool, which requires us) is where a
+  blocked attempt would show.
 - **100303 depends on the interposer.** The open-world hint is the server's own annotation, which
   the interposer reads from `tools/list`; ambitd attaches it to the tool's calls. A server that is
   not interposed, an interposer whose `-server` name differs from the server's configured name, or
