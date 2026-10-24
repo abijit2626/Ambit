@@ -239,3 +239,27 @@ func TestReportCountsSessionsThatSentNothingAfterTheirStart(t *testing.T) {
 		t.Errorf("text does not point at blocker 7:\n%s", out.String())
 	}
 }
+
+// The spool is ambitd's own output, but it can be truncated, rotated mid-line or hand-edited; the
+// report must never panic on it, and its verdicts stay in their vocabulary.
+func FuzzBuildFromAnySpool(f *testing.F) {
+	f.Add([]byte(`{"kind":"ambitd_health","ts":"2026-10-24T09:00:00Z","health":{"run_id":"r1","hook_latency":{"count":1,"buckets":[{"le_us":250,"n":1}]}}}` + "\n"))
+	f.Add([]byte(`{"kind":"session_start","source":"hook","ts":"x","session":{"session_id":"s"}}` + "\n{\"kind\":\"ambitd_health\""))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		p := filepath.Join(t.TempDir(), "trajectory.jsonl")
+		if err := os.WriteFile(p, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r, err := Build([]string{p})
+		if err != nil {
+			return
+		}
+		for _, v := range []string{r.Latency.Verdict, r.Loss.Verdict} {
+			if v != Pass && v != Fail && v != NoData {
+				t.Fatalf("verdict %q is not pass, fail or no_data", v)
+			}
+		}
+		var out bytes.Buffer
+		r.WriteText(&out, true)
+	})
+}
