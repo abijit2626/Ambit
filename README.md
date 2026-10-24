@@ -638,14 +638,13 @@ Open problems:
   event. 100261 was driven with a synthetic `policy_decision` of `fail_open`, since nothing emits
   it yet. Times were not varied: logtest replays instantly, so the 300 s windows were not tested
   (untested). The fixtures are `deploy/wazuh/fixtures/g-*.jsonl`, the recorded results `g-*.alerts`.
-- **One correlation rule still carries `ignore` (100271), and its ancestry is not what the rule
-  file says (read from code and the image's rules).** 100271 is a child of 100270, which is a child
-  of Wazuh's SCA rule 19007. 100271 uses `ignore="7200"` with `same_field` `agent.name`, the same
-  combination that silenced other keys in the correlation fixtures. So one agent's failing managed
-  settings probably silences every other agent's for two hours. Not replayed: `wazuh-logtest`
-  decodes a raw SCA line with the generic JSON decoder (fields `check.id`, `policy_id`, `scan_id`),
-  so 19006 and 19007 never match. The `sca.*` fields need the SCA module's own path, which logtest
-  does not reproduce. Removing `ignore` is a rule change that needs your decision.
+- **No correlation rule carries `ignore` with `same_field` now.** The last one, 100271, had
+  `ignore="7200"` with `same_field` `agent.name`, the combination that silenced other keys in the
+  correlation fixtures, so one agent's failing managed settings probably silenced every other
+  agent's for two hours (inferred). It is removed. 100271 itself was not replayed (untested): it is
+  a child of 100270, a child of Wazuh's SCA rule 19007, and `wazuh-logtest` decodes a raw SCA line
+  with the generic JSON decoder (`check.id`, `policy_id`, `scan_id`), so 19006 and 19007 never match.
+  The removal rests on the eight rules that were measured, and the lab plan should check it.
 - **D10's two rules fire now (observed offline, wazuh-logtest 4.14.8).** On main they were dead:
   their parent 100280 was level 0, and level-0 matches are not counted by `if_matched_sid`.
   With 100280 at level 1, 100281 fired on nearly every repeat of a fingerprint and 100282 never
@@ -668,12 +667,12 @@ mechanism but were not waited out; `deploy/wazuh/LAB-D10.md` step 5 checks them 
   not a missed one; ambitd's memory resets on restart. The `tool_post` keeps
   `prov_fp_notable` on every sighting, so the spool has the full record; the `fp_sighting` goes to
   the SIEM only. A `tool_post` no longer crosses to the SIEM for its fingerprint alone. If the
-  events sink refuses a sighting (its queue is full), that session never sends it again until
-  restart or eviction. Measured with a sink that refuses every write: the first `tool_post` and its
-  `fp_sighting` are both refused, and the session's repeat writes nothing. The spool still has the
-  `tool_post` with its fingerprint, so an analyst can rebuild the sighting by hand, and rule 100313
-  alerts on the drop, but automatic D10 cannot pair that session. A fix would clear the session's
-  mark when the sighting's write returns false; that is a behavior change and is not made.
+  events sink refuses a sighting (its queue is full), the session clears its mark, so the next tool
+  result that carries the fingerprint tries again (unit-tested with a sink that refuses, then
+  recovers). Before this, measured with a sink that refused every write, a refused sighting was never
+  sent again: the repeat wrote nothing. The retry needs the session to see the fingerprint again; if
+  it never does, the sighting is lost. The spool still has the `tool_post` with its fingerprint, so an
+  analyst can rebuild it by hand, and rule 100313 alerts on the drop.
 - **A fingerprint is no longer lost to a louder alert on the same event (observed offline,
   constructed events).** While D10 counted `tool_post` events, a `tool_post` of a network `curl`
   carrying a secret alerted as 100302 and Wazuh never counted it toward 100281. With the

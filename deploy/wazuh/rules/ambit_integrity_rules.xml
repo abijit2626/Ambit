@@ -196,8 +196,15 @@
     The same policy failing repeatedly on one endpoint. A single failure can be a race
     with a configuration deployment; a persistent one is a configuration that is not
     coming back on its own.
+
+    No ignore. ignore is per rule, not per same_field value, so with it one agent's alert
+    would silence every other agent's for two hours. Measured on eight other correlation
+    rules under wazuh-logtest, where removing it let each key alert and a flood alert once
+    per threshold, not on every event. This rule itself could not be replayed: logtest does
+    not produce the sca.* fields its parents need, so the removal rests on that pattern and
+    is checked on the lab manager.
   -->
-  <rule id="100271" level="13" frequency="3" timeframe="7200" ignore="7200">
+  <rule id="100271" level="13" frequency="3" timeframe="7200">
     <if_matched_sid>100270</if_matched_sid>
     <same_field>agent.name</same_field>
     <description>ambit D12: managed-settings assertion failing persistently on $(agent.name)</description>

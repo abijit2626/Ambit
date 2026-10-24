@@ -120,7 +120,19 @@ the same content from it.
 - This is the known gap, recorded in the D10 runbook. A mismatch here means the gap is wider than
   documented.
 
-## 7. Clean up
+## 7. Rule 100271 on two agents (D12)
+
+This is not D10, but it rests on the same finding and cannot be replayed offline. 100271 used to
+carry `ignore="7200"`, which would have let one agent's alert silence every other agent's for two
+hours. The ignore is removed, and only a real SCA path can show the effect. You need two agents
+whose managed-settings check (policy `ambit_managed_settings`) fails.
+
+- Make the check fail three times on agent 1 inside two hours, then three times on agent 2.
+- **Expected:** one `100271` for each agent, with that agent's `agent.name`. Without the fix, agent
+  2's alert would be missing.
+- **Failure:** `100271` for agent 1 only. Send the `alerts.json` lines for both agents.
+
+## 8. Clean up
 
 - Remove the probe events from the lab's Wazuh data if your retention policy requires it.
 - Record the results file, including the `log_alert_level` value from step 1, the `wazuh-analysisd -t`
