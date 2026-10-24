@@ -205,6 +205,9 @@ same JSON Claude Code posts, optionally wrapped with ground truth and assertions
  "hostile": true, "expect": {"edge": true, "edge_class": "url", "edge_from": 3}}
 ```
 
+A step can also assert `"derived": [...]`, the kinds of event ambitd derived from it and sent to
+the SIEM (`session_mode`, `session_no_prompt`, `sandbox_denial`, `fp_sighting`); `[]` asserts none.
+
 `hostile` is ground truth about the *action*: would an analyst want it paged. It is not
 "this came from untrusted input", because docs/03 names an agent summarizing a page and
 carrying its URLs across as a false positive, and following a link is the same mechanism. An
@@ -223,7 +226,7 @@ make replay                                   # the corpus, human-readable
 A gate on a metric the corpus cannot compute fails rather than passes. `go test ./...` runs
 the same corpus as a regression suite.
 
-**The starter corpus is 33 hand-written scenarios. Its numbers describe those scenarios and
+**The starter corpus is 35 hand-written scenarios. Its numbers describe those scenarios and
 nothing else**, and say nothing about precision on real traffic: it was written alongside the
 engine, by the same author, so it tests what that author thought of. It exists to pin behavior,
 include attacks adapted to defeat the engine (a paraphrased destination, a poisoned instruction

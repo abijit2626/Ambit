@@ -846,7 +846,7 @@ of time when three public ones exist:
 feeds trajectories to the real collector in-process and reports precision, recall, a
 confidence-floor sweep and Rule-of-Two saturation depth; the README documents the format.
 It measures the provenance engine and R2 accounting. It does not yet measure the Wazuh rules
-(those have their own fixture path below) or goal drift (M4). `testdata/replay` holds 33 scenarios written alongside the engine, by the same author,
+(those have their own fixture path below) or goal drift (M4). `testdata/replay` holds 35 scenarios written alongside the engine, by the same author,
 which is exactly the bias NIST's finding below warns about, so its numbers pin behavior and
 must not be read as a detection rate. The AgentDojo adapter is the first corpus that avoids
 that bias. Its attacks are AgentDojo's, not adapted to ambit, and that cuts both ways: by the

@@ -579,6 +579,9 @@ func writeSteps(w io.Writer, r *Result, verbose bool) {
 		if st.Edges > 0 {
 			line += fmt.Sprintf(" edge %s %.2f <- step %d", st.EdgeClass, st.EdgeConfidence, st.EdgeFrom)
 		}
+		if len(st.Derived) > 0 {
+			line += " +" + strings.Join(st.Derived, " +")
+		}
 		if st.Crossed {
 			line += " [crossed]"
 		}
