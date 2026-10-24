@@ -652,27 +652,37 @@ Open problems:
   raised 9 alerts as 100281 and 2 as 100282; two fingerprints each seen in two sessions raised one
   alert each; three sessions seeing three different fingerprints raised none. Windows were not
   exercised: logtest replays instantly, so the 3600 s and 7200 s expiry is untested.
-- **ambitd sends a notable fingerprint once per session (unit-tested; not run against a live
-  manager).** Without it, a session that sees a fingerprint another session saw once keeps
-  alerting: one session, then a second seeing it 20 times, gave 20 alerts (15 as 100281, 5 as
-  100282) from two sessions (observed offline). Each session remembers up to
-  `fp_notable_session_cap` fingerprints (default 256) and forgets the oldest first, which can
-  cost a repeat alert and not a missed one; ambitd's memory resets on restart. The local spool
-  loses the repeats' `prov_fp_notable` too. If the events sink fails to write the first
-  sighting, later repeats from that session are not resent (read from code; sink failure
-  untested).
-- **A fingerprint on an event that also matches a higher-level rule is not counted (observed
-  offline, constructed event).** A `tool_post` of a network `curl` carrying a secret alerts as
-  100302, and its fingerprint never reaches 100281. D10 undercounts exactly when something more
-  serious already alerted on the same event. Only 100302 was tried.
+- **ambitd sends one `fp_sighting` event per session and fingerprint (unit-tested; not run
+  against a live manager).** D10 counts these, not tool events. Without the once-per-session
+  rule, a session that sees a fingerprint another session saw once keeps alerting: one session,
+  then a second seeing it 20 times, gave 20 alerts (15 as 100281, 5 as 100282) from two
+  sessions (observed offline). Each session remembers up to `fp_notable_session_cap`
+  fingerprints (default 256) and forgets the oldest first, which can cost a repeat sighting and
+  not a missed one; ambitd's memory resets on restart. The `tool_post` keeps
+  `prov_fp_notable` on every sighting, so the spool has the full record; the `fp_sighting` goes to
+  the SIEM only. A `tool_post` no longer crosses to the SIEM for its fingerprint alone. If the
+  events sink fails to write a sighting, that session does not send it again (read from code;
+  sink failure untested).
+- **A fingerprint is no longer lost to a louder alert on the same event (observed offline,
+  constructed events).** While D10 counted `tool_post` events, a `tool_post` of a network `curl`
+  carrying a secret alerted as 100302 and Wazuh never counted it toward 100281. With the
+  sighting as its own event, twelve sessions whose even-numbered `tool_post` events alert as
+  100302 gave all six 100302 alerts and 9 as 100281 and 2 as 100282, the same as without the
+  collision. Two rules-only fixes were measured and rejected: counting a group shared by 100280
+  and 100302 made 100281 replace the level 13 100302 alert whenever the event completed a pair,
+  and restricting 100302 to `tool_pre` drops the alert for a secret that only appears in a
+  command's result. Letting 100280 match both kinds would count every sighting twice (12 and 4
+  instead of 9 and 2). A test fails if any other rule can match an `fp_sighting`. An ambitd
+  build older than this sends no `fp_sighting`, so D10 does not count its hosts at all.
 - **The lab manager runs none of this.** Whether 100280 stays silent depends on the manager's
   `log_alert_level`; at the default of 3 it does under logtest, and the live setting was not
   checked (untested).
 - **Array matching works in the case tried (observed).** 100241, an unanchored literal,
   matched an event whose `mcp_scan_classes` is a two-element array. Only the first element,
   and one class at a time, were tried.
-- **Fixture coverage is partial (observed).** Of 43 lines, 34 produced an alert, 1 matched a
-  level-0 rule, 1 matched 100280 (level 1, counted and not alerted) and 7 matched no rule. Rules 100203, 100204, 100210, 100211, 100212, 100221,
+- **Fixture coverage is partial (observed).** Of 44 lines, 34 produced an alert, 1 matched a
+  level-0 rule, 1 matched 100280 (the `fp_sighting`, level 1, counted and not alerted) and 8
+  matched no rule. Rules 100203, 100204, 100210, 100211, 100212, 100221,
   100242 to 100245 and 100247 among others did not fire on any line. That is not a failure
   of those rules: the fixtures do not exercise them.
 - **The hook response exceeded its latency budget (observed).** `ambitd` logged two lines

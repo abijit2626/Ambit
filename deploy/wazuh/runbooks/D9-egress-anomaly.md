@@ -53,9 +53,9 @@ describes is not something a rule can do.
    ordinary. Ten `curl` calls in five minutes is a loop, and a loop is either a script or a
    download.
 3. **Check the session's ingest side.** Same `session_id`: a D8 untrusted instruction file, a D4
-   drift, or a `tool_post` carrying `prov_fp_notable` before the egress tells you the session had
-   ingested untrusted content first. (Only a session's first sighting of a fingerprint carries it,
-   so a later `tool_post` without one is not evidence of nothing ingested.) Egress after ingest is the shape the whole system exists to
+   drift, or an `fp_sighting` before the egress tells you the session had ingested untrusted
+   content first. (The `tool_post` it names carries `prov_fp_notable` too, but a `tool_post`
+   reaches the SIEM only when it is interesting for another reason; the spool has every one.) Egress after ingest is the shape the whole system exists to
    catch; egress alone, in a session doing ordinary work, usually is not.
 4. **Check for credential reads before the egress.** A D2 alert or a `path_zone` = `credential`
    read in the same session, followed by network commands, is the staging-then-exfiltration

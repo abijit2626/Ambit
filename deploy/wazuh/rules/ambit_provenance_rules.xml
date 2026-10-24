@@ -24,17 +24,24 @@
     that event alerts as 100282. It cannot count 100280 events directly: once 100281 alerts
     on an event, that event is no longer a 100280 match, so a rule counting 100280 would
     never see it.
-  - Wazuh counts an event toward if_matched_sid only if that rule was the one that alerted on
-    it. An event that carries a fingerprint and also matches a higher-level rule (100302,
-    secret material in a network command, is the one measured) alerts as that rule and is
-    never counted here. D10 therefore undercounts exactly when something more serious already
-    alerted on the same event.
+  - The rules count fp_sighting events, not tool events. Wazuh counts an event toward
+    if_matched_sid only if that rule was the one that alerted on it, so when 100280 matched
+    tool_post events, a tool_post that also matched a higher-level rule (100302, secret
+    material in a network command) alerted as that rule and was never counted. ambitd now
+    sends each session's first sighting of a fingerprint as its own fp_sighting event, which
+    carries no tool, policy, edge or taint field for another rule to match. The tool_post
+    keeps its fingerprint for context but is not counted. Measured offline: twelve sessions
+    whose even-numbered tool_posts alert as 100302 now give all six 100302 alerts and the
+    same D10 count as twelve sessions without them. Counting a shared group instead
+    (if_matched_group on 100280 and 100302) was tried and rejected: when the event completed
+    a pair, 100281 replaced the level 13 100302 alert.
   - Direction is lost. D10 means "ingest in X, output in Y", and the rule sees sightings of a
     value without ordering them. ambitd emits prov_fp_role "ingest" only, so there is no
     direction to recover from the event either.
-  - Repeats inside one session are suppressed at the source: ambitd emits prov_fp_notable
-    only the first time a session sees a fingerprint, so a session re-reading the same
-    content adds no further sightings. Its per-session memory is bounded, so a full set can
+  - Repeats inside one session are suppressed at the source: ambitd sends an fp_sighting only
+    the first time a session sees a fingerprint, so a session re-reading the same content adds
+    no further sightings. An ambitd build older than fp_sighting puts the fingerprint only on
+    the tool_post, which these rules no longer count. Its per-session memory is bounded, so a full set can
     cause a repeat sighting but never a missed one, and it resets when ambitd restarts;
     not_same_field is what covers that case.
 -->
@@ -44,7 +51,8 @@
   <!-- ===================== D10 — propagation tripwire ===================== -->
 
   <!--
-    Base: an event carrying a notable fingerprint. Level 1, not 0: if_matched_sid counts only
+    Base: a session's first sighting of a notable fingerprint, sent by ambitd as an fp_sighting
+    event (see the file header for why not the tool event itself). Level 1, not 0: if_matched_sid counts only
     events whose final alert was exactly the named rule, and a level 0 match is not counted,
     so at level 0 the two rules below could never fire (observed offline). Level 1 is below
     Wazuh's default log alert level of 3, so these events are counted without alerting
@@ -53,8 +61,9 @@
   -->
   <rule id="100280" level="1">
     <decoded_as>json</decoded_as>
+    <field name="kind">^fp_sighting$</field>
     <field name="prov_fp_notable">\.+</field>
-    <description>ambit: event carries a notable fingerprint ($(prov_fp_role))</description>
+    <description>ambit: session $(session_id) first sighted fingerprint $(prov_fp_notable) ($(prov_fp_role))</description>
     <mitre>
       <id>T1105</id>
     </mitre>

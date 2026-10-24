@@ -22,6 +22,11 @@ const (
 	KindCompact            Kind = "compact"
 	KindAmbitdHealth       Kind = "ambitd_health"
 	KindGoalDriftScore     Kind = "goal_drift_score"
+
+	// KindFPSighting is ambitd's own event for a session's first sighting of a notable fingerprint.
+	// It exists so the D10 rules count an event no other rule competes for: a tool_post carrying the
+	// same fingerprint can alert as something else (100302), and Wazuh counts only the rule that won.
+	KindFPSighting Kind = "fp_sighting"
 )
 
 const (

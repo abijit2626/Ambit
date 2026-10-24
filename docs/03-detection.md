@@ -674,23 +674,31 @@ Three limitations, and they are structural rather than tuning problems:
    behaved as intended under `wazuh-logtest` (observed offline): one session repeating a
    fingerprint 12 times raised nothing; twelve sessions each seeing it raised 9 alerts as 100281
    and 2 as 100282. The 3600 s and 7200 s windows were not exercised, because replay is instant
-   (untested). It also needs `ambitd` to send a fingerprint only once per session, or one
+   (untested). It also needs `ambitd` to send a sighting only once per session, or one
    session's repeats keep alerting once any other session has seen it (measured: 20 alerts for
    one session after another had seen it once).
 3. **Direction is lost.** D10 means "ingest in X, output in Y." The rule sees sightings of a
    value and cannot order them by role. `ambitd` only fingerprints tool results, so
    `prov_fp_role` is always `ingest` and carries no direction either.
 
-A fourth limit appeared in testing: a `tool_post` that carries a fingerprint and also matches a
-higher-level rule (100302, a secret in a network command, was measured) alerts as that rule and
-is never counted here.
+A fourth limit appeared in testing, and is fixed. Wazuh counts an event toward `if_matched_sid`
+only if the named rule won it, so while 100280 matched `tool_post` events, a `tool_post` that also
+matched a higher-level rule (100302, a secret in a network command) alerted as that rule and was
+never counted. `ambitd` now sends each session's first sighting of a fingerprint as its own
+`fp_sighting` event, which carries no field another rule keys on, and 100280 matches only that
+kind. Measured offline: the twelve-session scenario with every other `tool_post` alerting as 100302
+kept all six 100302 alerts and gave the same D10 count as without the collision. Two rules-only
+fixes were rejected on measurement: counting a group shared by 100280 and 100302 let 100281
+*replace* the level 13 alert whenever the event completed a pair, and restricting 100302 to
+`tool_pre` loses the alert for a secret that only appears in a command's result. The general
+lesson: a signal you want a correlation rule to count needs an event no other rule competes for.
 
 **Resolution.** Split it:
 
 - `ambitd` pre-selects, per event, at most one **notable fingerprint** — from the
   high-specificity classes only (domain, email, high-entropy token) — and emits it
-  as the scalar field `prov_fp_notable`, with `prov_fp_role` of `ingest`, and only the
-  first time a session sees that fingerprint (the set of fingerprints sent is bounded per
+  as the scalar field `prov_fp_notable`, with `prov_fp_role` of `ingest`, on the tool
+  event, and sends an `fp_sighting` event only the first time a session sees that fingerprint (the set of fingerprints sent is bounded per
   session, `fp_notable_session_cap`, default 256). The Wazuh rules above then work as a
   cheap first-pass tripwire on high-value fingerprints.
 - The **full set intersection stays out of the SIEM.** Cross-session set matching

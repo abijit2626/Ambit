@@ -155,8 +155,9 @@ func TestOneKeyFloodAlertsOncePerThreshold(t *testing.T) {
 // scenario. 100280 (level 1, below the default log alert level) is counted but never alerts.
 type d10Want struct {
 	r281, r282 int // alerts raised by 100281 and 100282
-	r302       int // events won by 100302 instead (the fingerprint was on an event that also matched it)
-	r280       int // events that matched only 100280, so were counted and not alerted
+	r302       int // tool_posts that alert as 100302, a secret in a network command
+	r280       int // fp_sighting events that matched only 100280, so were counted and not alerted
+	none       int // events no rule matched: tool_posts, whose fingerprint D10 does not count
 }
 
 var d10Expected = map[string]d10Want{
@@ -173,8 +174,11 @@ var d10Expected = map[string]d10Want{
 	"two-fingerprints": {r281: 2, r280: 2},
 	// different sessions seeing different fingerprints is not propagation: same_field keeps them apart
 	"unrelated-fingerprints": {r280: 3},
-	// an event that also matches 100302 is won by it and never counted toward D10
-	"collision-100302-alternate": {r281: 4, r282: 1, r302: 6, r280: 1},
+	// the reason fp_sighting exists: tool_posts that alert as 100302 keep that alert, and their sightings are
+	// counted as if there were no collision (compare twelve-sessions)
+	"collision-100302-alternate": {r281: 9, r282: 2, r302: 6, r280: 1, none: 6},
+	// an ambitd older than fp_sighting puts the fingerprint only on the tool_post, which D10 no longer counts
+	"tool-post-only": {none: 12},
 }
 
 type d10Scenario struct {
@@ -233,6 +237,8 @@ func TestD10ScenariosAlertAsDesigned(t *testing.T) {
 				got.r302++
 			case l.rule == 100280 && !l.alert:
 				got.r280++
+			case l.rule == 0 && !l.alert:
+				got.none++
 			default:
 				t.Errorf("scenario %q: unexpected line rule %d alert=%v", sc.name, l.rule, l.alert)
 			}
@@ -255,6 +261,9 @@ func TestD10RuleShape(t *testing.T) {
 	byID := indexRules(loadRules(t))
 	r280, r281, r282 := byID[100280], byID[100281], byID[100282]
 
+	if len(r280.Fields) == 0 || r280.Fields[0].Name != "kind" || r280.Fields[0].Pattern != "^fp_sighting$" {
+		t.Errorf("rule 100280 must match only fp_sighting events (first field kind = ^fp_sighting$), got %+v: a tool event can alert as another rule, and Wazuh counts only the rule that won", r280.Fields)
+	}
 	if r280.Level < 1 {
 		t.Errorf("rule 100280 is level %d; a level 0 match is not counted by if_matched_sid, so 100281 and 100282 can never fire", r280.Level)
 	}
@@ -280,5 +289,37 @@ func TestD10RuleShape(t *testing.T) {
 		if r.Ignore != 0 {
 			t.Errorf("rule %d has ignore=%d; it silences every fingerprint, not one", r.ID, r.Ignore)
 		}
+	}
+}
+
+// The point of fp_sighting is that no other rule competes for it. Any rule that also matches one would win
+// it whenever its level is higher, and D10 would silently stop counting those sightings, which is the
+// 100302 collision again. This checks every fp_sighting in the fixtures against every rule the model covers.
+func TestNothingButRule100280MatchesAnFPSighting(t *testing.T) {
+	rules := loadRules(t)
+	byID := indexRules(rules)
+	var sightings int
+	for _, fixture := range []string{fixturesPath, "fixtures/g-d10.jsonl"} {
+		for i, ev := range loadFixtureFile(t, fixture) {
+			if ev["kind"] != "fp_sighting" {
+				continue
+			}
+			sightings++
+			for _, r := range rules {
+				if !modelled(r) {
+					continue
+				}
+				ok, err := matches(r, ev, byID)
+				if err != nil {
+					t.Fatalf("%s line %d, rule %d: %v", fixture, i+1, r.ID, err)
+				}
+				if ok && r.ID != 100280 {
+					t.Errorf("%s line %d: rule %d matches an fp_sighting; it would win the event and D10 would not count it", fixture, i+1, r.ID)
+				}
+			}
+		}
+	}
+	if sightings == 0 {
+		t.Fatal("no fp_sighting events in the fixtures; the check above checked nothing")
 	}
 }
