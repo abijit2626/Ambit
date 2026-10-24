@@ -48,6 +48,11 @@ intersection is a scheduled job over the feature columns and lands in M5.
 - **A quiet D10 means little.** Three reasons it can stay silent while propagation happens:
   - ambitd only fingerprints tool *results*. Content that reaches an agent another way, a user
     prompt for example, carries no fingerprint.
+  - A refused sighting is not retried. If the events sink's queue is full, the session's
+    `fp_sighting` is dropped and that session never sends it again (measured with a sink that
+    refuses every write). Rule 100313 alerts on the drop, but not on which session was affected,
+    so a pair involving that session is missed by D10. Check the drop alert and rebuild the sighting
+    from the spool.
   - Each session's memory of fingerprints it already sent is bounded (256 by default,
     `fp_notable_session_cap`). A full set forgets the oldest, so that fingerprint is sent again
     the next time the session sees it. That costs a repeat `fp_sighting` and never a missed one. A
@@ -64,8 +69,9 @@ intersection is a scheduled job over the feature columns and lands in M5.
   sightings were lost. The `fp_sighting` is a separate event that no other rule matches, so both
   alerts now stand (measured offline: twelve sessions whose even-numbered `tool_post` events alert
   as 100302 gave all six 100302 alerts and the same D10 count as twelve sessions without them).
-- **The windows have not been exercised.** The rules were replayed offline, and replay is instant,
-  so the 3600s and 7200s expiry is untested.
+- **The shipped windows were not waited out.** The expiry mechanism was checked on wall-clock time
+  with a 60 s copy of the rule: a sighting 90 s after the first did not alert, and one 10 s after
+  the second did. The 3600s and 7200s values were not, so `LAB-D10.md` step 5 checks them.
 - **Rule 100283 is live, and is evidence, not proof.** A provenance edge is ambitd's own
   statement that an action carried a value which also appeared in untrusted content it ingested
   earlier in the same session — the signal this tripwire approximates. It cannot say the value
