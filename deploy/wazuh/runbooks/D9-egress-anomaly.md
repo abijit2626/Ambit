@@ -12,7 +12,7 @@ describes is not something a rule can do.
 | 100300 | 5 | A network-capable command (context) |
 | 100301 | 12 | 10+ network-capable commands in one session within 300s |
 | 100302 | 13 | **Secret material in a network-capable command** |
-| 100303 | 10 | Result from an open-world MCP tool — **inert, see below** |
+| 100303 | 10 | Result from an open-world MCP tool |
 
 ## What this alert asserts
 
@@ -34,11 +34,11 @@ describes is not something a rule can do.
   a D9 signal. Claude Code's sandbox denies outbound connections, and ambit has no schema field
   to carry that — not an unpopulated field, an absent one. Adding it is an M2 schema change. So a
   *blocked* exfiltration attempt does not appear in this detector today.
-- **Rule 100303 is inert.** An open-world MCP tool's result should be treated as untrusted
-  ingest, and the annotation that says so is known to the interposer — but it is not carried on
-  tool *call* events, because those come from the hook path and a hook payload contains no
-  annotations. The join lands with M2; until then this rule cannot fire and is marked
-  `ambit_pending_emitter`.
+- **100303 depends on the interposer.** The open-world hint is the server's own annotation, which
+  the interposer reads from `tools/list`; ambitd attaches it to the tool's calls. A server that is
+  not interposed, an interposer whose `-server` name differs from the server's configured name, or
+  a tool not listed since ambitd last started produces a `tool_post` with no hint, and 100303
+  stays silent for it. A quiet 100303 does not mean no open-world tools were used.
 - **A command's file paths are not attached.** `cat ~/.aws/credentials | curl ...` produces a
   network-class event with no credential path, because paths come from a tool's structured input
   rather than from parsing a shell pipeline. The correlation that catches it is the R2 accounting
