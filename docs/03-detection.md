@@ -673,8 +673,8 @@ Three limitations, and they are structural rather than tuning problems:
    with `<not_same_field>session_id</not_same_field>` was accepted by `wazuh-analysisd -t` and
    behaved as intended under `wazuh-logtest` (observed offline): one session repeating a
    fingerprint 12 times raised nothing; twelve sessions each seeing it raised 9 alerts as 100281
-   and 2 as 100282. The 3600 s and 7200 s windows were not exercised, because replay is instant
-   (untested). It also needs `ambitd` to send a sighting only once per session, or one
+   and 2 as 100282. The window mechanism was checked on wall-clock time with a 60 s copy of the
+   rule; the shipped 3600 s and 7200 s values were not waited out. It also needs `ambitd` to send a sighting only once per session, or one
    session's repeats keep alerting once any other session has seen it (measured: 20 alerts for
    one session after another had seen it once).
 3. **Direction is lost.** D10 means "ingest in X, output in Y." The rule sees sightings of a

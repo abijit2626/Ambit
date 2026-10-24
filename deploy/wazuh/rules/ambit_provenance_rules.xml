@@ -17,8 +17,8 @@
     "Different session" is expressed with not_same_field on session_id next to same_field on
     prov_fp_notable. Both were accepted by wazuh-analysisd -t and behaved as intended under
     wazuh-logtest on 4.14.8 (observed offline): one session repeating a fingerprint raises
-    nothing, a second session raising it does. The 3600s and 7200s windows themselves were
-    not exercised, because logtest replays instantly.
+    nothing, a second session raising it does. The expiry mechanism was checked on wall-clock
+    time with a 60s copy of the rule; the shipped 3600s and 7200s values were not waited out.
   - 100282 counts 100281 alerts, not raw sightings. It fires on the fifth sighting across
     sessions: by then 100281's conditions have matched four times counting that event, and
     that event alerts as 100282. It cannot count 100280 events directly: once 100281 alerts

@@ -182,3 +182,67 @@ func TestOnlyTheSightingCrossesAsANotableFingerprint(t *testing.T) {
 		t.Errorf("%d events crossed as %s, want 1: the fp_sighting", got, filter.ReasonNotableFP)
 	}
 }
+
+// refusable is a sink that can be told to refuse writes, like jsonl.Writer with a full queue.
+type refusable struct {
+	*memSink
+	refuse bool
+}
+
+func (r *refusable) Write(v any) bool {
+	if r.refuse {
+		return false
+	}
+	return r.memSink.Write(v)
+}
+
+func newCollectorWithEventsSink(t *testing.T, events Sink) *Collector {
+	t.Helper()
+	c, _, _ := newTestCollector(t)
+	c.events = events
+	return c
+}
+
+// A sighting the events sink refuses never reached the SIEM, so the session must try again with the next
+// tool result that carries the fingerprint, and stop once one is accepted.
+func TestRefusedSightingIsSentAgainAndThenStopsOnceAccepted(t *testing.T) {
+	events := &refusable{memSink: &memSink{}, refuse: true}
+	c := newCollectorWithEventsSink(t, events)
+
+	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test"))) // refused
+	if n := len(siemLines(t, events.memSink, event.KindFPSighting)); n != 0 {
+		t.Fatalf("%d sightings reached a sink that refuses everything", n)
+	}
+
+	events.refuse = false
+	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test"))) // retried, accepted
+	if n := len(siemLines(t, events.memSink, event.KindFPSighting)); n != 1 {
+		t.Fatalf("%d sightings after the sink recovered, want 1: the refused one must be retried", n)
+	}
+
+	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test"))) // accepted before: not sent again
+	if n := len(siemLines(t, events.memSink, event.KindFPSighting)); n != 1 {
+		t.Errorf("%d sightings after a repeat, want 1: an accepted sighting stays marked", n)
+	}
+}
+
+// Other fingerprints in the same session, and other sessions, are unaffected by one refusal.
+func TestRefusalOfOneSightingDoesNotAffectOthers(t *testing.T) {
+	events := &refusable{memSink: &memSink{}}
+	c := newCollectorWithEventsSink(t, events)
+
+	events.refuse = true
+	c.Handle(fetchPost("s1", pageURL, resultWith("a@evil.test"))) // refused
+	events.refuse = false
+	c.Handle(fetchPost("s1", pageURL, resultWith("b@evil.test"))) // a different fingerprint
+	c.Handle(fetchPost("s2", pageURL, resultWith("a@evil.test"))) // another session
+	c.Handle(fetchPost("s1", pageURL, resultWith("b@evil.test"))) // b was accepted: no repeat
+
+	got := siemLines(t, events.memSink, event.KindFPSighting)
+	if len(got) != 2 {
+		t.Fatalf("%d sightings, want 2 (b in s1, a in s2)", len(got))
+	}
+	if got[0]["session_id"] != "s1" || got[1]["session_id"] != "s2" {
+		t.Errorf("sightings came from %v and %v, want s1 then s2", got[0]["session_id"], got[1]["session_id"])
+	}
+}

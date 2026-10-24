@@ -21,6 +21,23 @@ func newFPSet(capacity int) *fpSet {
 	return &fpSet{cap: capacity, seen: map[string]struct{}{}}
 }
 
+// forget takes fp back out, so the next add reports it as new again. It is for a sighting that never
+// reached the SIEM: the session should not count as having sent what the sink refused. The slot is
+// emptied rather than removed, so the ring keeps its order and a later eviction cannot delete a
+// fingerprint that was added again.
+func (s *fpSet) forget(fp string) {
+	if _, ok := s.seen[fp]; !ok {
+		return
+	}
+	delete(s.seen, fp)
+	for i, v := range s.order {
+		if v == fp {
+			s.order[i] = ""
+			return
+		}
+	}
+}
+
 // add records fp and reports whether the session had not sent it before.
 func (s *fpSet) add(fp string) bool {
 	if s.cap < 1 {
@@ -32,7 +49,9 @@ func (s *fpSet) add(fp string) bool {
 	if len(s.order) < s.cap {
 		s.order = append(s.order, fp)
 	} else {
-		delete(s.seen, s.order[s.next])
+		if old := s.order[s.next]; old != "" { // "" is a slot forget() emptied
+			delete(s.seen, old)
+		}
 		s.order[s.next] = fp
 		s.next = (s.next + 1) % s.cap
 	}
