@@ -155,6 +155,8 @@ internal/baseline/       D4: the approved baseline and its state machine
 internal/interpose/      the passthrough, the analyzer, the loopback report
 internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
+internal/runstate/       ambitd.state: each run's last heartbeat and how it stopped
+internal/m0report/       `ambitd report`: the M0 exit criteria for one endpoint, from the spool
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
 internal/fsperm/         private directories: 0700 on Unix, an explicit ACL on Windows
@@ -170,7 +172,8 @@ testdata/agentdojo/      per-tool MCP labels for AgentDojo's four suites, and li
 
 ```sh
 ./scripts/dev-local.sh          # run it against your own Claude Code sessions
-./scripts/dev-local.sh --status  # the M0 interesting-fraction readout
+./scripts/dev-local.sh --status  # what was collected, then the M0 readout
+ambitd report -config <config>   # M0 criteria from the spool: hook p99, loss, restarts, interesting fraction
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
@@ -405,8 +408,9 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 Exit criteria gate each milestone. **M0:** a 5–10 endpoint volunteer cohort; p99 hook
 response under 5 ms; zero developer-visible behavior change, verified by asking; local
 spool event loss under 0.1%; the share of tool calls that cross to Wazuh measured
-(design estimate 2–5%; `./scripts/dev-local.sh --status` reports it); and no
-`Too many fields for JSON decoder` errors in the manager log. **M1:** every MCP server
+(design estimate 2–5%); and no
+`Too many fields for JSON decoder` errors in the manager log. `ambitd report` on each endpoint
+computes the latency, loss and fraction criteria from the spool. **M1:** every MCP server
 the cohort uses inventoried with an approved baseline; a deliberately mutated server
 triggers D4 within a session; killing `ambitd` fires D7 and stopping the Wazuh agent
 fires rule 504; reverting a managed-settings key fires D12; and someone outside the

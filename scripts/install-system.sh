@@ -258,6 +258,10 @@ do_status() {
     echo "managed settings: absent"
   fi
   echo "data:             $DATA_DIR"
+  if [ -x "$BIN_PATH" ] && [ -f "$DATA_DIR/trajectory.jsonl" ]; then
+    echo
+    "$BIN_PATH" report -config "$CONFIG" || echo "ambitd report failed" >&2
+  fi
 }
 
 mode=install bin="" purge=0

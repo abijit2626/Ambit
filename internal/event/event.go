@@ -300,4 +300,28 @@ type Health struct {
 	QueueDepth    int    `json:"queue_depth"`
 	DroppedEvents int64  `json:"dropped_events"`
 	UptimeSec     int64  `json:"uptime_sec"`
+
+	RunID   string `json:"run_id,omitempty"`
+	Final   bool   `json:"final,omitempty"`
+	Handled int64  `json:"handled"`
+	Crossed int64  `json:"crossed"`
+
+	ToolCalls   int64 `json:"tool_calls"`
+	ToolCrossed int64 `json:"tool_crossed"`
+
+	TrajectoryWritten int64 `json:"trajectory_written"`
+	WriteErrors       int64 `json:"write_errors"`
+	ParseErrors       int64 `json:"parse_errors"`
+	TrajectoryRetired int64 `json:"trajectory_retired_files"`
+
+	HookLatency *Latency `json:"hook_latency,omitempty"`
+	PrevRun     *PrevRun `json:"prev_run,omitempty"`
+}
+
+type PrevRun struct {
+	RunID         string `json:"run_id,omitempty"`
+	Version       string `json:"version,omitempty"`
+	Stop          string `json:"stop"`
+	LastHeartbeat string `json:"last_heartbeat,omitempty"`
+	DownSec       int64  `json:"down_sec"`
 }

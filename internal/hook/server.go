@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-
-	"github.com/abijit2626/ambit/internal/loopback"
+	"sync/atomic"
 	"time"
+
+	"github.com/abijit2626/ambit/internal/event"
+	"github.com/abijit2626/ambit/internal/loopback"
 )
 
 const maxBodyBytes = 4 << 20
@@ -39,6 +41,14 @@ type Server struct {
 	srv     *http.Server
 
 	Budget time.Duration
+
+	latency     *latencyRecorder
+	parseErrors atomic.Int64
+}
+
+type Stats struct {
+	Latency     event.Latency
+	ParseErrors int64
 }
 
 type Options struct {
@@ -69,6 +79,7 @@ func NewServer(opts Options) (*Server, error) {
 		decider: opts.Decider,
 		log:     opts.Logger,
 		Budget:  opts.Budget,
+		latency: newLatencyRecorder(opts.Budget),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/hook", s.serveHook)
@@ -123,6 +134,7 @@ func (s *Server) serveHook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
 
+		s.parseErrors.Add(1)
 		s.log.Warn("hook body read failed", "err", err)
 		s.respond(w, &Response{}, start)
 		return
@@ -130,6 +142,7 @@ func (s *Server) serveHook(w http.ResponseWriter, r *http.Request) {
 
 	var p Payload
 	if err := json.Unmarshal(body, &p); err != nil {
+		s.parseErrors.Add(1)
 		s.log.Warn("hook body parse failed", "err", err, "bytes", len(body))
 		s.respond(w, &Response{}, start)
 		return
@@ -149,9 +162,15 @@ func (s *Server) respond(w http.ResponseWriter, resp *Response, start time.Time)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		s.log.Warn("hook response write failed", "err", err)
 	}
-	if d := time.Since(start); d > s.Budget {
+	d := time.Since(start)
+	s.latency.record(d)
+	if d > s.Budget {
 		s.log.Warn("hook response exceeded latency budget", "took", d, "budget", s.Budget)
 	}
+}
+
+func (s *Server) Stats() Stats {
+	return Stats{Latency: s.latency.snapshot(), ParseErrors: s.parseErrors.Load()}
 }
 
 func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {

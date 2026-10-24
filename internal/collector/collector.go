@@ -109,7 +109,8 @@ type Collector struct {
 	handled atomic.Int64
 	crossed atomic.Int64
 
-	hookToolCalls atomic.Int64
+	hookToolCalls   atomic.Int64
+	hookToolCrossed atomic.Int64
 
 	provIngests    atomic.Int64
 	provRegistered atomic.Int64
@@ -206,6 +207,9 @@ func (c *Collector) emit(e *event.Event) {
 	c.recordReason(v)
 	if v.Cross {
 		c.crossed.Add(1)
+		if e.Source == event.SourceHook && (e.Kind == event.KindToolPre || e.Kind == event.KindToolPost) {
+			c.hookToolCrossed.Add(1)
+		}
 		c.events.Write(filter.Sanitize(event.Flatten(e)))
 	}
 }
@@ -665,6 +669,8 @@ func (c *Collector) Forget(sessionID string) {
 type Stats struct {
 	Handled          int64
 	Crossed          int64
+	HookToolCalls    int64
+	HookToolCrossed  int64
 	Sessions         int
 	CrossReasons     map[string]int64
 	InterposeReports int64
@@ -707,6 +713,8 @@ func (c *Collector) Stats() Stats {
 	return Stats{
 		Handled:          c.handled.Load(),
 		Crossed:          c.crossed.Load(),
+		HookToolCalls:    c.hookToolCalls.Load(),
+		HookToolCrossed:  c.hookToolCrossed.Load(),
 		Sessions:         sessions,
 		CrossReasons:     reasons,
 		InterposeReports: c.interposeReports.Load(),
