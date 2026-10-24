@@ -221,7 +221,7 @@ make replay                                   # the corpus, human-readable
 A gate on a metric the corpus cannot compute fails rather than passes. `go test ./...` runs
 the same corpus as a regression suite.
 
-**The starter corpus is 26 hand-written scenarios. Its numbers describe those scenarios and
+**The starter corpus is 33 hand-written scenarios. Its numbers describe those scenarios and
 nothing else**, and say nothing about precision on real traffic: it was written alongside the
 engine, by the same author, so it tests what that author thought of. It exists to pin behavior,
 include attacks adapted to defeat the engine (a paraphrased destination, a poisoned instruction
