@@ -172,6 +172,7 @@ type Collector struct {
 
 	handled atomic.Int64
 	crossed atomic.Int64
+	derived atomic.Int64
 
 	hookToolCalls   atomic.Int64
 	hookToolCrossed atomic.Int64
@@ -249,7 +250,7 @@ func New(opts Options) *Collector {
 
 func (c *Collector) Handle(p *hook.Payload) {
 	c.handled.Add(1)
-	e, sighting := c.build(p)
+	e, sighting, st := c.build(p)
 	if e == nil {
 		return
 	}
@@ -258,13 +259,13 @@ func (c *Collector) Handle(p *hook.Payload) {
 	}
 
 	c.emit(e)
-	c.emitModeChange(p.SessionID, e)
-	c.emitNoPrompt(p, e)
-	c.emitSandboxDenial(p, e)
+	c.emitModeChange(st, e)
+	c.emitNoPrompt(st, p, e)
+	c.emitSandboxDenial(st, p, e)
 	if sighting != nil && !c.emitDerived(sighting) {
 		// the events sink refused it (its queue is full): the session has not sent this fingerprint, so
 		// the next tool result that carries it must try again
-		c.unsight(p.SessionID, sighting.Provenance.FPNotable)
+		st.unsightFingerprint(sighting.Provenance.FPNotable)
 	}
 
 	if p.HookEventName == hook.EvSessionEnd {
@@ -289,27 +290,26 @@ func (c *Collector) emit(e *event.Event) {
 // emitDerived sends an event ambitd derived from one already in the spool to the SIEM only. The spool
 // keeps one line per hook event; an fp_sighting can be rebuilt from it as the first tool event in a
 // session carrying that fingerprint.
-// It reports whether the event reached the sink, which is false only if the sink refused it.
+// It reports whether the event reached the sink, which is false only if the sink refused it. Derived
+// events are counted apart from crossed, which counts handled events, so the interesting fraction
+// stays a fraction of what ambitd handled.
 func (c *Collector) emitDerived(e *event.Event) bool {
 	v := c.filt.Decide(e)
 	c.recordReason(v)
 	if !v.Cross {
 		return true
 	}
-	c.crossed.Add(1)
-	return c.events.Write(filter.Sanitize(event.Flatten(e)))
+	if !c.events.Write(filter.Sanitize(event.Flatten(e))) {
+		return false
+	}
+	c.derived.Add(1)
+	return true
 }
 
 // emitModeChange sends a session_mode event when e is the first event of its session to carry a
 // permission mode, or carries a different one from the last sent. SessionStart has no mode, so for most
 // sessions this is the first prompt.
-func (c *Collector) emitModeChange(sessionID string, e *event.Event) {
-	c.mu.Lock()
-	st := c.sessions[sessionID]
-	c.mu.Unlock()
-	if st == nil {
-		return
-	}
+func (c *Collector) emitModeChange(st *sessionState, e *event.Event) {
 	mode, prev, ok := st.takeModeChange()
 	if !ok {
 		return
@@ -321,25 +321,12 @@ func (c *Collector) emitModeChange(sessionID string, e *event.Event) {
 
 // emitNoPrompt sends a session_no_prompt event for the first tool call of a session that started with
 // ambitd watching and has had no prompt.
-func (c *Collector) emitNoPrompt(p *hook.Payload, e *event.Event) {
-	c.mu.Lock()
-	st := c.sessions[p.SessionID]
-	c.mu.Unlock()
-	if st == nil || !st.observePrompting(p) {
+func (c *Collector) emitNoPrompt(st *sessionState, p *hook.Payload, e *event.Event) {
+	if !st.observePrompting(p) {
 		return
 	}
 	if !c.emitDerived(sessionNoPrompt(e, st)) {
 		st.unsendNoPrompt()
-	}
-}
-
-// unsight forgets that a session sent a fingerprint, if the session still exists.
-func (c *Collector) unsight(sessionID, fp string) {
-	c.mu.Lock()
-	st := c.sessions[sessionID]
-	c.mu.Unlock()
-	if st != nil {
-		st.unsightFingerprint(fp)
 	}
 }
 
@@ -353,12 +340,12 @@ func (c *Collector) recordReason(v filter.Verdict) {
 	c.reasonMu.Unlock()
 }
 
-// build returns the event for p and, when p is a session's first sighting of a notable fingerprint,
-// the fp_sighting event that goes with it.
-func (c *Collector) build(p *hook.Payload) (*event.Event, *event.Event) {
+// build returns the event for p, its session, and, when p is a session's first sighting of a notable
+// fingerprint, the fp_sighting event that goes with it.
+func (c *Collector) build(p *hook.Payload) (*event.Event, *event.Event, *sessionState) {
 	kind, ok := kindFor(p.HookEventName)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	st := c.session(p)
 
@@ -409,7 +396,7 @@ func (c *Collector) build(p *hook.Payload) (*event.Event, *event.Event) {
 	case event.KindInstructionsLoaded, event.KindConfigChange, event.KindFileChanged:
 		c.fillConfig(e, p, st)
 	}
-	return e, sighting
+	return e, sighting, st
 }
 
 // sessionMode is the event rule 100200 reads: the session's identity and its permission mode, with no
@@ -838,6 +825,7 @@ func (c *Collector) Forget(sessionID string) {
 type Stats struct {
 	Handled          int64
 	Crossed          int64
+	Derived          int64
 	HookToolCalls    int64
 	HookToolCrossed  int64
 	Sessions         int
@@ -882,6 +870,7 @@ func (c *Collector) Stats() Stats {
 	return Stats{
 		Handled:          c.handled.Load(),
 		Crossed:          c.crossed.Load(),
+		Derived:          c.derived.Load(),
 		HookToolCalls:    c.hookToolCalls.Load(),
 		HookToolCrossed:  c.hookToolCrossed.Load(),
 		Sessions:         sessions,

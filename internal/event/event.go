@@ -320,6 +320,7 @@ type Health struct {
 	Final   bool   `json:"final,omitempty"`
 	Handled int64  `json:"handled"`
 	Crossed int64  `json:"crossed"`
+	Derived int64  `json:"derived"`
 
 	ToolCalls   int64 `json:"tool_calls"`
 	ToolCrossed int64 `json:"tool_crossed"`

@@ -312,6 +312,7 @@ func (h *heartbeat) emit(final bool) {
 			Final:   final,
 			Handled: st.Handled,
 			Crossed: st.Crossed,
+			Derived: st.Derived,
 
 			ToolCalls:   st.HookToolCalls,
 			ToolCrossed: st.HookToolCrossed,
