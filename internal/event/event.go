@@ -31,6 +31,11 @@ const (
 	// KindSessionMode is ambitd's own event for a session's permission mode, sent when the mode is first
 	// known and when it changes. SessionStart carries no mode, so a rule on session_start cannot see it.
 	KindSessionMode Kind = "session_mode"
+
+	// KindSessionNoPrompt is ambitd's own event for a session that made a tool call before any prompt:
+	// ambitd saw it start and saw no UserPromptSubmit before its first PreToolUse. D1's "session with no
+	// human" is that absence, which a rule engine cannot see, so ambitd reports it as an event.
+	KindSessionNoPrompt Kind = "session_no_prompt"
 )
 
 const (

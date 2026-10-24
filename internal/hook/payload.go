@@ -42,6 +42,9 @@ type Payload struct {
 
 	Model string `json:"model"`
 
+	// Source is why a SessionStart fired: startup, resume, clear or compact.
+	Source string `json:"source"`
+
 	Prompt string `json:"prompt"`
 
 	UserInput string `json:"user_input"` // legacy name for Prompt
