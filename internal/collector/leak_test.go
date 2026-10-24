@@ -105,3 +105,26 @@ func FuzzNoContentCrossesToTheSIEMInCleartext(f *testing.F) {
 		}
 	})
 }
+
+// Whatever Claude Code, or anything else on the endpoint, posts to the hook, the collector must not panic,
+// and crossed stays a fraction of handled.
+func FuzzHandleArbitraryHookJSON(f *testing.F) {
+	for _, p := range payloadsCarrying("/home/dev/x") {
+		raw, _ := json.Marshal(p)
+		f.Add(raw)
+	}
+	f.Add([]byte(`{"hook_event_name":"PostToolUse","session_id":"s","tool_name":"WebFetch","tool_response":{"a":[1,{"b":"https://x.test"}]}}`))
+	f.Add([]byte(`{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"mcp____","tool_input":{"command":["x"]}}`))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		var p hook.Payload
+		if json.Unmarshal(raw, &p) != nil {
+			return
+		}
+		c, _, _ := newTestCollector(t)
+		c.Handle(&p)
+		c.Handle(&p)
+		if st := c.Stats(); st.Crossed > st.Handled {
+			t.Fatalf("crossed %d > handled %d", st.Crossed, st.Handled)
+		}
+	})
+}

@@ -66,12 +66,15 @@ FUZZTIME ?= 30s
 FUZZ_TARGETS := \
 	./internal/redact:FuzzRedactIsAFixedPoint \
 	./internal/redact:FuzzRedactStripsADelimitedSecret \
+	./internal/redact:FuzzPrefilterChangesNothing \
+	./internal/features:FuzzPerWordExtractionChangesNothing \
 	./internal/classify:FuzzBashWrappingNeverLowersTheClass \
 	./internal/mcp:FuzzRelayIsByteExact \
 	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \
 	./internal/mcp:FuzzParseNeverPanics \
 	./internal/collector:FuzzSandboxDenialsStayClean \
-	./internal/collector:FuzzNoContentCrossesToTheSIEMInCleartext
+	./internal/collector:FuzzNoContentCrossesToTheSIEMInCleartext \
+	./internal/collector:FuzzHandleArbitraryHookJSON
 
 fuzz:
 	@for t in $(FUZZ_TARGETS); do \
