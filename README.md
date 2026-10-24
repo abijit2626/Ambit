@@ -447,9 +447,9 @@ team executes a runbook against a sample alert.
   absolute path; like the `http` hooks it uses the default hook address. In the lab a
   `session_start` reached the spool this way (observed with a probe project; the installed
   bundle's exact command is untested). The real payload has no `permission_mode`, so rule
-  100200, which needs `bypassPermissions` on a `session_start`, cannot fire on a live endpoint
-  (inferred from the rule's condition). D1 rests on 100201 to 100203, which read the mode from
-  tool events. The installers upgrade a managed-settings file that is exactly the earlier
+  100200 reads a `session_mode` event instead: ambitd sends one when a session's mode is first
+  known (its first prompt, in a live session) and again when it changes. 100200 fires on it under
+  `wazuh-logtest` 4.14.8 (observed offline; not yet seen from a live session). The installers upgrade a managed-settings file that is exactly the earlier
   bundle and refuse to touch any other.
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,

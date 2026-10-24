@@ -27,6 +27,10 @@ const (
 	// It exists so the D10 rules count an event no other rule competes for: a tool_post carrying the
 	// same fingerprint can alert as something else (100302), and Wazuh counts only the rule that won.
 	KindFPSighting Kind = "fp_sighting"
+
+	// KindSessionMode is ambitd's own event for a session's permission mode, sent when the mode is first
+	// known and when it changes. SessionStart carries no mode, so a rule on session_start cannot see it.
+	KindSessionMode Kind = "session_mode"
 )
 
 const (

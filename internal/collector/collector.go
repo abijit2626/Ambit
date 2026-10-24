@@ -49,6 +49,30 @@ type sessionState struct {
 	sens *prov.Set
 
 	fpSent *fpSet
+
+	modeSent string
+}
+
+// takeModeChange reports the session's mode when ambitd has not yet sent it as a session_mode event:
+// the first time the mode is known, and each time it changes. prev is what to restore if the send fails.
+func (s *sessionState) takeModeChange() (mode, prev string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.permMode == "" || s.permMode == s.modeSent {
+		return "", "", false
+	}
+	prev, s.modeSent = s.modeSent, s.permMode
+	return s.permMode, prev, true
+}
+
+// unsendMode undoes takeModeChange for a session_mode event the events sink refused, unless a later
+// change has already been sent.
+func (s *sessionState) unsendMode(mode, prev string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.modeSent == mode {
+		s.modeSent = prev
+	}
 }
 
 // unsightFingerprint undoes firstFingerprintSighting for a sighting the events sink refused.
@@ -198,6 +222,7 @@ func (c *Collector) Handle(p *hook.Payload) {
 	}
 
 	c.emit(e)
+	c.emitModeChange(p.SessionID, e)
 	if sighting != nil && !c.emitDerived(sighting) {
 		// the events sink refused it (its queue is full): the session has not sent this fingerprint, so
 		// the next tool result that carries it must try again
@@ -235,6 +260,25 @@ func (c *Collector) emitDerived(e *event.Event) bool {
 	}
 	c.crossed.Add(1)
 	return c.events.Write(filter.Sanitize(event.Flatten(e)))
+}
+
+// emitModeChange sends a session_mode event when e is the first event of its session to carry a
+// permission mode, or carries a different one from the last sent. SessionStart has no mode, so for most
+// sessions this is the first prompt.
+func (c *Collector) emitModeChange(sessionID string, e *event.Event) {
+	c.mu.Lock()
+	st := c.sessions[sessionID]
+	c.mu.Unlock()
+	if st == nil {
+		return
+	}
+	mode, prev, ok := st.takeModeChange()
+	if !ok {
+		return
+	}
+	if !c.emitDerived(sessionMode(e, mode, st)) {
+		st.unsendMode(mode, prev)
+	}
 }
 
 // unsight forgets that a session sent a fingerprint, if the session still exists.
@@ -314,6 +358,29 @@ func (c *Collector) build(p *hook.Payload) (*event.Event, *event.Event) {
 		c.fillConfig(e, p, st)
 	}
 	return e, sighting
+}
+
+// sessionMode is the event rule 100200 reads: the session's identity and its permission mode, with no
+// tool, path or policy fields, so no tool rule can match it.
+func sessionMode(from *event.Event, mode string, st *sessionState) *event.Event {
+	m := &event.Event{
+		EventID:    newEventID(),
+		TS:         from.TS,
+		IngestedAt: from.IngestedAt,
+		Source:     event.SourceAmbitd,
+		SchemaV:    from.SchemaV,
+		Kind:       event.KindSessionMode,
+		Endpoint:   from.Endpoint,
+		Actor:      from.Actor,
+		Agent:      from.Agent,
+		Session:    event.Session{SessionID: from.Session.SessionID, PromptID: from.Session.PromptID},
+		R2:         from.R2,
+		Policy:     event.Policy{Decision: event.DecisionNone},
+	}
+	m.Agent.PermissionMode = mode
+	m.Session.Sequence = st.next()
+	m.R2.Transition = false
+	return m
 }
 
 // fpSighting is the event the D10 rules count: the identity and session of the tool event that first

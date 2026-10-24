@@ -249,6 +249,7 @@ Filtering happens in `ambitd`, by event kind:
 | `ambitd_health` | **yes** | D7, D11 |
 | `goal_drift_score` | **only above threshold** | One score per tool call is the firehose again |
 | `fp_sighting` | **yes** (SIEM only, not the spool) | D10. ambitd's own event: a session's first sighting of a notable fingerprint, one per session and fingerprint. Carries identity, session, `tool_name`, `tool_use_id` (the `tool_post` it came from), `prov_fp_notable` and `prov_fp_role`, and nothing a tool, policy, edge or taint rule keys on, so only rule 100280 can match it. Rebuildable from the spool as the first `tool_post` per session carrying that fingerprint |
+| `session_mode` | **yes** (SIEM only, not the spool) | D1 (rule 100200). ambitd's own event for a session's `permission_mode`, sent the first time it is known and each time it changes. `SessionStart` carries no mode, so for a live session this is its first prompt. Carries identity, session and `permission_mode`, and no tool, path or policy field. Rebuildable from the spool, where every event repeats the mode |
 
 A `tool_pre` or `tool_post` event is **interesting** — and therefore crosses — when
 any of:

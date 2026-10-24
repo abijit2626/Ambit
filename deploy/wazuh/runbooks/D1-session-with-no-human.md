@@ -12,19 +12,21 @@ then did.
 
 | Rule | Level | Means |
 | --- | --- | --- |
-| 100200 | 5 | A session started in `bypassPermissions` |
+| 100200 | 5 | A session is running in `bypassPermissions` (once per session, and once per switch into it) |
 | 100201 | 13 | **Credential-zone read in such a session** — the core alert |
 | 100202 | 12 | Outbound network command in such a session |
 | 100203 | 12 | Secret material in a tool call from such a session |
 | 100204 | 12 | Non-interactive entrypoint — **inert, see below** |
 | 100205 | 13 | **Any other credential-zone operation in such a session** (a write, or a `path_op` that is not a read) |
 
-**100200 cannot fire on a live endpoint (inferred).** It needs `permission_mode` to be
-`bypassPermissions` on a `session_start`, and the `SessionStart` payload Claude Code sends
-has no such key (observed: `cwd`, `hook_event_name`, `model`, `scratchpad_dir`, `session_id`,
-`source`, `transcript_path`). The `session_start` event does arrive through the bundle's
-command hook, with an empty mode. 100201 to 100203 read the mode from tool events and are
-unaffected.
+**100200 reads a `session_mode` event, not `session_start`.** The `SessionStart` payload Claude
+Code sends has no `permission_mode` (observed: `cwd`, `hook_event_name`, `model`,
+`scratchpad_dir`, `session_id`, `source`, `transcript_path`), so the `session_start` event always
+arrives with an empty mode. ambitd sends a separate `session_mode` event the first time it learns
+a session's mode, which for a live session is its first prompt, and again whenever the mode
+changes. 100200 fires on that event (confirmed under `wazuh-logtest` on 4.14.8; not yet seen from
+a live session). A session that switches into bypass mode partway through raises 100200 at the
+switch. 100201 to 100203 read the mode from tool events and do not depend on it.
 
 ## What this alert asserts
 
