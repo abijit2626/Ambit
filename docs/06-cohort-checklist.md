@@ -113,7 +113,8 @@ Each one will otherwise cost the cohort a week to discover.
    interactive session prompts the developer for it instead of failing is not observed. The M0
    bundle sets no sandbox key, so this comes from the volunteer's own settings: ask each one
    whether they run with the sandbox, and check `events.jsonl` gains a `prompt_submit` after
-   their first session. Allowing `127.0.0.1` also lets sandboxed commands reach every local port,
+   their first session. `ambitd report` counts the sessions that sent nothing after their
+   `SessionStart` and warns when there are any, which is this failure's signature. Allowing `127.0.0.1` also lets sandboxed commands reach every local port,
    ambitd's included; docs/02 has the trade-off.
 
 ## Prove it on one machine you own
