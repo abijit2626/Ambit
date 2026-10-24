@@ -99,3 +99,24 @@ func TestOrdinaryFailureSendsNoSandboxDenial(t *testing.T) {
 		t.Errorf("a failure with no violations block sent %d sandbox_denial events", len(got))
 	}
 }
+
+// A command's output reaches the parser, so a forged block must not get anything but a cleaned op
+// through, nor more than maxDenials of them.
+func FuzzSandboxDenialsStayClean(f *testing.F) {
+	f.Add(observedDenial)
+	f.Add("<sandbox_violations>\ndeny \x00\xff x (y)\ndeny NETWORK h:1\n</sandbox_violations>")
+	f.Add("<sandbox_violations>deny a b (c)")
+	f.Fuzz(func(t *testing.T, text string) {
+		ds := sandboxDenials(text)
+		if len(ds) > maxDenials {
+			t.Fatalf("%d denials, cap is %d", len(ds), maxDenials)
+		}
+		for _, d := range ds {
+			if d.op != "other" {
+				if d.op == "" || len(d.op) > maxOpLen || strings.Trim(d.op, "abcdefghijklmnopqrstuvwxyz-") != "" {
+					t.Fatalf("op %q is not clean", d.op)
+				}
+			}
+		}
+	})
+}
