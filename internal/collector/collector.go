@@ -51,6 +51,13 @@ type sessionState struct {
 	fpSent *fpSet
 }
 
+// unsightFingerprint undoes firstFingerprintSighting for a sighting the events sink refused.
+func (s *sessionState) unsightFingerprint(fp string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fpSent.forget(fp)
+}
+
 // firstFingerprintSighting reports whether this session has not yet sent fp as its notable fingerprint.
 func (s *sessionState) firstFingerprintSighting(fp string) bool {
 	s.mu.Lock()
@@ -190,8 +197,10 @@ func (c *Collector) Handle(p *hook.Payload) {
 	}
 
 	c.emit(e)
-	if sighting != nil {
-		c.emitDerived(sighting)
+	if sighting != nil && !c.emitDerived(sighting) {
+		// the events sink refused it (its queue is full): the session has not sent this fingerprint, so
+		// the next tool result that carries it must try again
+		c.unsight(p.SessionID, sighting.Provenance.FPNotable)
 	}
 
 	if p.HookEventName == hook.EvSessionEnd {
@@ -213,12 +222,24 @@ func (c *Collector) emit(e *event.Event) {
 // emitDerived sends an event ambitd derived from one already in the spool to the SIEM only. The spool
 // keeps one line per hook event; an fp_sighting can be rebuilt from it as the first tool event in a
 // session carrying that fingerprint.
-func (c *Collector) emitDerived(e *event.Event) {
+// It reports whether the event reached the sink, which is false only if the sink refused it.
+func (c *Collector) emitDerived(e *event.Event) bool {
 	v := c.filt.Decide(e)
 	c.recordReason(v)
-	if v.Cross {
-		c.crossed.Add(1)
-		c.events.Write(filter.Sanitize(event.Flatten(e)))
+	if !v.Cross {
+		return true
+	}
+	c.crossed.Add(1)
+	return c.events.Write(filter.Sanitize(event.Flatten(e)))
+}
+
+// unsight forgets that a session sent a fingerprint, if the session still exists.
+func (c *Collector) unsight(sessionID, fp string) {
+	c.mu.Lock()
+	st := c.sessions[sessionID]
+	c.mu.Unlock()
+	if st != nil {
+		st.unsightFingerprint(fp)
 	}
 }
 
