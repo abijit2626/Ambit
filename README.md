@@ -90,6 +90,7 @@ platform, not a replacement for either.**
 
 | Doc | Contents |
 | --- | --- |
+| [00-quickstart.md](docs/00-quickstart.md) | What ambit is and how to try it, in plain terms |
 | [01-threat-model.md](docs/01-threat-model.md) | Five adversaries, assets, trust assumptions, the MSSP egress posture, residual risk |
 | [02-architecture.md](docs/02-architecture.md) | `ambitd`, `mcp-interpose`, Wazuh; interception points; FIM and SCA config; trust boundaries; latency and failure modes; tenancy |
 | [03-detection.md](docs/03-detection.md) | Three detection layers, the ambitd/Wazuh split, rule snippets, D1–D12, ATT&CK mappings, runbook requirements |
@@ -118,11 +119,12 @@ claiming coverage.
 
 ## Code
 
-The Go, shell and PowerShell source and the Makefile carry no comments, apart from the
+Most of the Go, shell and PowerShell source and the Makefile carry no comments, apart from the
 build-constraint lines Go reads. The reasoning that used to sit beside the code is in
 [docs/](docs/) and the tests, which are named for the behavior they pin; the version with the
 comments is the last commit before they were removed, `3a8cdc5`
-(`git show 3a8cdc5:path/to/file.go`). The Wazuh rules, SCA policies, the managed-settings bundle
+(`git show 3a8cdc5:path/to/file.go`). Code added since (`hook-forward`, `report`, `doctor`, the
+derived events, the fuzz targets) carries short doc comments where the reason is not in the code. The Wazuh rules, SCA policies, the managed-settings bundle
 and the CI workflow are configuration that operators read, and keep their comments.
 
 `ambitd` is **observe-only** (M0; see the Roadmap below). It receives Claude Code hook
