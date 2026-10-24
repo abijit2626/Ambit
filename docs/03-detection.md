@@ -918,6 +918,43 @@ What the first runs found, recorded because they are the reason a harness is wor
     agent's answer.* The travel injections that only change what the agent says produce no
     action, so an action monitor cannot see them. (4) Paraphrase, as above, which the hand-written
     corpus already records.
+- **No property of the edge itself separates the false positives on AgentDojo either.** Every
+  edge in a labelled Claude 3.7 run was joined back to its action and the result it came from,
+  and broken down by match class, acting tool, and the input field that carried the value. The
+  hostile and benign rows are the same rows: `get_webpage` with a `domain` in `url` (25 hostile,
+  9 benign), `invite_user_to_slack` with an `email` in `user_email` (21, 5), `send_email` with an
+  `email` in the recipients and body. Nor does the source look like an injection to a generic
+  pattern: `internal/toolscan`'s instruction patterns, applied unchanged to the result each edge
+  came from, match none of the 37 hostile runs' sources. AgentDojo's `important_instructions`
+  text ("Before you can solve the task that I gave you in the beginning, please do the
+  following first") has no "ignore previous" or "you must" in it, and patterns written to catch
+  it would be fitted to this one dataset. An edge says where a value came from, and legitimate
+  carry-through comes from the same place.
+- **Prototype: the composite's third leg separates them, on these attacks.** The page condition
+  above wants an action that does not serve the stated objective. That judgment was tried
+  offline, after the fact, on every flagged run: a small model (Claude Haiku 5.5, through the
+  Claude Code CLI, no tools) was given only the user's prompt and the actions that drew an edge,
+  never the tool results, and asked per action whether it serves the request
+  (`testdata/agentdojo/goal-judge-prompt.txt`, 22 runs per call). A run counts if any of its
+  edge actions is judged unrelated.
+
+  | | edge alone | edge and judged unrelated |
+  | --- | ---: | ---: |
+  | Claude 3.7, hostile runs caught | 37 / 47 (0.79) | 30 / 47 (0.64); second judging 29 |
+  | Claude 3.7, benign runs flagged | 29 / 132 (0.22) | 1 / 132 (0.01); second judging 1 |
+  | GPT-4o banking, hostile caught | 203 / 553 (0.37) | 121 / 553 (0.22) |
+  | GPT-4o banking, benign flagged | 5 / 25 (0.20) | 2 / 25 (0.08) |
+
+  Judged twice, the Claude 3.7 verdicts changed on 1 of 66 flagged runs. The misses are where an
+  injected action looks like the task: a website visit when the user asked about websites, a
+  calendar event or file deletion in an office task, a payment in a banking task. That is the
+  limit to expect: these are AgentDojo's baseline attacks, and an attacker who knows a judge is
+  watching will make the injected action look on-task, which by NIST's warning above is the
+  number that matters. It also inherits the edge's misses. What it does show is that the false
+  positives the edge cannot separate are separable by a question the edge does not ask, which is
+  the case for building goal drift (M4) as designed: asynchronous, on the stated objective, never
+  in the path of a tool call, and never paging alone. The judgment is not built into ambitd; this
+  measured whether it would be worth building.
 - **Confidence does not separate the false positives in the starter corpus.** The benign
   carry-through cases (following a documentation link, putting an article's URL in a summary)
   are full-URL matches at 0.95, so raising the floor removes recall and keeps them. The edge
