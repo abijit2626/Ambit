@@ -26,6 +26,7 @@ type Stats struct {
 	Dropped    int64
 	QueueDepth int
 	WriteErrs  int64
+	Retired    int64
 }
 
 type Options struct {
@@ -70,6 +71,7 @@ type Writer struct {
 	written   atomic.Int64
 	dropped   atomic.Int64
 	writeErrs atomic.Int64
+	retired   atomic.Int64
 
 	closeOnce sync.Once
 }
@@ -267,7 +269,9 @@ func (w *Writer) rotateLocked() error {
 	for i := w.opts.MaxFiles - 1; i >= 1; i-- {
 		older := fmt.Sprintf("%s.%d", w.opts.Path, i+1)
 		newer := fmt.Sprintf("%s.%d", w.opts.Path, i)
-		os.Remove(older)
+		if os.Remove(older) == nil {
+			w.retired.Add(1)
+		}
 		os.Rename(newer, older)
 	}
 	if err := renameFile(aside, w.opts.Path+".1"); err != nil && !os.IsNotExist(err) {
@@ -293,6 +297,7 @@ func (w *Writer) Stats() Stats {
 		Dropped:    w.dropped.Load(),
 		QueueDepth: len(w.ch),
 		WriteErrs:  w.writeErrs.Load(),
+		Retired:    w.retired.Load(),
 	}
 }
 

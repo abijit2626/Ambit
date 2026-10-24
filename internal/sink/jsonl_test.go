@@ -144,6 +144,25 @@ func TestDropsEmitGapMarker(t *testing.T) {
 	t.Logf("%d gap markers accounting for %d dropped events", markers, total)
 }
 
+func TestRetentionDeletesAreCounted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trajectory.jsonl")
+	opts := DefaultOptions(path)
+	opts.MaxBytes, opts.MaxFiles = 16, 2
+
+	w, err := Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		w.Write(map[string]any{"kind": "tool_pre", "pad": strings.Repeat("x", 32)})
+	}
+	w.Close()
+
+	if got := w.Stats().Retired; got != 8 {
+		t.Errorf("retired = %d, want 8: ten rotations keep two rotated files, so the last eight each delete the oldest", got)
+	}
+}
+
 func TestRotationBoundsDisk(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")

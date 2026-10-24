@@ -1,6 +1,6 @@
 # Runbook D1 — session with no human
 
-**Rules:** 100200–100205 (group `ambit_d1`). **MITRE:** T1059, plus T1552.001 where
+**Rules:** 100200–100207 (group `ambit_d1`). **MITRE:** T1059, plus T1552.001 where
 credentials are involved.
 
 An agent running with no permission prompts does whatever it is told without a human
@@ -12,19 +12,23 @@ then did.
 
 | Rule | Level | Means |
 | --- | --- | --- |
-| 100200 | 5 | A session started in `bypassPermissions` |
+| 100200 | 5 | A session is running in `bypassPermissions` (once per session, and once per switch into it) |
 | 100201 | 13 | **Credential-zone read in such a session** — the core alert |
 | 100202 | 12 | Outbound network command in such a session |
 | 100203 | 12 | Secret material in a tool call from such a session |
 | 100204 | 12 | Non-interactive entrypoint — **inert, see below** |
 | 100205 | 13 | **Any other credential-zone operation in such a session** (a write, or a `path_op` that is not a read) |
+| 100206 | 8 | A session made a tool call before any prompt |
+| 100207 | 12 | **The same, in a `bypassPermissions` session** |
 
-**100200 cannot fire on a live endpoint (inferred).** It needs `permission_mode` to be
-`bypassPermissions` on a `session_start`, and the `SessionStart` payload Claude Code sends
-has no such key (observed: `cwd`, `hook_event_name`, `model`, `scratchpad_dir`, `session_id`,
-`source`, `transcript_path`). The `session_start` event does arrive through the bundle's
-command hook, with an empty mode. 100201 to 100203 read the mode from tool events and are
-unaffected.
+**100200 reads a `session_mode` event, not `session_start`.** The `SessionStart` payload Claude
+Code sends has no `permission_mode` (observed: `cwd`, `hook_event_name`, `model`,
+`scratchpad_dir`, `session_id`, `source`, `transcript_path`), so the `session_start` event always
+arrives with an empty mode. ambitd sends a separate `session_mode` event the first time it learns
+a session's mode, which for a live session is its first prompt, and again whenever the mode
+changes. 100200 fires on that event (confirmed under `wazuh-logtest` on 4.14.8; not yet seen from
+a live session). A session that switches into bypass mode partway through raises 100200 at the
+switch. 100201 to 100203 read the mode from tool events and do not depend on it.
 
 ## What this alert asserts
 
@@ -39,19 +43,30 @@ unaffected.
   alerts one rule per event, and these level-13 rules outrank the D2 ones.
 - For 100203: `secret_hit_kinds` names the *kind* of secret the edge classifier
   recognized. The value never leaves the endpoint and is not in any event.
+- For 100206 and 100207: ambitd saw the session start, and its first tool call came before
+  any `UserPromptSubmit`. The alert names that tool and its `tool_use_id`, and fires once per
+  session start. A `SessionStart` from compaction continues the session and does not restart
+  the check; `resume` and `clear` do.
 
 ## What it does not assert
 
 - **It does not assert the session was unattended.** `bypassPermissions` is a mode, not
   proof of absence. A developer can choose it deliberately, and in some teams that is
   routine — M0's baseline is what tells you whether it is routine here.
-- **It does not cover D1's strongest half.** The detector catalogue specifies a
-  non-interactive entrypoint and "SessionStart with no UserPromptSubmit". Neither is
-  available from a rule: `agent_entrypoint` is in the schema but **nothing populates it**
-  — the hook payload carries no entrypoint field and the OTel path has no equivalent —
-  which is why rule 100204 is marked `ambit_pending_emitter` and will never fire until
-  that changes. And absence of an event is not expressible in a rule engine at all.
-  Treat D1 today as "bypass mode plus a sensitive action", not as "no human present".
+- **It covers half of D1's strongest signal.** The detector catalogue specifies a
+  non-interactive entrypoint and "SessionStart with no UserPromptSubmit". The second is
+  100206 and 100207: a rule cannot see an absence, so ambitd reports it as a
+  `session_no_prompt` event. The first is not available: `agent_entrypoint` is in the schema
+  but **nothing populates it** (the hook payload carries no entrypoint field and the OTel
+  path has no equivalent), which is why rule 100204 is marked `ambit_pending_emitter`.
+- **A quiet 100206 means little.** It never fires for a session ambitd did not see start: one
+  begun before ambitd was running, or an endpoint whose `SessionStart` command hook is missing.
+  And which ways of running Claude Code produce a prompt-less session is only partly known: an
+  interactive session always prompts first, and a headless run (`claude -p "..."`) sends
+  `UserPromptSubmit` with its prompt and mode before any tool call (observed on v2.1.310), so an
+  ordinary headless run does not raise 100206 either. Whether the SDK does is not observed. Read
+  100206 as "this session acted without any prompt reaching its hooks", which is rare by
+  construction, not as proof of malware.
 - **It does not assert a human was absent even when no prompt appears.** Rule 100223
   (D3) records prompts; its absence across a session is suggestive, not conclusive.
 
@@ -66,9 +81,9 @@ unaffected.
    configuration choice; one that reads `~/.ssh` in its first minute is the documented
    attack.
 3. **Check the session's prompt events.** Same `session_id`: is there any
-   `kind` = `prompt_submit`, or any rule 100223 permission prompt? A session with
-   credential reads and no prompt at all is the shape worth paging on, even though the
-   rule cannot assert it.
+   `kind` = `prompt_submit`, or any rule 100223 permission prompt? 100206 or 100207 says the
+   first tool call came before any prompt; a session with credential reads and no prompt at
+   all is the shape worth paging on.
 4. **Check the order.** Pull events for the `session_id` in sequence. Credential access
    within seconds of `session_start`, before any prompt, is automation. Credential access
    after a prompt mentioning deployment or credentials is a developer doing their job.
@@ -98,13 +113,14 @@ Not automatic, not yours to execute. Recommend, in order:
 
 ## Escalation
 
-**Page** on 100201 or 100205, and on 100202 or 100203 in a session with no prompt events.
+**Page** on 100201 or 100205, on 100207, and on 100202 or 100203 in a session with no prompt
+events (100206 in the same session says so).
 A bypass session that sweeps credentials raises one 100201 or 100205 per file, so group
 pages by `rule.id` and `session_id` in alert routing: the rules deliberately do not use
 `ignore`, which would silence them for every session on every host.
 
-**Queue** 100200 on endpoints not known to run in bypass mode, and 100202 or 100203 where
-prompts are present.
+**Queue** 100200 and 100206 on endpoints not known to run in bypass mode or headless jobs, and
+100202 or 100203 where prompts are present.
 
 **Suppress after confirmation** 100200 on endpoints the customer has identified as CI.
 Note the endpoint_ids in the engagement record rather than silently closing them.

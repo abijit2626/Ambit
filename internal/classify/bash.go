@@ -371,12 +371,18 @@ func tokenize(seg string) []string {
 
 var envAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
+var shellKeywords = map[string]bool{
+	"!": true, "if": true, "then": true, "else": true, "elif": true,
+	"do": true, "while": true, "until": true,
+}
+
 func skipPrefix(tokens []string) int {
 	i := 0
 	for i < len(tokens) {
 		t := tokens[i]
 		switch {
 		case t == "&" || t == "sudo" || t == "env" || t == "nohup" || t == "exec" || t == "time":
+		case shellKeywords[t] || strings.Trim(t, "({") == "":
 		case envAssignment.MatchString(t):
 		default:
 			return i

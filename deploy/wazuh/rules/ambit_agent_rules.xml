@@ -14,8 +14,8 @@
   can:
 
   1. **Absence.** D1's "SessionStart with no UserPromptSubmit" is the absence of an
-     event, and Wazuh rules fire on events. The prompt-less-session half of D1 needs a
-     scheduled query or ambitd-side accounting; it is not here.
+     event, and Wazuh rules fire on events. ambitd does that accounting and reports the
+     result as a session_no_prompt event, which 100206 and 100207 read.
   2. **The invocation flags.** D3 names the permission-bypass flags
      (dangerously-skip-permissions, yolo, trust-all-tools; written without their leading
      dashes here because a double hyphen inside an XML comment is not valid XML and
@@ -30,16 +30,23 @@
   <!-- ===================== D1 — session with no human ===================== -->
 
   <!--
-    Context: a session started in a mode where every tool call is pre-approved. Level 5
+    Context: a session running in a mode where every tool call is pre-approved. Level 5
     rather than 12: some teams legitimately run bypassPermissions in containers, and
     M0's baseline is what decides whether that is true here. The rules that matter are
     the ones below, where the mode is combined with what the session then did.
+
+    It reads session_mode, not session_start. Claude Code's SessionStart payload carries
+    no permission_mode (observed on v2.1.278), so a rule on session_start could never
+    fire. ambitd sends session_mode the first time a session's mode is known, which for
+    a live session is its first prompt, and again whenever the mode changes. So this
+    fires once per session that runs in bypassPermissions, plus once for each switch
+    into it.
   -->
   <rule id="100200" level="5">
     <decoded_as>json</decoded_as>
-    <field name="kind">^session_start$</field>
+    <field name="kind">^session_mode$</field>
     <field name="permission_mode">^bypassPermissions$</field>
-    <description>ambit D1: session started with bypassPermissions on $(endpoint_id) (session $(session_id))</description>
+    <description>ambit D1: session running with bypassPermissions on $(endpoint_id) (session $(session_id))</description>
     <mitre>
       <id>T1059</id>
     </mitre>
@@ -143,6 +150,40 @@
       <id>T1059</id>
     </mitre>
     <group>ambit_d1,ambit_pending_emitter,runbook_D1,</group>
+  </rule>
+
+  <!--
+    The absence half of D1: a session that acted before anyone prompted it. A rule engine
+    cannot see "no UserPromptSubmit", so ambitd reports it as an event, session_no_prompt,
+    on the first PreToolUse of a session it saw start and that has had no prompt. It fires
+    at most once per session start. A SessionStart from compaction continues the session,
+    so it does not restart the check; resume and clear do.
+
+    It does not fire for a session ambitd did not see start (one begun before ambitd, or an
+    endpoint whose SessionStart hook is missing), so a quiet rule says little on its own.
+    An interactive session always prompts first, and a headless run (claude -p) sends
+    UserPromptSubmit before any tool call (observed on v2.1.310), so neither raises this.
+    Whether the SDK does is not observed. Level 8 until the baseline says how common it is.
+  -->
+  <rule id="100206" level="8">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^session_no_prompt$</field>
+    <description>ambit D1: session acted before any prompt - $(tool_name) on $(endpoint_id) (session $(session_id))</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+    <group>ambit_d1,runbook_D1,</group>
+  </rule>
+
+  <!-- The same, in a session that needs no approval for anything it does next. -->
+  <rule id="100207" level="12">
+    <if_sid>100206</if_sid>
+    <field name="permission_mode">^bypassPermissions$</field>
+    <description>ambit D1: bypassPermissions session acted before any prompt - $(tool_name) on $(endpoint_id) (session $(session_id))</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+    <group>ambit_d1,runbook_D1,</group>
   </rule>
 
   <!-- ===================== D2 — credential sweep ===================== -->

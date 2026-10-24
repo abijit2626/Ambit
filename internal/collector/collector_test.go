@@ -363,6 +363,31 @@ func TestInterestingFractionAndReasons(t *testing.T) {
 	}
 }
 
+func TestToolFractionCountsOnlyHookToolEvents(t *testing.T) {
+	c, _, _ := newTestCollector(t)
+
+	c.Handle(&hook.Payload{HookEventName: hook.EvSessionStart, SessionID: "s1"})
+	c.Handle(&hook.Payload{HookEventName: hook.EvUserPromptSubmit, SessionID: "s1", Prompt: "fix the test"})
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/.ssh/id_rsa"},
+	})
+	c.Handle(&hook.Payload{
+		HookEventName: hook.EvPreToolUse, SessionID: "s1", CWD: "/home/dev/src/myrepo",
+		ToolName: "Read", ToolInput: map[string]any{"file_path": "/home/dev/src/myrepo/f.go"},
+	})
+
+	st := c.Stats()
+	if st.HookToolCalls != 2 || st.HookToolCrossed != 1 {
+		t.Errorf("tool events = %d crossed of %d, want 1 of 2: the session start and prompt are not tool calls",
+			st.HookToolCrossed, st.HookToolCalls)
+	}
+	if st.Crossed <= st.HookToolCrossed {
+		t.Errorf("all crossed = %d, tool crossed = %d: the prompt and session start should cross too, outside the tool count",
+			st.Crossed, st.HookToolCrossed)
+	}
+}
+
 func TestForgetDropsSessionState(t *testing.T) {
 	c, _, _ := newTestCollector(t)
 	c.Handle(&hook.Payload{HookEventName: hook.EvSessionStart, SessionID: "s1"})

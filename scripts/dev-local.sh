@@ -134,6 +134,11 @@ PY
       echo "    clean:  $s"
     fi
   done
+
+  if [ -x "$BIN" ]; then
+    echo
+    "$BIN" report -config "$CONFIG" || warn "  ambitd report failed"
+  fi
 }
 
 uninstall() {
