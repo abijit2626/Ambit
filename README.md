@@ -454,6 +454,13 @@ team executes a runbook against a sample alert.
   known (its first prompt, in a live session) and again when it changes. 100200 fires on it under
   `wazuh-logtest` 4.14.8 (observed offline; not yet seen from a live session). The installers upgrade a managed-settings file that is exactly the earlier
   bundle and refuse to touch any other.
+- **With Claude Code's sandbox on, `127.0.0.1` must be an allowed domain or `ambitd` hears
+  nothing.** Claude Code sends `http` hooks through the sandbox's network proxy, and the proxy
+  refuses a host that is not in `sandbox.network.allowedDomains` with a 403 (observed on
+  v2.1.310 under `claude -p`; the `SessionStart` command hook still arrived). Allowing
+  `127.0.0.1` fixes delivery and lets sandboxed commands reach local ports. The M0 bundle sets no
+  sandbox key; the enforcement bundle in [docs/02](docs/02-architecture.md) allows it. See
+  [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md) blocker 7.
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
   and validates rule fields against a closed schema. See

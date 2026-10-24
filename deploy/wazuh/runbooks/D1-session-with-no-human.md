@@ -61,10 +61,12 @@ switch. 100201 to 100203 read the mode from tool events and do not depend on it.
   path has no equivalent), which is why rule 100204 is marked `ambit_pending_emitter`.
 - **A quiet 100206 means little.** It never fires for a session ambitd did not see start: one
   begun before ambitd was running, or an endpoint whose `SessionStart` command hook is missing.
-  And which ways of running Claude Code produce a prompt-less session is not yet observed: an
-  interactive session always prompts first, and whether a headless run (`claude -p`) or the SDK
-  sends `UserPromptSubmit` has not been checked. Until a baseline exists, read 100206 as "this
-  session was driven by something other than a typed prompt", not as proof of malware.
+  And which ways of running Claude Code produce a prompt-less session is only partly known: an
+  interactive session always prompts first, and a headless run (`claude -p "..."`) sends
+  `UserPromptSubmit` with its prompt and mode before any tool call (observed on v2.1.310), so an
+  ordinary headless run does not raise 100206 either. Whether the SDK does is not observed. Read
+  100206 as "this session acted without any prompt reaching its hooks", which is rare by
+  construction, not as proof of malware.
 - **It does not assert a human was absent even when no prompt appears.** Rule 100223
   (D3) records prompts; its absence across a session is suggestive, not conclusive.
 

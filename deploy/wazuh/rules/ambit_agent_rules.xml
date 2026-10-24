@@ -161,9 +161,9 @@
 
     It does not fire for a session ambitd did not see start (one begun before ambitd, or an
     endpoint whose SessionStart hook is missing), so a quiet rule says little on its own.
-    Which entrypoints produce prompt-less sessions is not yet observed: an interactive
-    session always prompts first, and whether a headless run (claude -p) or the SDK sends
-    UserPromptSubmit has not been checked. Level 8 until the baseline says how common it is.
+    An interactive session always prompts first, and a headless run (claude -p) sends
+    UserPromptSubmit before any tool call (observed on v2.1.310), so neither raises this.
+    Whether the SDK does is not observed. Level 8 until the baseline says how common it is.
   -->
   <rule id="100206" level="8">
     <decoded_as>json</decoded_as>

@@ -401,7 +401,7 @@ cannot be disabled by user or project settings.
     "enabled": true,
     "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
-    "network": { "allowManagedDomainsOnly": true, "allowedDomains": ["..."] }
+    "network": { "allowManagedDomainsOnly": true, "allowedDomains": ["127.0.0.1", "..."] }
   },
   "hooks": { "PreToolUse": [ { "matcher": ".*", "hooks": [
     { "type": "http", "url": "http://127.0.0.1:7777/pre-tool-use" } ] } ] }
@@ -409,7 +409,13 @@ cannot be disabled by user or project settings.
 ```
 
 `allowManagedDomainsOnly` blocks non-allowed domains outright instead of prompting
-and honors only managed entries. `failIfUnavailable` refuses to start rather than
+and honors only managed entries. `127.0.0.1` has to be one of them: with the sandbox
+on, Claude Code sends `http` hooks through the sandbox's network proxy, which refuses
+any host not allowed, so without it every hook gets a 403 and `ambitd` sees nothing
+(observed on v2.1.310; command hooks are not affected). The cost is that sandboxed
+commands can then reach every local port, including `ambitd`'s, which is the
+forged-hook case the next section discusses: an agent can already post to its own
+monitor, and this makes it possible from inside the sandbox too. `failIfUnavailable` refuses to start rather than
 silently running unsandboxed. `disableBypassPermissionsMode` is the direct counter
 to the s1ngularity invocation pattern. SCA above asserts all of it is actually
 there.
