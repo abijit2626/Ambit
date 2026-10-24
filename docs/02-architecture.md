@@ -525,6 +525,17 @@ detection latency, not developer throughput.
 | Async detectors (goal drift) | seconds | Advisory only; never gates inline |
 | Wazuh agent → manager | minutes | Wazuh agent buffers; `ambitd` rotates `events.jsonl` with a bounded cap |
 
+**Measured, and where the code differs from the table.** `PostToolUse` ingest is not yet
+fire-and-forget: `ambitd` fingerprints the tool result before it answers the hook, so the
+response waits on it. `BenchmarkHandleByKind` (`internal/collector`, one core of a cloud VM)
+measured a prompt at 7 µs, a `Read` at 17 µs, a Bash call at 52 µs, and a `WebFetch` result
+of 4 KB of link-dense documentation at 0.93 ms, down from 4.2 ms after redaction learned to skip
+patterns whose literals are absent and feature extraction learned to run per word. Cost grows
+with the result, at roughly 0.2 ms per KB of such text, so a 100 KB page holds its response for
+about 20 ms. Moving ingest off the response path keeps the table's promise, but it needs a
+per-session order so a following `PreToolUse` still sees the ingest it should match. That is
+an open decision, not a tuning knob.
+
 **Fail policy on `ambitd` unavailability.** Split by action class, not global:
 
 - **Fail closed** for a small, enumerated set of high-impact classes: writes to
