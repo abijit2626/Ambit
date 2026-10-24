@@ -14,16 +14,20 @@ intersection is a scheduled job over the feature columns and lands in M5.
 
 | Rule | Level | Means |
 | --- | --- | --- |
-| 100280 | 1 | An event carries a notable fingerprint. Counted by the two rules below; below the default log alert level of 3, so it does not alert unless the manager's `log_alert_level` is set to 1 or 2 |
+| 100280 | 1 | A session's first sighting of a notable fingerprint, an `fp_sighting` event sent by ambitd. Counted by the two rules below; below the default log alert level of 3, so it does not alert unless the manager's `log_alert_level` is set to 1 or 2 |
 | 100281 | 10 | The same fingerprint seen in **two different sessions** within 3600s |
 | 100282 | 12 | The **fifth sighting** of the same fingerprint across sessions within 7200s. That event alerts as 100282 instead of 100281 |
 | 100283 | 12 | A provenance edge: the action carried a value that untrusted content introduced earlier in the same session |
 
 ## What this alert asserts
 
-- The same value of `prov_fp_notable` was sent by two or more different `session_id` values inside
-  the window. A session that repeats a fingerprint does not raise 100281: ambitd sends a
-  fingerprint once per session, and the rule also requires the session to differ.
+- Two or more different `session_id` values each sent an `fp_sighting` with the same
+  `prov_fp_notable` inside the window. A session that repeats a fingerprint does not raise 100281:
+  ambitd sends one `fp_sighting` per session and fingerprint, and the rule also requires the
+  session to differ.
+- An `fp_sighting` is ambitd's own event, not a tool call. Its `tool_use_id` names the
+  `tool_post` that first carried the fingerprint in that session; that `tool_post` also carries
+  `prov_fp_notable`, as does every later tool result in which the session saw it again.
 - `prov_fp_notable` is a **keyed digest** of one high-specificity feature — a domain, an email
   address, or a high-entropy token — selected from the content of a tool result. Equality is all an
   analyst gets: two sessions saw the same thing. What that thing was requires resolution.
@@ -41,24 +45,25 @@ intersection is a scheduled job over the feature columns and lands in M5.
 - **It does not assert the content was malicious.** A shared internal domain in two agents' tool
   results is what a company wiki looks like. This detector's false-positive rate is expected to be
   high, which is why 100281 is level 10 and not 12.
-- **A quiet D10 means little.** Four reasons it can stay silent while propagation happens:
-  - An event that carries a fingerprint and also matches a higher-level rule alerts as that rule
-    and is not counted here. Measured offline on a constructed event: a network `curl` result with a secret in it
-    alerts as 100302 and its fingerprint never reaches 100281. D10 undercounts exactly when something more
-    serious already alerted on the same event.
+- **A quiet D10 means little.** Three reasons it can stay silent while propagation happens:
   - ambitd only fingerprints tool *results*. Content that reaches an agent another way, a user
     prompt for example, carries no fingerprint.
   - Each session's memory of fingerprints it already sent is bounded (256 by default,
     `fp_notable_session_cap`). A full set forgets the oldest, so that fingerprint is sent again
-    the next time the session sees it. That costs a repeat sighting and never a missed one. A
+    the next time the session sees it. That costs a repeat `fp_sighting` and never a missed one. A
     repeat from a session that already paired with another can raise 100281 again for the same
     two sessions, and add to 100282's count with fewer than five sessions involved (inferred; the
     cap has not been exercised against Wazuh). ambitd's memory also resets when it restarts; the
     different-session test is what keeps a restart from alerting by itself.
-  - An ambitd build older than the once-per-session change sends the fingerprint on every result.
-    Measured offline: one session sees it, then a second session sees it 20 times, which gave
-    15 alerts as 100281 and 5 as 100282 from only two sessions. Read 100282 as "five sightings"
-    rather than "five sessions" for hosts on those builds.
+  - An ambitd build older than `fp_sighting` puts the fingerprint only on the `tool_post`, and
+    these rules no longer count `tool_post` events. Hosts on those builds are invisible to D10
+    (measured offline: twelve sessions of such `tool_post` events raised nothing).
+- **A fingerprint is no longer lost to a louder alert on the same event.** A `tool_post` can
+  alert as another rule: a network `curl` whose result holds a secret alerts as 100302. Wazuh
+  counts an event only toward the rule that won it, so while D10 counted `tool_post` events those
+  sightings were lost. The `fp_sighting` is a separate event that no other rule matches, so both
+  alerts now stand (measured offline: twelve sessions whose even-numbered `tool_post` events alert
+  as 100302 gave all six 100302 alerts and the same D10 count as twelve sessions without them).
 - **The windows have not been exercised.** The rules were replayed offline, and replay is instant,
   so the 3600s and 7200s expiry is untested.
 - **Rule 100283 is live, and is evidence, not proof.** A provenance edge is ambitd's own
@@ -76,8 +81,8 @@ intersection is a scheduled job over the feature columns and lands in M5.
 
 ## Triage
 
-1. **Collect the sightings.** Pull every event with this `prov_fp_notable` in the window, one per
-   session. Note each `session_id`, `endpoint_id` and `user_id`. Different sessions are
+1. **Collect the sightings.** Pull every `fp_sighting` with this `prov_fp_notable` in the window,
+   one per session, and the `tool_post` each one's `tool_use_id` names. Note each `session_id`, `endpoint_id` and `user_id`. Different sessions are
    guaranteed by the rule; the question is how different. Two sessions on one endpoint and one
    user is usually one developer with two terminals. Different `endpoint_id` or `user_id` is the
    case worth working.

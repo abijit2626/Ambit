@@ -181,7 +181,7 @@ func New(opts Options) *Collector {
 
 func (c *Collector) Handle(p *hook.Payload) {
 	c.handled.Add(1)
-	e := c.build(p)
+	e, sighting := c.build(p)
 	if e == nil {
 		return
 	}
@@ -190,6 +190,9 @@ func (c *Collector) Handle(p *hook.Payload) {
 	}
 
 	c.emit(e)
+	if sighting != nil {
+		c.emitDerived(sighting)
+	}
 
 	if p.HookEventName == hook.EvSessionEnd {
 		c.Forget(p.SessionID)
@@ -199,6 +202,18 @@ func (c *Collector) Handle(p *hook.Payload) {
 func (c *Collector) emit(e *event.Event) {
 	c.traj.Write(e)
 
+	v := c.filt.Decide(e)
+	c.recordReason(v)
+	if v.Cross {
+		c.crossed.Add(1)
+		c.events.Write(filter.Sanitize(event.Flatten(e)))
+	}
+}
+
+// emitDerived sends an event ambitd derived from one already in the spool to the SIEM only. The spool
+// keeps one line per hook event; an fp_sighting can be rebuilt from it as the first tool event in a
+// session carrying that fingerprint.
+func (c *Collector) emitDerived(e *event.Event) {
 	v := c.filt.Decide(e)
 	c.recordReason(v)
 	if v.Cross {
@@ -217,10 +232,12 @@ func (c *Collector) recordReason(v filter.Verdict) {
 	c.reasonMu.Unlock()
 }
 
-func (c *Collector) build(p *hook.Payload) *event.Event {
+// build returns the event for p and, when p is a session's first sighting of a notable fingerprint,
+// the fp_sighting event that goes with it.
+func (c *Collector) build(p *hook.Payload) (*event.Event, *event.Event) {
 	kind, ok := kindFor(p.HookEventName)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	st := c.session(p)
 
@@ -260,15 +277,45 @@ func (c *Collector) build(p *hook.Payload) *event.Event {
 		e.Endpoint.HostnameDigest = c.ext.Digest(c.hostname)
 	}
 
+	var sighting *event.Event
 	switch kind {
 	case event.KindPromptSubmit:
 		c.fillPrompt(e, p, st)
 	case event.KindToolPre, event.KindToolPost, event.KindToolFail, event.KindPermissionRequest, event.KindPermissionDenied:
-		c.fillTool(e, p, st)
+		if c.fillTool(e, p, st) {
+			sighting = fpSighting(e, st)
+		}
 	case event.KindInstructionsLoaded, event.KindConfigChange, event.KindFileChanged:
 		c.fillConfig(e, p, st)
 	}
-	return e
+	return e, sighting
+}
+
+// fpSighting is the event the D10 rules count: the identity and session of the tool event that first
+// carried the fingerprint, the fingerprint itself, and tool_use_id to find that tool event again. It
+// carries no tool, policy or taint fields, so no rule that keys on those can win it instead of 100280.
+func fpSighting(from *event.Event, st *sessionState) *event.Event {
+	s := &event.Event{
+		EventID:    newEventID(),
+		TS:         from.TS,
+		IngestedAt: from.IngestedAt,
+		Source:     event.SourceAmbitd,
+		SchemaV:    from.SchemaV,
+		Kind:       event.KindFPSighting,
+		Endpoint:   from.Endpoint,
+		Actor:      from.Actor,
+		Agent:      from.Agent,
+		Session:    from.Session,
+		Provenance: event.Provenance{FPNotable: from.Provenance.FPNotable, FPRole: from.Provenance.FPRole},
+		R2:         from.R2,
+		Policy:     event.Policy{Decision: event.DecisionNone},
+	}
+	s.Session.Sequence = st.next()
+	s.R2.Transition = false
+	if from.Tool != nil {
+		s.Tool = &event.Tool{Name: from.Tool.Name, UseID: from.Tool.UseID}
+	}
+	return s
 }
 
 func (c *Collector) fillPrompt(e *event.Event, p *hook.Payload, st *sessionState) {
@@ -289,7 +336,8 @@ func (c *Collector) fillPrompt(e *event.Event, p *hook.Payload, st *sessionState
 	}
 }
 
-func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) {
+// fillTool reports whether the event is the session's first sighting of its notable fingerprint.
+func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) (firstSighting bool) {
 	t := &event.Tool{Name: p.ToolName, UseID: p.ToolUseID, Error: p.ToolFailure()}
 
 	if server, tool, ok := hook.IsMCPTool(p.ToolName); ok {
@@ -341,11 +389,12 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 		t.ResultBytes = len(resultText)
 		resultFeatures = c.ext.Extract(cleanResult)
 		t.InputFeatures.SecretHits = append(t.InputFeatures.SecretHits, toSecretHits(resultHits)...)
-		// only the first sighting in a session is sent: rule 100281 is "the same fingerprint in a
-		// different session", and a session repeating itself is not that
-		if fp := features.NotableFingerprint(resultFeatures); fp != "" && st.firstFingerprintSighting(fp) {
+		// the tool event always carries its fingerprint, for the spool and for context when it crosses;
+		// only a session's first sighting also produces the fp_sighting event that D10 counts
+		if fp := features.NotableFingerprint(resultFeatures); fp != "" {
 			e.Provenance.FPNotable = fp
 			e.Provenance.FPRole = "ingest"
+			firstSighting = st.firstFingerprintSighting(fp)
 		}
 	}
 
@@ -367,6 +416,7 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 			c.shadowGate(e, t, bits, prior)
 		}
 	}
+	return firstSighting
 }
 
 func (c *Collector) shadowGate(e *event.Event, t *event.Tool, bits r2.Bits, prior priorBits) {

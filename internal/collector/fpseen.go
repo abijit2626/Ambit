@@ -1,10 +1,10 @@
 package collector
 
-// fpSet remembers which notable fingerprints a session has already sent, so a session handling the same
-// content over and over reaches the SIEM as one sighting rather than one per tool result. Rule 100281
-// needs the same fingerprint in two different sessions; repeats inside one session add noise and cost,
-// and once another session has sent the fingerprint each repeat pairs with it and raises 100281 again,
-// which pushes 100282 over its threshold with only two sessions involved (20 alerts from 21 events).
+// fpSet remembers which notable fingerprints a session has already sighted, so a session handling the same
+// content over and over sends one fp_sighting event rather than one per tool result. Rule 100281 needs
+// the same fingerprint in two different sessions; repeats inside one session add noise and cost, and once
+// another session has sighted the fingerprint each repeat pairs with it and raises 100281 again, which
+// pushes 100282 over its threshold with only two sessions involved (20 alerts from 21 events).
 //
 // The set is bounded. When it is full the oldest fingerprint (by first send, not by last use) is
 // forgotten, so a fingerprint can be sent again after enough other fingerprints have passed. That costs
