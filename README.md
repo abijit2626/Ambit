@@ -638,9 +638,14 @@ Open problems:
   event. 100261 was driven with a synthetic `policy_decision` of `fail_open`, since nothing emits
   it yet. Times were not varied: logtest replays instantly, so the 300 s windows were not tested
   (untested). The fixtures are `deploy/wazuh/fixtures/g-*.jsonl`, the recorded results `g-*.alerts`.
-- **One correlation rule still carries `ignore` (100271).** Its parent is Wazuh's own SCA rule
-  19007, which cannot be replayed offline, so the effect of removing it was not measured
-  (untested).
+- **One correlation rule still carries `ignore` (100271), and its ancestry is not what the rule
+  file says (read from code and the image's rules).** 100271 is a child of 100270, which is a child
+  of Wazuh's SCA rule 19007. 100271 uses `ignore="7200"` with `same_field` `agent.name`, the same
+  combination that silenced other keys in the correlation fixtures. So one agent's failing managed
+  settings probably silences every other agent's for two hours. Not replayed: `wazuh-logtest`
+  decodes a raw SCA line with the generic JSON decoder (fields `check.id`, `policy_id`, `scan_id`),
+  so 19006 and 19007 never match. The `sca.*` fields need the SCA module's own path, which logtest
+  does not reproduce. Removing `ignore` is a rule change that needs your decision.
 - **D10's two rules fire now (observed offline, wazuh-logtest 4.14.8).** On main they were dead:
   their parent 100280 was level 0, and level-0 matches are not counted by `if_matched_sid`.
   With 100280 at level 1, 100281 fired on nearly every repeat of a fingerprint and 100282 never
@@ -650,8 +655,10 @@ Open problems:
   `ignore` on either. Eight scenarios, one logtest process each (`deploy/wazuh/fixtures/g-d10.*`):
   one session repeating a fingerprint 12 times raised nothing; twelve sessions each seeing it
   raised 9 alerts as 100281 and 2 as 100282; two fingerprints each seen in two sessions raised one
-  alert each; three sessions seeing three different fingerprints raised none. Windows were not
-  exercised: logtest replays instantly, so the 3600 s and 7200 s expiry is untested.
+  alert each; three sessions seeing three different fingerprints raised none. The windows: the expiry mechanism was measured on wall-clock time with a 60-second copy of
+100281's rule. A sighting 90 s after the first did not alert, and one 10 s after the second did, so
+the window expires and a new one starts. The shipped 3600 s and 7200 s values use the same
+mechanism but were not waited out; `deploy/wazuh/LAB-D10.md` step 5 checks them on the lab manager.
 - **ambitd sends one `fp_sighting` event per session and fingerprint (unit-tested; not run
   against a live manager).** D10 counts these, not tool events. Without the once-per-session
   rule, a session that sees a fingerprint another session saw once keeps alerting: one session,
@@ -661,8 +668,12 @@ Open problems:
   not a missed one; ambitd's memory resets on restart. The `tool_post` keeps
   `prov_fp_notable` on every sighting, so the spool has the full record; the `fp_sighting` goes to
   the SIEM only. A `tool_post` no longer crosses to the SIEM for its fingerprint alone. If the
-  events sink fails to write a sighting, that session does not send it again (read from code;
-  sink failure untested).
+  events sink refuses a sighting (its queue is full), that session never sends it again until
+  restart or eviction. Measured with a sink that refuses every write: the first `tool_post` and its
+  `fp_sighting` are both refused, and the session's repeat writes nothing. The spool still has the
+  `tool_post` with its fingerprint, so an analyst can rebuild the sighting by hand, and rule 100313
+  alerts on the drop, but automatic D10 cannot pair that session. A fix would clear the session's
+  mark when the sighting's write returns false; that is a behavior change and is not made.
 - **A fingerprint is no longer lost to a louder alert on the same event (observed offline,
   constructed events).** While D10 counted `tool_post` events, a `tool_post` of a network `curl`
   carrying a secret alerted as 100302 and Wazuh never counted it toward 100281. With the
@@ -674,9 +685,9 @@ Open problems:
   command's result. Letting 100280 match both kinds would count every sighting twice (12 and 4
   instead of 9 and 2). A test fails if any other rule can match an `fp_sighting`. An ambitd
   build older than this sends no `fp_sighting`, so D10 does not count its hosts at all.
-- **The lab manager runs none of this.** Whether 100280 stays silent depends on the manager's
-  `log_alert_level`; at the default of 3 it does under logtest, and the live setting was not
-  checked (untested).
+- **The lab manager runs none of this.** The image's default `log_alert_level` is 3, read from its
+  `ossec.conf` (observed), so 100280 is silent by default. The lab's live setting was not read; the
+  plan in `deploy/wazuh/LAB-D10.md` step 1 reads it.
 - **Array matching works in the case tried (observed).** 100241, an unanchored literal,
   matched an event whose `mcp_scan_classes` is a two-element array. Only the first element,
   and one class at a time, were tried.
