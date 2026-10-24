@@ -22,9 +22,7 @@ const (
 
 // Rules that still combine same_field with ignore. Each is here because it could not be shown
 // safe to change, and each needs a decision of its own; the list may only shrink.
-var ignoreStillPresent = map[int]string{
-	100271: "parent 19007 is Wazuh's own SCA rule; an SCA event cannot be replayed offline, so the effect was not measured",
-}
+var ignoreStillPresent = map[int]string{}
 
 func TestNoCorrelationRuleSilencesOtherKeysWithIgnore(t *testing.T) {
 	seen := map[int]bool{}
