@@ -89,6 +89,9 @@ type SIEMEvent struct {
 	HealthStatus        string `json:"health_status,omitempty"`
 	HealthQueueDepth    int    `json:"health_queue_depth,omitempty"`
 	HealthDroppedEvents int64  `json:"health_dropped_events,omitempty"`
+
+	SandboxDenialOps     []string `json:"sandbox_denial_ops,omitempty"`
+	SandboxDenialDigests []string `json:"sandbox_denial_digests,omitempty"`
 }
 
 var zoneSeverity = map[string]int{
@@ -228,6 +231,11 @@ func Flatten(e *Event) *SIEMEvent {
 		s.HealthStatus = h.Status
 		s.HealthQueueDepth = h.QueueDepth
 		s.HealthDroppedEvents = h.DroppedEvents
+	}
+
+	if d := e.Denial; d != nil {
+		s.SandboxDenialOps = d.Ops
+		s.SandboxDenialDigests = d.TargetDigests
 	}
 
 	return s

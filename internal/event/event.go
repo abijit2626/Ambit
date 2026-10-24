@@ -36,6 +36,10 @@ const (
 	// ambitd saw it start and saw no UserPromptSubmit before its first PreToolUse. D1's "session with no
 	// human" is that absence, which a rule engine cannot see, so ambitd reports it as an event.
 	KindSessionNoPrompt Kind = "session_no_prompt"
+
+	// KindSandboxDenial is ambitd's own event for a tool call that Claude Code's sandbox refused: the
+	// <sandbox_violations> block Claude Code appends to a failed command's error.
+	KindSandboxDenial Kind = "sandbox_denial"
 )
 
 const (
@@ -89,6 +93,8 @@ type Event struct {
 	Prompt     *PromptInfo `json:"prompt,omitempty"`
 	Config     *ConfigInfo `json:"config,omitempty"`
 	Health     *Health     `json:"health,omitempty"`
+
+	Denial *SandboxDenial `json:"sandbox_denial,omitempty"`
 }
 
 type Endpoint struct {
@@ -333,4 +339,12 @@ type PrevRun struct {
 	Stop          string `json:"stop"`
 	LastHeartbeat string `json:"last_heartbeat,omitempty"`
 	DownSec       int64  `json:"down_sec"`
+}
+
+// SandboxDenial is what Claude Code's <sandbox_violations> block said was refused. Ops are its own words
+// (network-outbound, for one), reduced to lowercase letters and hyphens; targets are keyed digests of the
+// host or path, never the cleartext.
+type SandboxDenial struct {
+	Ops           []string `json:"ops"`
+	TargetDigests []string `json:"target_digests"`
 }

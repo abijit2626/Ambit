@@ -97,4 +97,38 @@
     <group>ambit_d9,runbook_D9,</group>
   </rule>
 
+  <!--
+    A blocked attempt. Claude Code's sandbox refused something a tool call tried, and said
+    so in a <sandbox_violations> block on the failed command's error, which a
+    PostToolUseFailure hook receives (observed on v2.1.310: "deny network-outbound
+    example.com:443"). ambitd sends it as a sandbox_denial event with the ops and keyed
+    digests of the targets; the host or path never crosses. A command can print a block of
+    its own, so this is the command output's claim: ambitd reads only the last block, which
+    is where Claude Code appends its own.
+
+    It is evidence the sandbox held, not that something got out. What makes it worth
+    reading is what tried: a session that had just ingested untrusted content (r2_a) and
+    then reached for a host it was not allowed is the exfiltration shape, stopped.
+  -->
+  <rule id="100304" level="6">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^sandbox_denial$</field>
+    <description>ambit D9: the sandbox refused $(sandbox_denial_ops) for $(tool_name) on $(endpoint_id) (session $(session_id))</description>
+    <mitre>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_d9,runbook_D9,</group>
+  </rule>
+
+  <!-- An outbound connection the sandbox refused: the blocked half of the egress this detector is about. -->
+  <rule id="100305" level="10">
+    <if_sid>100304</if_sid>
+    <field name="sandbox_denial_ops">network-outbound</field>
+    <description>ambit D9: the sandbox blocked an outbound connection from $(tool_name) on $(endpoint_id) (session $(session_id))</description>
+    <mitre>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_d9,runbook_D9,</group>
+  </rule>
+
 </group>
