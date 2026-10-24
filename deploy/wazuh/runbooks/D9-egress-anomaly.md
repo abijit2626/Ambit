@@ -12,7 +12,9 @@ describes is not something a rule can do.
 | 100300 | 5 | A network-capable command (context) |
 | 100301 | 12 | 10+ network-capable commands in one session within 300s |
 | 100302 | 13 | **Secret material in a network-capable command** |
-| 100303 | 10 | Result from an open-world MCP tool — **inert, see below** |
+| 100303 | 10 | Result from an open-world MCP tool |
+| 100304 | 6 | Claude Code's sandbox refused something a tool call tried |
+| 100305 | 10 | **The sandbox blocked an outbound connection** |
 
 ## What this alert asserts
 
@@ -30,15 +32,19 @@ describes is not something a rule can do.
   Profiling "outside this endpoint's normal destinations" needs a per-endpoint baseline, which is
   a scheduled query over the indexer or the spool, and it is not built. Do not read 100301 as
   "unusual for this endpoint" — read it as "a rate that is hard to produce by hand".
-- **Sandbox denials are not here at all.** The catalogue lists "any sandbox allowlist denial" as
-  a D9 signal. Claude Code's sandbox denies outbound connections, and ambit has no schema field
-  to carry that — not an unpopulated field, an absent one. Adding it is an M2 schema change. So a
-  *blocked* exfiltration attempt does not appear in this detector today.
-- **Rule 100303 is inert.** An open-world MCP tool's result should be treated as untrusted
-  ingest, and the annotation that says so is known to the interposer — but it is not carried on
-  tool *call* events, because those come from the hook path and a hook payload contains no
-  annotations. The join lands with M2; until then this rule cannot fire and is marked
-  `ambit_pending_emitter`.
+- **100304 and 100305 report a blocked attempt, not a successful one.** They read the
+  `<sandbox_violations>` block Claude Code adds to a refused command's error. The denied host or
+  path is a keyed digest (`sandbox_denial_digests`); resolving it requires us. A program can print
+  a block of its own, so treat the denial as what the command's output claimed. They need the
+  sandbox on, and on Windows (no OS sandbox) there is nothing to deny. Only network denials have
+  been seen; filesystem lines are expected but unobserved. Read 100305 together with `r2_a` on the
+  same event: a session that had ingested untrusted content and then reached for a host it was
+  not allowed is the exfiltration shape, stopped by the sandbox.
+- **100303 depends on the interposer.** The open-world hint is the server's own annotation, which
+  the interposer reads from `tools/list`; ambitd attaches it to the tool's calls. A server that is
+  not interposed, an interposer whose `-server` name differs from the server's configured name, or
+  a tool not listed since ambitd last started produces a `tool_post` with no hint, and 100303
+  stays silent for it. A quiet 100303 does not mean no open-world tools were used.
 - **A command's file paths are not attached.** `cat ~/.aws/credentials | curl ...` produces a
   network-class event with no credential path, because paths come from a tool's structured input
   rather than from parsing a shell pipeline. The correlation that catches it is the R2 accounting

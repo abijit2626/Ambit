@@ -19,9 +19,10 @@ Four signals, from three different places on purpose:
 ## What this alert asserts
 
 - **100311**: ambitd set its own health to `degraded`. That means one of: events were dropped, a
-  sink write failed, OTLP exports are being rejected for the wrong encoding, or exactly one of
-  the two collection paths (hook, OTel) has gone silent while the other is active. In every case
-  the event stream from that endpoint is now incomplete.
+  sink write failed, a hook request arrived that ambitd could not read or parse, OTLP exports are
+  being rejected for the wrong encoding, or exactly one of the two collection paths (hook, OTel)
+  has gone silent while the other is active. In every case the event stream from that endpoint is
+  now incomplete.
 - **100312**: the condition persisted across three heartbeats in fifteen minutes.
 - **100313**: `health_dropped_events` is present, which by construction means non-zero. Dropped
   events are not recoverable; the sink writes a gap marker and continues.
@@ -48,8 +49,9 @@ Four signals, from three different places on purpose:
    different containment.
 2. **For 100311, get the reason from the endpoint.** The health event carries a status, not a
    cause; `health_queue_depth` and `health_dropped_events` narrow it, and ambitd's own log says
-   plainly which condition it is — a rejected OTLP encoding, a full sink queue, or a silent
-   stream. That log requires us.
+   plainly which condition it is — a rejected OTLP encoding, a full sink queue, an unparseable
+   hook body, or a silent stream. That log requires us; so does `ambitd report` on the endpoint,
+   which counts each kind of loss separately.
 3. **Check whether the endpoint is under load.** A full sink queue on a busy build machine is a
    capacity problem, not suppression. A full queue on an idle endpoint is not.
 4. **For a silent-stream degradation, check what changed.** A D6 alert on `.claude/settings.json`
@@ -65,6 +67,8 @@ Four signals, from three different places on purpose:
 ## What requires us
 
 - **ambitd's log** for the degradation reason, and the endpoint's load at the time.
+- **`ambitd report`** on the endpoint, which lists every run with how it stopped (clean, unclean)
+  and how long ambitd was down before it, read from the spool.
 - **Whether the endpoint was expected to be off** — reboots, imaging, travel.
 - **The gap boundaries** if the spool survived: the spool may contain events the SIEM never
   received, which is the one case where a gap is recoverable after the fact.

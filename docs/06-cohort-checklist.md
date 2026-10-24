@@ -44,7 +44,8 @@ Each one will otherwise cost the cohort a week to discover.
    installer starts the service and checks its health before it installs the managed settings,
    and refuses to overwrite managed settings that are not the M0 bundle. Logs: `journalctl -u
    ambitd` on Linux, `/Library/Logs/ambit/ambitd.log` on macOS,
-   `C:\ProgramData\ambit\ambitd.log` on Windows; the latency measurement below reads them.
+   `C:\ProgramData\ambit\ambitd.log` on Windows. They name each slow hook response; the
+   measurement itself comes from `ambitd report` (blocker 3).
 
    As a system service, `ambitd`'s own home directory is root's or SYSTEM's, not the
    developer's. It takes each session's home from the transcript path Claude Code reports
@@ -62,16 +63,36 @@ Each one will otherwise cost the cohort a week to discover.
    Linux or macOS, and the macOS installer. Kill `ambitd` on a test machine of each kind and
    watch it come back before rolling out.
 
-3. **Hook latency is not reported as a number.** `ambitd` logs `hook response exceeded latency
-   budget` for each response slower than `latency_budget_ms` (default 5) and records nothing
-   else. A p99 under 5 ms is the same claim as fewer than 1% of responses over budget, so count
-   those warnings; the procedure is under M0 below. The timing is inside the handler, so it
-   excludes the client's connection time.
+3. **Hook latency is measured inside the handler, in buckets.** `ambitd` times every `/hook`
+   response and keeps a histogram (bucket bounds from 250 µs to 1 s, 5 ms among them), the count
+   over `latency_budget_ms` (default 5), and the maximum. The counters ride on every
+   `ambitd_health` event in the spool as `hook_latency`; they do not cross to Wazuh. `ambitd
+   report` merges every run in the spool and prints p50, p95 and p99. A quantile is the upper
+   bound of its bucket, so read "p99 ≤ 5.0ms", not "p99 = 5.0ms". The pass/fail line does not
+   depend on the buckets: a p99 under 5 ms is the same claim as fewer than 1% of responses over
+   budget, and that count is exact. The timing starts when the handler is entered, so it excludes
+   the client's connection time. `ambitd` still logs `hook response exceeded latency budget` for
+   each slow response, which says when they happened.
 
-4. **The loss counter is narrower than "event loss".** `dropped_events` counts events refused
-   because the sink queue was full. It does not count events lost while `ambitd` was down, or
-   rotated files deleted at the retention cap. The M0 loss criterion is measured with that
-   caveat, and the gaps are visible a different way (D7, rule 100313).
+4. **"Event loss" counts what ambitd saw and failed to keep.** `ambitd report` adds three
+   counters per run: events refused because the sink queue was full (`dropped_events`), lines a
+   sink failed to write (`write_errors`), and hook requests ambitd could not read or parse
+   (`parse_errors`), over the lines the spool did write. An unparseable body also sets the health
+   status to `degraded`. Two things are reported beside the number rather than in it, because
+   ambitd cannot count events it never received:
+   - **Downtime.** `ambitd.state`, next to the spool, records each run's last heartbeat and
+     whether it stopped cleanly. The next run reports the previous one as `clean`, `unclean` or
+     `unknown` with the seconds it was down (an upper bound for an unclean stop, measured from the
+     last heartbeat). Hook calls Claude Code made in that window are lost and uncounted.
+   - **Retention.** The report warns when the spool has deleted files at its size cap. Every
+     counter is cumulative for its run, so a run is lost to the report only when all its health
+     events have been deleted; the warning says the window may be missing older runs.
+
+   A clean stop is a SIGTERM or Ctrl-C, which is how systemd and launchd stop a service. On
+   Windows, `Stop-ScheduledTask`, the installer and a reboot end `ambitd` by terminating the
+   process, which leaves it no chance to write a final event, so expect Windows runs to end
+   `unclean` (inferred from how the task is stopped; not yet observed). Read the downtime there,
+   not the stop kind.
 
 5. **Fingerprint keys are per endpoint unless you provision them.** `ambitd` creates its key if
    none exists at `fingerprint_key_path`. M0 and M1 only compare digests within one endpoint,
@@ -82,6 +103,18 @@ Each one will otherwise cost the cohort a week to discover.
    parent SID, and how a `<field>` regex matches an array). The Windows agent adds four more.
    `deploy/wazuh/README.md` lists them. Step 3 of "Stand up the manager" confirms them; do not
    skip it, because a wrong one looks exactly like a quiet fleet.
+
+7. **A volunteer with the sandbox on sends ambitd nothing over http unless `127.0.0.1` is an
+   allowed domain.** With `sandbox.enabled`, Claude Code posts every `http` hook through the
+   sandbox's network proxy, and the proxy answers a host that is not in
+   `sandbox.network.allowedDomains` with a 403 (observed on v2.1.310 under `claude -p`: every
+   http hook failed with "HTTP 403", and ambitd saw only the `session_start` from the command
+   hook). Adding `"127.0.0.1"` to `allowedDomains` made every hook arrive. Whether an
+   interactive session prompts the developer for it instead of failing is not observed. The M0
+   bundle sets no sandbox key, so this comes from the volunteer's own settings: ask each one
+   whether they run with the sandbox, and check `events.jsonl` gains a `prompt_submit` after
+   their first session. Allowing `127.0.0.1` also lets sandboxed commands reach every local port,
+   ambitd's included; docs/02 has the trade-off.
 
 ## Prove it on one machine you own
 
@@ -159,10 +192,10 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
 | Criterion | How to measure it | Passes when |
 | --- | --- | --- |
 | 5–10 endpoint volunteer cohort | Wazuh agent list for the group | 5–10 agents active and sending events |
-| p99 hook response under 5 ms | Count `hook response exceeded latency budget` in each `ambitd` log (blocker 2 says where), divide by that endpoint's hook-sourced events in `trajectory.jsonl` | Under 1% over budget, on every endpoint. Look at the `took` values too: a few at 4 ms and none at 200 ms is a different result from the reverse |
+| p99 hook response under 5 ms | `ambitd report` on each endpoint (`sudo ambitd report -config <config>`; `install-system --status` and `dev-local.sh --status` run it too). It merges every run in the spool | The latency line says `[PASS]`: under 1% of responses over budget, on every endpoint. Look at the max and p95 too: a few at 4 ms and none at 200 ms is a different result from the reverse |
 | Zero developer-visible behavior change | Ask each volunteer: did a prompt appear or disappear, did anything run slower, did any tool call fail that would not have? Also diff their `permissions` and `sandbox` settings against before | Every answer is no, and the managed bundle changed nothing but `env` and `hooks` |
-| Spool event loss under 0.1% | Last `health_dropped_events` per endpoint in `events.jsonl`, over that endpoint's total events; add the `sink_gap` markers (rule 100313) | Under 0.1%. State the blocker-4 caveat next to the number |
-| Interesting fraction measured | `AMBIT_DIR=<data dir> ./scripts/dev-local.sh --status` on each endpoint (the process line keys on `$AMBIT_DIR/ambitd`; ignore it if the binary is elsewhere) | A number exists. It is not a pass/fail: if it is far from 2–5%, tighten the filter before M1 |
+| Spool event loss under 0.1% | `ambitd report`, the loss line. Cross-check against the `sink_gap` markers (rule 100313) on the manager | The loss line says `[PASS]`. State the restarts line next to it (blocker 4): downtime is loss the counter cannot see |
+| Interesting fraction measured | `ambitd report`, the interesting-fraction line: hook tool events that crossed, over all hook tool events | A number exists. It is not a pass/fail: if it is far from 2–5%, tighten the filter before M1 |
 | No `Too many fields for JSON decoder` | `sudo grep -i "too many fields" /var/ossec/logs/ossec.log` | No matches |
 
 ## M1 exit criteria

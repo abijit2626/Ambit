@@ -115,6 +115,28 @@ try {
     }
 
     Write-Host ''
+    Write-Host 'M0 report from the spool:'
+    $reportJson = & $Bin report -trajectory $Traj -json
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  FAIL: ambitd report exited $LASTEXITCODE"
+        $fail = 1
+    } else {
+        $report = ($reportJson -join "`n") | ConvertFrom-Json
+        if ($report.latency.responses -ne 8) {
+            Write-Host "  FAIL: report counted $($report.latency.responses) hook responses, want 8"
+            $fail = 1
+        } else {
+            Write-Host '  ok:     8 hook responses timed'
+        }
+        if ($report.loss.parse_errors -ne 0) {
+            Write-Host "  FAIL: report counted $($report.loss.parse_errors) unparseable hook bodies, want 0"
+            $fail = 1
+        } else {
+            Write-Host '  ok:     no unparseable hook bodies'
+        }
+    }
+
+    Write-Host ''
     if ($fail -eq 0) {
         Write-Host 'smoke: PASS'
     } else {

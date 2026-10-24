@@ -27,6 +27,19 @@ const (
 	// It exists so the D10 rules count an event no other rule competes for: a tool_post carrying the
 	// same fingerprint can alert as something else (100302), and Wazuh counts only the rule that won.
 	KindFPSighting Kind = "fp_sighting"
+
+	// KindSessionMode is ambitd's own event for a session's permission mode, sent when the mode is first
+	// known and when it changes. SessionStart carries no mode, so a rule on session_start cannot see it.
+	KindSessionMode Kind = "session_mode"
+
+	// KindSessionNoPrompt is ambitd's own event for a session that made a tool call before any prompt:
+	// ambitd saw it start and saw no UserPromptSubmit before its first PreToolUse. D1's "session with no
+	// human" is that absence, which a rule engine cannot see, so ambitd reports it as an event.
+	KindSessionNoPrompt Kind = "session_no_prompt"
+
+	// KindSandboxDenial is ambitd's own event for a tool call that Claude Code's sandbox refused: the
+	// <sandbox_violations> block Claude Code appends to a failed command's error.
+	KindSandboxDenial Kind = "sandbox_denial"
 )
 
 const (
@@ -80,6 +93,8 @@ type Event struct {
 	Prompt     *PromptInfo `json:"prompt,omitempty"`
 	Config     *ConfigInfo `json:"config,omitempty"`
 	Health     *Health     `json:"health,omitempty"`
+
+	Denial *SandboxDenial `json:"sandbox_denial,omitempty"`
 }
 
 type Endpoint struct {
@@ -300,4 +315,36 @@ type Health struct {
 	QueueDepth    int    `json:"queue_depth"`
 	DroppedEvents int64  `json:"dropped_events"`
 	UptimeSec     int64  `json:"uptime_sec"`
+
+	RunID   string `json:"run_id,omitempty"`
+	Final   bool   `json:"final,omitempty"`
+	Handled int64  `json:"handled"`
+	Crossed int64  `json:"crossed"`
+
+	ToolCalls   int64 `json:"tool_calls"`
+	ToolCrossed int64 `json:"tool_crossed"`
+
+	TrajectoryWritten int64 `json:"trajectory_written"`
+	WriteErrors       int64 `json:"write_errors"`
+	ParseErrors       int64 `json:"parse_errors"`
+	TrajectoryRetired int64 `json:"trajectory_retired_files"`
+
+	HookLatency *Latency `json:"hook_latency,omitempty"`
+	PrevRun     *PrevRun `json:"prev_run,omitempty"`
+}
+
+type PrevRun struct {
+	RunID         string `json:"run_id,omitempty"`
+	Version       string `json:"version,omitempty"`
+	Stop          string `json:"stop"`
+	LastHeartbeat string `json:"last_heartbeat,omitempty"`
+	DownSec       int64  `json:"down_sec"`
+}
+
+// SandboxDenial is what Claude Code's <sandbox_violations> block said was refused. Ops are its own words
+// (network-outbound, for one), reduced to lowercase letters and hyphens; targets are keyed digests of the
+// host or path, never the cleartext.
+type SandboxDenial struct {
+	Ops           []string `json:"ops"`
+	TargetDigests []string `json:"target_digests"`
 }

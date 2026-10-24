@@ -155,6 +155,8 @@ internal/baseline/       D4: the approved baseline and its state machine
 internal/interpose/      the passthrough, the analyzer, the loopback report
 internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
+internal/runstate/       ambitd.state: each run's last heartbeat and how it stopped
+internal/m0report/       `ambitd report`: the M0 exit criteria for one endpoint, from the spool
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
 internal/fsperm/         private directories: 0700 on Unix, an explicit ACL on Windows
@@ -170,7 +172,8 @@ testdata/agentdojo/      per-tool MCP labels for AgentDojo's four suites, and li
 
 ```sh
 ./scripts/dev-local.sh          # run it against your own Claude Code sessions
-./scripts/dev-local.sh --status  # the M0 interesting-fraction readout
+./scripts/dev-local.sh --status  # what was collected, then the M0 readout
+ambitd report -config <config>   # M0 criteria from the spool: hook p99, loss, restarts, interesting fraction
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
@@ -181,6 +184,7 @@ sudo ./scripts/install-system.sh --uninstall                       # remove it; 
 make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 make replay   # replay testdata/replay through the collector; precision, recall, R2 saturation
+make fuzz     # each fuzz target for FUZZTIME (default 30s): redactor, bash classifier, MCP relay, no cleartext to the SIEM
 ```
 
 ### Replay harness
@@ -218,7 +222,7 @@ make replay                                   # the corpus, human-readable
 A gate on a metric the corpus cannot compute fails rather than passes. `go test ./...` runs
 the same corpus as a regression suite.
 
-**The starter corpus is 26 hand-written scenarios. Its numbers describe those scenarios and
+**The starter corpus is 33 hand-written scenarios. Its numbers describe those scenarios and
 nothing else**, and say nothing about precision on real traffic: it was written alongside the
 engine, by the same author, so it tests what that author thought of. It exists to pin behavior,
 include attacks adapted to defeat the engine (a paraphrased destination, a poisoned instruction
@@ -246,7 +250,8 @@ which AgentDojo scores `security: true`. Attack runs mark their calls unlabeled,
 the only per-call label the log allows, "the arguments contain injected text", is the
 signal the engine computes itself. [docs/03-detection.md](docs/03-detection.md#validating-the-detectors)
 has the first results. They are the first numbers here not written by the engine's author,
-and they are not flattering. SHADE-Arena and ControlArena have no adapter yet.
+and they are not flattering. SHADE-Arena and ControlArena have no adapter yet: neither publishes run
+logs, and the nearest public set, bashbench2, was not reachable from where it was checked (docs/03).
 
 ### Windows
 
@@ -311,7 +316,10 @@ What differs from Unix, and why it matters:
   [deploy/wazuh/README.md](deploy/wazuh/README.md) for what is and is not verified.
 
 `mcp-interpose` goes in front of one MCP server, per server, so Claude Code still sees
-that server under its own name and tool identity stays `mcp__<server>__<tool>`:
+that server under its own name and tool identity stays `mcp__<server>__<tool>`. Give
+`-server` the server's key from the MCP configuration: `ambitd` joins the interposer's
+per-tool annotations onto tool calls by that name, so a different name leaves calls
+without their destructive and open-world hints:
 
 ```jsonc
 {
@@ -395,9 +403,9 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 
 | Milestone | Scope | State |
 | --- | --- | --- |
-| **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Installers run `ambitd` as a system service from boot (verified on Linux; not yet run on macOS or Windows). Not yet deployed to a cohort. |
-| **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policies (an M0 subset for the observation-only bundle, and the full one). | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. |
-| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`), and the gate runs in shadow too (`internal/gate`): docs/03's table is evaluated on every `PreToolUse` under per-session and per-turn scoping, and the verdict is recorded on the event (`policy_shadow=true`, rules 100320–100323) and never returned, so no session behaves differently. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`), with a hand-written starter corpus and an AgentDojo adapter measured against published runs of real models (docs/03). Precision on a real developer cohort is still unmeasured: that is what a shadow cohort is for. |
+| **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Installers run `ambitd` as a system service from boot (verified on Linux; not yet run on macOS or Windows). `ambitd report` computes the latency, loss and interesting-fraction criteria from the spool. Not yet deployed to a cohort. |
+| **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policies (an M0 subset for the observation-only bundle, and the full one). | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. The D1 rules for bypass mode (100200) and prompt-less sessions (100206, 100207), the open-world MCP rule (100303) and the sandbox-denial rules (100304, 100305) fire under `wazuh-logtest` 4.14.8 on fixtures from the real pipeline. |
+| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`), and the gate runs in shadow too (`internal/gate`): docs/03's table is evaluated on every `PreToolUse` under per-session and per-turn scoping, and the verdict is recorded on the event (`policy_shadow=true`, rules 100320–100323) and never returned, so no session behaves differently. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`), with a hand-written starter corpus and an AgentDojo adapter measured against published runs of real models (docs/03). Precision on a real developer cohort is still unmeasured: that is what a shadow cohort is for. MCP annotations are joined onto tool calls from the interposer. A prototype goal judge, offline, separated AgentDojo's false positives from its attacks (docs/03); it is not built. |
 | **M3 Enforce** | Policy engine, signed policy bundles, split fail policy, containment-only active response. | Design only. |
 | **M4 Goal drift** | Async scoring of actions against the stated objective. | Design only. |
 | **M5 Fleet correlation** | Cross-session fingerprint set intersection; session-shape analysis. | Design only. |
@@ -405,8 +413,9 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 Exit criteria gate each milestone. **M0:** a 5–10 endpoint volunteer cohort; p99 hook
 response under 5 ms; zero developer-visible behavior change, verified by asking; local
 spool event loss under 0.1%; the share of tool calls that cross to Wazuh measured
-(design estimate 2–5%; `./scripts/dev-local.sh --status` reports it); and no
-`Too many fields for JSON decoder` errors in the manager log. **M1:** every MCP server
+(design estimate 2–5%); and no
+`Too many fields for JSON decoder` errors in the manager log. `ambitd report` on each endpoint
+computes the latency, loss and fraction criteria from the spool. **M1:** every MCP server
 the cohort uses inventoried with an approved baseline; a deliberately mutated server
 triggers D4 within a session; killing `ambitd` fires D7 and stopping the Wazuh agent
 fires rule 504; reverting a managed-settings key fires D12; and someone outside the
@@ -443,10 +452,17 @@ team executes a runbook against a sample alert.
   absolute path; like the `http` hooks it uses the default hook address. In the lab a
   `session_start` reached the spool this way (observed with a probe project; the installed
   bundle's exact command is untested). The real payload has no `permission_mode`, so rule
-  100200, which needs `bypassPermissions` on a `session_start`, cannot fire on a live endpoint
-  (inferred from the rule's condition). D1 rests on 100201 to 100203, which read the mode from
-  tool events. The installers upgrade a managed-settings file that is exactly the earlier
+  100200 reads a `session_mode` event instead: ambitd sends one when a session's mode is first
+  known (its first prompt, in a live session) and again when it changes. 100200 fires on it under
+  `wazuh-logtest` 4.14.8 (observed offline; not yet seen from a live session). The installers upgrade a managed-settings file that is exactly the earlier
   bundle and refuse to touch any other.
+- **With Claude Code's sandbox on, `127.0.0.1` must be an allowed domain or `ambitd` hears
+  nothing.** Claude Code sends `http` hooks through the sandbox's network proxy, and the proxy
+  refuses a host that is not in `sandbox.network.allowedDomains` with a 403 (observed on
+  v2.1.310 under `claude -p`; the `SessionStart` command hook still arrived). Allowing
+  `127.0.0.1` fixes delivery and lets sandboxed commands reach local ports. The M0 bundle sets no
+  sandbox key; the enforcement bundle in [docs/02](docs/02-architecture.md) allows it. See
+  [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md) blocker 7.
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
   and validates rule fields against a closed schema. See
@@ -454,10 +470,13 @@ team executes a runbook against a sample alert.
 - **Third-party monitoring restrictions are intentions until a tenancy model is chosen
   and tested.** They rest on Wazuh RBAC, agent groups and index restrictions. See
   [docs/02-architecture.md](docs/02-architecture.md#tenancy-for-third-party-monitoring).
-- **Three rules are inert and marked as such**, rather than shipped as if they worked:
-  `agent_entrypoint` has no emitter, MCP annotations do not reach tool-call events, and
-  the policy engine that sets `policy_decision` is M3. Sandbox allowlist denials have no
-  schema field at all. [docs/03-detection.md](docs/03-detection.md) records all four.
+- **Two kinds of rule are inert and marked as such**, rather than shipped as if they worked:
+  `agent_entrypoint` has no emitter (100204), and the policy engine that sets
+  `policy_decision` is M3 (D11). Sandbox denials now cross as `sandbox_denial` events
+  (100304, 100305), read from the block Claude Code adds to a refused command's error.
+  MCP annotations now reach tool-call events, joined from the interposer's last listing,
+  so 100303 is live for interposed servers. [docs/03-detection.md](docs/03-detection.md)
+  records all four.
 - **Three Wazuh behaviors are unconfirmed on a live manager and fail silently when
   wrong:** the syscheck parent SIDs, the SCA parent SID, and how a `<field>` regex
   matches an array-valued field. Confirm them on the deployed version before relying on

@@ -55,6 +55,10 @@ func fullEvent() *Event {
 	}
 }
 
+func denialBlock() *SandboxDenial {
+	return &SandboxDenial{Ops: []string{"network-outbound"}, TargetDigests: []string{"hmac:t"}}
+}
+
 func fieldCount(t *testing.T, s *SIEMEvent) (int, []string) {
 	t.Helper()
 	raw, err := json.Marshal(s)
@@ -86,6 +90,7 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 		{"session_start", sessionStartEvent()},
 		{"config_change", configEvent()},
 		{"ambitd_health", healthEvent()},
+		{"sandbox_denial", sandboxDenialEvent()},
 	}
 
 	for _, c := range cases {
@@ -99,9 +104,14 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 	}
 }
 
+// The ceiling was 70 until sandbox_denial added its two fields. The union describes an event that cannot
+// exist (no event carries the tool, config, health and denial blocks together); what matters is that it
+// stays far under Wazuh's decoder limit of 256 and that each real kind stays within the budget above.
 func TestSIEMEventFieldCeiling(t *testing.T) {
-	const ceiling = 70
-	n, keys := fieldCount(t, Flatten(fullEvent()))
+	const ceiling = 72
+	union := fullEvent()
+	union.Denial = denialBlock()
+	n, keys := fieldCount(t, Flatten(union))
 	if n > ceiling {
 		t.Errorf("union of all blocks has %d fields, ceiling is %d: %v", n, ceiling, keys)
 	}
@@ -309,5 +319,17 @@ func healthEvent() *Event {
 	e.Provenance = Provenance{}
 	e.Policy = Policy{}
 	e.Scores = Scores{}
+	return e
+}
+
+func sandboxDenialEvent() *Event {
+	e := fullEvent()
+	e.Kind = KindSandboxDenial
+	e.Source = SourceAmbitd
+	e.Tool = &Tool{Name: "Bash", UseID: "toolu_1"}
+	e.Provenance = Provenance{}
+	e.Config, e.Health, e.Scores = nil, nil, Scores{}
+	e.Policy = Policy{Decision: DecisionNone}
+	e.Denial = denialBlock()
 	return e
 }
