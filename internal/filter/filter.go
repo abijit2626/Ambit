@@ -43,6 +43,7 @@ var alwaysCross = map[event.Kind]bool{
 	event.KindCompact:            true,
 	event.KindAmbitdHealth:       true,
 	event.KindPromptSubmit:       true,
+	event.KindSessionMode:        true,
 }
 
 type Config struct {

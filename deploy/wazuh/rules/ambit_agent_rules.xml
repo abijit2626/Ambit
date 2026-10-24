@@ -30,16 +30,23 @@
   <!-- ===================== D1 — session with no human ===================== -->
 
   <!--
-    Context: a session started in a mode where every tool call is pre-approved. Level 5
+    Context: a session running in a mode where every tool call is pre-approved. Level 5
     rather than 12: some teams legitimately run bypassPermissions in containers, and
     M0's baseline is what decides whether that is true here. The rules that matter are
     the ones below, where the mode is combined with what the session then did.
+
+    It reads session_mode, not session_start. Claude Code's SessionStart payload carries
+    no permission_mode (observed on v2.1.278), so a rule on session_start could never
+    fire. ambitd sends session_mode the first time a session's mode is known, which for
+    a live session is its first prompt, and again whenever the mode changes. So this
+    fires once per session that runs in bypassPermissions, plus once for each switch
+    into it.
   -->
   <rule id="100200" level="5">
     <decoded_as>json</decoded_as>
-    <field name="kind">^session_start$</field>
+    <field name="kind">^session_mode$</field>
     <field name="permission_mode">^bypassPermissions$</field>
-    <description>ambit D1: session started with bypassPermissions on $(endpoint_id) (session $(session_id))</description>
+    <description>ambit D1: session running with bypassPermissions on $(endpoint_id) (session $(session_id))</description>
     <mitre>
       <id>T1059</id>
     </mitre>

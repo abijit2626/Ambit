@@ -209,7 +209,7 @@ pick '"mcp_baseline_state":"approved"'
 awk '!seen[$0]++' "$OUT.tmp" > "$OUT"
 rm -f "$OUT.tmp"
 
-grep -E '"session_id":"s_sweep_[a-z]+"' "$D/events.jsonl" > "$SWEEPS"
+grep -E '"session_id":"s_sweep_[a-z]+"' "$D/events.jsonl" | grep -vF '"kind":"session_mode"' > "$SWEEPS"
 echo "wrote $(wc -l < "$SWEEPS" | tr -d ' ') sweep sequence lines to $SWEEPS"
 
 cat >> "$OUT" <<'SYNTHETIC'
@@ -220,5 +220,7 @@ SYNTHETIC
 
 # the D10 event, appended after the synthetic lines so that adding it moved no earlier line number
 grep -m1 -F '"kind":"fp_sighting"' "$D/events.jsonl" >> "$OUT" || echo "  (no fp_sighting line)" >&2
+# rule 100200's event, appended last for the same reason; the first session_mode is s_4d2's bypassPermissions
+grep -m1 -F '"kind":"session_mode"' "$D/events.jsonl" >> "$OUT" || echo "  (no session_mode line)" >&2
 
 echo "wrote $(wc -l < "$OUT" | tr -d ' ') fixture lines to $OUT"
