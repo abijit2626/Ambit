@@ -744,8 +744,9 @@ reads an inert rule as a quiet fleet.
    collector, with a test.
 
 Two further limits are inherent rather than fixable: **absence is not expressible** in a
-rule engine, which is why D1's "SessionStart with no UserPromptSubmit" and D7's "no
-heartbeat for N minutes" are not rules; and **volume or destination profiling is not a
+rule engine. ambitd now does that accounting for D1's "SessionStart with no UserPromptSubmit"
+and reports it as a `session_no_prompt` event (rules 100206, 100207), but D7's "no
+heartbeat for N minutes" is still not a rule; and **volume or destination profiling is not a
 rule**, which is why D9 reports egress shape rather than anomaly.
 
 ### Proposed MITRE ATT&CK mappings

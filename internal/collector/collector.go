@@ -51,6 +51,39 @@ type sessionState struct {
 	fpSent *fpSet
 
 	modeSent string
+
+	started, prompted, noPromptSent bool
+}
+
+// observePrompting records the parts of a session's shape that "no prompt before a tool call" needs, and
+// reports whether e is the first tool call of a session that ambitd saw start and that has had no prompt.
+// A SessionStart from compaction continues the session, so it changes nothing. A session ambitd did not
+// see start (it began before ambitd did, or SessionStart is not hooked) is never reported.
+func (s *sessionState) observePrompting(p *hook.Payload) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch p.HookEventName {
+	case hook.EvSessionStart:
+		if p.Source != "compact" {
+			s.started, s.prompted, s.noPromptSent = true, false, false
+		}
+	case hook.EvUserPromptSubmit:
+		s.prompted = true
+	case hook.EvPreToolUse:
+		if s.started && !s.prompted && !s.noPromptSent {
+			s.noPromptSent = true
+			return true
+		}
+	}
+	return false
+}
+
+// unsendNoPrompt undoes observePrompting's report for a session_no_prompt the events sink refused, so the
+// session's next tool call tries again, unless a prompt has arrived since.
+func (s *sessionState) unsendNoPrompt() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.noPromptSent = false
 }
 
 // takeModeChange reports the session's mode when ambitd has not yet sent it as a session_mode event:
@@ -226,6 +259,7 @@ func (c *Collector) Handle(p *hook.Payload) {
 
 	c.emit(e)
 	c.emitModeChange(p.SessionID, e)
+	c.emitNoPrompt(p, e)
 	if sighting != nil && !c.emitDerived(sighting) {
 		// the events sink refused it (its queue is full): the session has not sent this fingerprint, so
 		// the next tool result that carries it must try again
@@ -281,6 +315,20 @@ func (c *Collector) emitModeChange(sessionID string, e *event.Event) {
 	}
 	if !c.emitDerived(sessionMode(e, mode, st)) {
 		st.unsendMode(mode, prev)
+	}
+}
+
+// emitNoPrompt sends a session_no_prompt event for the first tool call of a session that started with
+// ambitd watching and has had no prompt.
+func (c *Collector) emitNoPrompt(p *hook.Payload, e *event.Event) {
+	c.mu.Lock()
+	st := c.sessions[p.SessionID]
+	c.mu.Unlock()
+	if st == nil || !st.observePrompting(p) {
+		return
+	}
+	if !c.emitDerived(sessionNoPrompt(e, st)) {
+		st.unsendNoPrompt()
 	}
 }
 
@@ -384,6 +432,32 @@ func sessionMode(from *event.Event, mode string, st *sessionState) *event.Event 
 	m.Session.Sequence = st.next()
 	m.R2.Transition = false
 	return m
+}
+
+// sessionNoPrompt is the event rules 100206 and 100207 read: the session, its mode, and the name and
+// tool_use_id of the tool call that came before any prompt. It carries no path, command or policy
+// field, so no tool rule can match it.
+func sessionNoPrompt(from *event.Event, st *sessionState) *event.Event {
+	n := &event.Event{
+		EventID:    newEventID(),
+		TS:         from.TS,
+		IngestedAt: from.IngestedAt,
+		Source:     event.SourceAmbitd,
+		SchemaV:    from.SchemaV,
+		Kind:       event.KindSessionNoPrompt,
+		Endpoint:   from.Endpoint,
+		Actor:      from.Actor,
+		Agent:      from.Agent,
+		Session:    event.Session{SessionID: from.Session.SessionID, AgentID: from.Session.AgentID, AgentType: from.Session.AgentType},
+		R2:         from.R2,
+		Policy:     event.Policy{Decision: event.DecisionNone},
+	}
+	n.Session.Sequence = st.next()
+	n.R2.Transition = false
+	if from.Tool != nil {
+		n.Tool = &event.Tool{Name: from.Tool.Name, UseID: from.Tool.UseID}
+	}
+	return n
 }
 
 // fpSighting is the event the D10 rules count: the identity and session of the tool event that first
