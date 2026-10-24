@@ -213,3 +213,29 @@ func TestMainWithNoSpoolFails(t *testing.T) {
 		t.Errorf("exit %d, stderr %q: want a failure naming the missing spool", code, stderr.String())
 	}
 }
+
+func hookEvent(at time.Time, kind event.Kind, sid string) *event.Event {
+	return &event.Event{TS: at.Format(time.RFC3339Nano), Source: event.SourceHook, Kind: kind, Session: event.Session{SessionID: sid}}
+}
+
+func TestReportCountsSessionsThatSentNothingAfterTheirStart(t *testing.T) {
+	traj := filepath.Join(t.TempDir(), "trajectory.jsonl")
+	writeLines(t, traj,
+		hookEvent(t0, event.KindSessionStart, "silent"),
+		hookEvent(t0, event.KindSessionStart, "fine"),
+		hookEvent(t0.Add(time.Second), event.KindPromptSubmit, "fine"),
+		hookEvent(t0.Add(time.Minute), event.KindSessionEnd, "silent"),
+		hookEvent(t0.Add(9*time.Minute), event.KindSessionStart, "just-started"),
+		hookEvent(t0.Add(10*time.Minute), event.KindPromptSubmit, "no-start-seen"),
+		health(t0.Add(10*time.Minute), event.Health{RunID: "r1"}),
+	)
+	r := build(t, traj)
+	if r.Sessions.Started != 3 || r.Sessions.Silent != 1 {
+		t.Errorf("sessions = %+v, want 3 started and 1 silent: a session end is not a hook that got through, and one started a minute ago may still be waiting for its prompt", r.Sessions)
+	}
+	var out bytes.Buffer
+	r.WriteText(&out, false)
+	if !strings.Contains(out.String(), "blocker 7") {
+		t.Errorf("text does not point at blocker 7:\n%s", out.String())
+	}
+}
