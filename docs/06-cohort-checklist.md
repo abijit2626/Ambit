@@ -104,6 +104,18 @@ Each one will otherwise cost the cohort a week to discover.
    `deploy/wazuh/README.md` lists them. Step 3 of "Stand up the manager" confirms them; do not
    skip it, because a wrong one looks exactly like a quiet fleet.
 
+7. **A volunteer with the sandbox on sends ambitd nothing over http unless `127.0.0.1` is an
+   allowed domain.** With `sandbox.enabled`, Claude Code posts every `http` hook through the
+   sandbox's network proxy, and the proxy answers a host that is not in
+   `sandbox.network.allowedDomains` with a 403 (observed on v2.1.310 under `claude -p`: every
+   http hook failed with "HTTP 403", and ambitd saw only the `session_start` from the command
+   hook). Adding `"127.0.0.1"` to `allowedDomains` made every hook arrive. Whether an
+   interactive session prompts the developer for it instead of failing is not observed. The M0
+   bundle sets no sandbox key, so this comes from the volunteer's own settings: ask each one
+   whether they run with the sandbox, and check `events.jsonl` gains a `prompt_submit` after
+   their first session. Allowing `127.0.0.1` also lets sandboxed commands reach every local port,
+   ambitd's included; docs/02 has the trade-off.
+
 ## Prove it on one machine you own
 
 1. `make check && make smoke`. For Windows endpoints, `make smoke-windows` and
