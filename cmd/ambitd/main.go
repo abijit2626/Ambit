@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,7 +22,9 @@ import (
 	"github.com/abijit2626/ambit/internal/hook"
 	"github.com/abijit2626/ambit/internal/hookfwd"
 	"github.com/abijit2626/ambit/internal/interpose"
+	"github.com/abijit2626/ambit/internal/m0report"
 	"github.com/abijit2626/ambit/internal/otlp"
+	"github.com/abijit2626/ambit/internal/runstate"
 	"github.com/abijit2626/ambit/internal/sink"
 )
 
@@ -32,6 +35,9 @@ func main() {
 	// deliver to hooks of type http. See internal/hookfwd.
 	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
 		os.Exit(hookfwd.Main(os.Args[2:], os.Stdin, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "report" {
+		os.Exit(m0report.Main(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ambitd:", err)
@@ -164,9 +170,21 @@ func run() error {
 		"baselines", cfg.BaselineDir,
 	)
 
-	go emitHealth(ctx, cfg, coll, events, traj, otlpSrv, version, log)
+	runID, prev, rs := openRunState(cfg, log)
+	hb := &heartbeat{
+		cfg: cfg, coll: coll, srv: srv, events: events, traj: traj, otlpSrv: otlpSrv,
+		version: version, log: log, start: time.Now(), runID: runID, prev: prev, rs: rs,
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hb.loop(ctx)
+	}()
 
 	err = srv.Serve(ctx, ln)
+	stop()
+	<-done
+	hb.emit(true)
 
 	st := coll.Stats()
 	ot := coll.OTel()
@@ -200,83 +218,139 @@ func otlpAddrOrOff(cfg config.Config) string {
 	return cfg.OTLPAddr
 }
 
-func emitHealth(
-	ctx context.Context,
-	cfg config.Config,
-	coll *collector.Collector,
-	events *sink.Writer,
-	traj *sink.Writer,
-	otlpSrv *otlp.Server,
-	version string,
-	log *slog.Logger,
-) {
-	start := time.Now()
-	ticker := time.NewTicker(cfg.HealthInterval)
-	defer ticker.Stop()
+func openRunState(cfg config.Config, log *slog.Logger) (string, *event.PrevRun, *runstate.File) {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	runID := hex.EncodeToString(b)
+	rs, prev, err := runstate.Open(runstate.PathFor(cfg.TrajectoryPath), runID, version, time.Now())
+	if err != nil {
+		log.Error("run state unavailable; restarts and downtime will not be reported", "err", err)
+		rs = nil
+	}
+	if prev != nil {
+		log.Info("previous run", "stop", prev.Stop, "run_id", prev.RunID, "down_sec", prev.DownSec)
+	}
+	return runID, prev, rs
+}
 
+type heartbeat struct {
+	cfg     config.Config
+	coll    *collector.Collector
+	srv     *hook.Server
+	events  *sink.Writer
+	traj    *sink.Writer
+	otlpSrv *otlp.Server
+	version string
+	log     *slog.Logger
+	start   time.Time
+	runID   string
+	prev    *event.PrevRun
+	rs      *runstate.File
+}
+
+func (h *heartbeat) loop(ctx context.Context) {
+	ticker := time.NewTicker(h.cfg.HealthInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			st := coll.Stats()
-			es, ts := events.Stats(), traj.Stats()
-
-			status := "ok"
-
-			if es.Dropped > 0 || ts.Dropped > 0 || es.WriteErrs > 0 || ts.WriteErrs > 0 {
-				status = "degraded"
-			}
-
-			ot := coll.OTel()
-			if cfg.OTLPEnabled && ot.Discrepant {
-				status = "degraded"
-			}
-			if otlpSrv != nil {
-				if rejected := otlpSrv.Stats().Rejected; rejected > 0 {
-
-					status = "degraded"
-					log.Error("OTLP exports are being rejected for wrong encoding",
-						"rejected", rejected,
-						"fix", "set OTEL_EXPORTER_OTLP_PROTOCOL=http/json")
-				}
-			}
-
-			now := time.Now().UTC()
-			e := &event.Event{
-				EventID:    fmt.Sprintf("health-%d", now.UnixNano()),
-				TS:         now.Format(time.RFC3339Nano),
-				IngestedAt: now.Format(time.RFC3339Nano),
-				Source:     event.SourceAmbitd,
-				SchemaV:    event.SchemaVersion,
-				Kind:       event.KindAmbitdHealth,
-				Endpoint: event.Endpoint{
-					EndpointID:    cfg.EndpointID,
-					AmbitdVersion: version,
-				},
-				Actor: event.Actor{UserID: cfg.UserID, OrgID: cfg.OrgID},
-				Agent: event.Agent{Kind: "claude-code"},
-				Health: &event.Health{
-					Status:        status,
-					QueueDepth:    es.QueueDepth + ts.QueueDepth,
-					DroppedEvents: es.Dropped + ts.Dropped,
-					UptimeSec:     int64(time.Since(start).Seconds()),
-				},
-			}
-
-			traj.Write(e)
-			events.Write(event.Flatten(e))
-
-			if status != "ok" {
-				log.Warn("ambitd degraded",
-					"events_dropped", es.Dropped, "trajectory_dropped", ts.Dropped,
-					"events_write_errs", es.WriteErrs, "trajectory_write_errs", ts.WriteErrs)
-			}
-			log.Debug("health",
-				"handled", st.Handled, "crossed", st.Crossed,
-				"interesting_fraction", fmt.Sprintf("%.4f", coll.InterestingFraction()),
-				"hook_tool_calls", ot.HookToolCalls, "otel_tool_calls", ot.ToolCalls,
-				"stream_discrepant", ot.Discrepant)
+			h.emit(false)
 		}
 	}
+}
+
+func (h *heartbeat) emit(final bool) {
+	cfg, log := h.cfg, h.log
+	st := h.coll.Stats()
+	es, ts := h.events.Stats(), h.traj.Stats()
+	hs := h.srv.Stats()
+
+	status := "ok"
+
+	if es.Dropped > 0 || ts.Dropped > 0 || es.WriteErrs > 0 || ts.WriteErrs > 0 || hs.ParseErrors > 0 {
+		status = "degraded"
+	}
+
+	ot := h.coll.OTel()
+	if cfg.OTLPEnabled && ot.Discrepant {
+		status = "degraded"
+	}
+	if h.otlpSrv != nil {
+		if rejected := h.otlpSrv.Stats().Rejected; rejected > 0 {
+
+			status = "degraded"
+			log.Error("OTLP exports are being rejected for wrong encoding",
+				"rejected", rejected,
+				"fix", "set OTEL_EXPORTER_OTLP_PROTOCOL=http/json")
+		}
+	}
+
+	now := time.Now().UTC()
+	lat := hs.Latency
+	e := &event.Event{
+		EventID:    fmt.Sprintf("health-%d", now.UnixNano()),
+		TS:         now.Format(time.RFC3339Nano),
+		IngestedAt: now.Format(time.RFC3339Nano),
+		Source:     event.SourceAmbitd,
+		SchemaV:    event.SchemaVersion,
+		Kind:       event.KindAmbitdHealth,
+		Endpoint: event.Endpoint{
+			EndpointID:    cfg.EndpointID,
+			AmbitdVersion: h.version,
+		},
+		Actor: event.Actor{UserID: cfg.UserID, OrgID: cfg.OrgID},
+		Agent: event.Agent{Kind: "claude-code"},
+		Health: &event.Health{
+			Status:        status,
+			QueueDepth:    es.QueueDepth + ts.QueueDepth,
+			DroppedEvents: es.Dropped + ts.Dropped,
+			UptimeSec:     int64(time.Since(h.start).Seconds()),
+
+			RunID:   h.runID,
+			Final:   final,
+			Handled: st.Handled,
+			Crossed: st.Crossed,
+
+			ToolCalls:   st.HookToolCalls,
+			ToolCrossed: st.HookToolCrossed,
+
+			TrajectoryWritten: ts.Written,
+			WriteErrors:       es.WriteErrs + ts.WriteErrs,
+			ParseErrors:       hs.ParseErrors,
+			TrajectoryRetired: ts.Retired,
+
+			HookLatency: &lat,
+			PrevRun:     h.prev,
+		},
+	}
+
+	h.traj.Write(e)
+	h.events.Write(event.Flatten(e))
+
+	if h.rs != nil {
+		var err error
+		if final {
+			err = h.rs.Stop(now)
+		} else {
+			err = h.rs.Beat(now)
+		}
+		if err != nil {
+			log.Warn("run state not updated", "err", err)
+		}
+	}
+
+	if status != "ok" {
+		log.Warn("ambitd degraded",
+			"events_dropped", es.Dropped, "trajectory_dropped", ts.Dropped,
+			"events_write_errs", es.WriteErrs, "trajectory_write_errs", ts.WriteErrs,
+			"hook_parse_errors", hs.ParseErrors)
+	}
+	log.Debug("health",
+		"handled", st.Handled, "crossed", st.Crossed,
+		"interesting_fraction", fmt.Sprintf("%.4f", h.coll.InterestingFraction()),
+		"hook_tool_calls", ot.HookToolCalls, "otel_tool_calls", ot.ToolCalls,
+		"stream_discrepant", ot.Discrepant,
+		"hook_p99_us", lat.P99US, "hook_over_budget", lat.OverBudget)
 }

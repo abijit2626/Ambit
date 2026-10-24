@@ -179,6 +179,12 @@ function Show-Status {
             Write-Host "    clean:  $n"
         }
     }
+
+    if (Test-Path $Bin) {
+        Write-Host ''
+        & $Bin report -config $Config
+        if ($LASTEXITCODE -ne 0) { Write-Warn '  ambitd report failed' }
+    }
 }
 
 function Invoke-Uninstall {

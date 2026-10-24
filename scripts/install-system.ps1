@@ -308,6 +308,11 @@ function Show-Status {
         Write-Host 'managed settings: absent'
     }
     Write-Host "data:             $DataDir"
+    if ((Test-Path -LiteralPath $BinPath) -and (Test-Path -LiteralPath (Join-Path $DataDir 'trajectory.jsonl'))) {
+        Write-Host ''
+        & $BinPath report -config $Config
+        if ($LASTEXITCODE -ne 0) { Write-Warning 'ambitd report failed' }
+    }
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }

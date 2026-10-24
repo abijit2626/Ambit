@@ -70,6 +70,21 @@ for s in "/home/dev" ".ssh" ".aws" "AKIAIOSFODNN7EXAMPLE" "attacker.test" "billi
 done
 
 echo
+echo "M0 report from the spool:"
+if ! "$BIN" report -trajectory "$D/trajectory.jsonl" -json >"$D/report.json" 2>"$D/report.err"; then
+  echo "  FAIL: ambitd report exited non-zero: $(cat "$D/report.err")"
+  fail=1
+fi
+for want in '"responses": 7,' '"latest_run_stopped_cleanly": true' '"parse_errors": 0,'; do
+  if grep -qF "$want" "$D/report.json"; then
+    echo "  ok:     $want"
+  else
+    echo "  FAIL:   report lacks $want"
+    fail=1
+  fi
+done
+
+echo
 if [ "$fail" -eq 0 ]; then
   echo "smoke: PASS"
 else
