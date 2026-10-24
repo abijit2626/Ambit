@@ -260,6 +260,7 @@ func (c *Collector) Handle(p *hook.Payload) {
 	c.emit(e)
 	c.emitModeChange(p.SessionID, e)
 	c.emitNoPrompt(p, e)
+	c.emitSandboxDenial(p, e)
 	if sighting != nil && !c.emitDerived(sighting) {
 		// the events sink refused it (its queue is full): the session has not sent this fingerprint, so
 		// the next tool result that carries it must try again

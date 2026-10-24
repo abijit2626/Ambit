@@ -733,19 +733,17 @@ reads an inert rule as a quiet fleet.
    the server's MCP configuration key, or nothing joins; a tool the interposer has not
    listed since ambitd started carries no hints (the cache is in memory); and the hints are
    the server's own claims, so they only ever add scrutiny.
-3. **Sandbox allowlist denials have no field at all.** D9 lists them as a signal; the
-   schema has nowhere to put one, so a *blocked* exfiltration attempt is invisible to the
-   detector. This is a schema addition, not an unpopulated field, and it is the one gap
-   here with nothing to mark. Where the signal would come from is now known in part:
-   Claude Code (v2.1.310, read from the installed package) appends a
-   `<sandbox_violations>` block, with `Filesystem:` and `Network:` sections, to a sandboxed
-   command's stderr in the tool result it gives the model, and on Windows a denied
-   connection shows only as the proxy's own 403 in the command's error. Whether a
-   `PostToolUse` hook receives that block in `tool_response` is not known (unobserved), and
-   it decides whether ambitd can see a denial at all. Two cautions for whoever adds it:
-   a program can print a block of its own, so a parsed denial is a claim from the
-   command's output, not from the sandbox; and the field must fit the 70-field ceiling
-   on the flattened event, which the union of every block already reaches.
+3. **Sandbox allowlist denials had no field at all; they now do.** D9 lists them as a
+   signal. Claude Code appends a `<sandbox_violations>` block to a sandboxed command's
+   error, and a `PostToolUseFailure` hook receives it in `error` (observed on v2.1.310:
+   `deny network-outbound example.com:443 (user denied)` after `curl: (56) CONNECT tunnel
+   failed, response 403`). ambitd sends a `sandbox_denial` event with the ops and keyed
+   digests of the targets (`sandbox_denial_ops`, `sandbox_denial_digests`), and rules
+   100304 and 100305 read it (observed offline under `wazuh-logtest` 4.14.8). Limits: only
+   the network line format is observed, not filesystem denials; a command can print a block
+   of its own, so ambitd reads only the last one, which is where Claude Code appends its
+   own, and treats the result as the command output's claim; and the two fields raised the
+   union ceiling on the flattened event from 70 to 72.
 4. **An untrusted zone now overrides a trusted-repo prefix**, which was a bug rather than a
    gap. A `CLAUDE.md` inside `node_modules` of a trusted repository was being reported as
    trusted, because the prefix check matched the dependency's parent path — which would

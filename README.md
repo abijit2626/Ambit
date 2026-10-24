@@ -470,7 +470,8 @@ team executes a runbook against a sample alert.
   [docs/02-architecture.md](docs/02-architecture.md#tenancy-for-third-party-monitoring).
 - **Two kinds of rule are inert and marked as such**, rather than shipped as if they worked:
   `agent_entrypoint` has no emitter (100204), and the policy engine that sets
-  `policy_decision` is M3 (D11). Sandbox allowlist denials have no schema field at all.
+  `policy_decision` is M3 (D11). Sandbox denials now cross as `sandbox_denial` events
+  (100304, 100305), read from the block Claude Code adds to a refused command's error.
   MCP annotations now reach tool-call events, joined from the interposer's last listing,
   so 100303 is live for interposed servers. [docs/03-detection.md](docs/03-detection.md)
   records all four.

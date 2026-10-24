@@ -13,6 +13,8 @@ describes is not something a rule can do.
 | 100301 | 12 | 10+ network-capable commands in one session within 300s |
 | 100302 | 13 | **Secret material in a network-capable command** |
 | 100303 | 10 | Result from an open-world MCP tool |
+| 100304 | 6 | Claude Code's sandbox refused something a tool call tried |
+| 100305 | 10 | **The sandbox blocked an outbound connection** |
 
 ## What this alert asserts
 
@@ -30,12 +32,14 @@ describes is not something a rule can do.
   Profiling "outside this endpoint's normal destinations" needs a per-endpoint baseline, which is
   a scheduled query over the indexer or the spool, and it is not built. Do not read 100301 as
   "unusual for this endpoint" — read it as "a rate that is hard to produce by hand".
-- **Sandbox denials are not here at all.** The catalogue lists "any sandbox allowlist denial" as
-  a D9 signal. Claude Code's sandbox denies outbound connections, and ambit has no schema field
-  to carry that — not an unpopulated field, an absent one. So a *blocked* exfiltration attempt
-  does not appear in this detector today. Until it does, a Bash `tool_post` whose result
-  mentions `<sandbox_violations>` or a proxy 403 (in the spool, which requires us) is where a
-  blocked attempt would show.
+- **100304 and 100305 report a blocked attempt, not a successful one.** They read the
+  `<sandbox_violations>` block Claude Code adds to a refused command's error. The denied host or
+  path is a keyed digest (`sandbox_denial_digests`); resolving it requires us. A program can print
+  a block of its own, so treat the denial as what the command's output claimed. They need the
+  sandbox on, and on Windows (no OS sandbox) there is nothing to deny. Only network denials have
+  been seen; filesystem lines are expected but unobserved. Read 100305 together with `r2_a` on the
+  same event: a session that had ingested untrusted content and then reached for a host it was
+  not allowed is the exfiltration shape, stopped by the sandbox.
 - **100303 depends on the interposer.** The open-world hint is the server's own annotation, which
   the interposer reads from `tools/list`; ambitd attaches it to the tool's calls. A server that is
   not interposed, an interposer whose `-server` name differs from the server's configured name, or

