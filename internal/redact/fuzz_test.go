@@ -65,3 +65,41 @@ func FuzzRedactStripsADelimitedSecret(f *testing.F) {
 		}
 	})
 }
+
+// referenceRedact is Redact without the literal prefilters: every pattern's regexp runs on every input.
+func referenceRedact(s string) string {
+	out := s
+	for _, p := range patterns {
+		out = p.re.ReplaceAllStringFunc(out, func(m string) string {
+			if p.kind == "generic_assignment" {
+				if i := strings.IndexAny(m, ":="); i >= 0 {
+					return m[:i+1] + Placeholder
+				}
+			}
+			return Placeholder
+		})
+	}
+	return out
+}
+
+// The prefilters only skip work: on any input, Redact must produce exactly what running every regexp does.
+func FuzzPrefilterChangesNothing(f *testing.F) {
+	for _, s := range []string{
+		"AWS_SECRET_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE",
+		"ſecret: abcdefghijklmnopqrstuvwxyz012345",
+		"Key=abcdefghijklmnopqrstuvwxyz012345",
+		"Password = hunter2hunter2hunter2",
+		"https://user:pw@example.com",
+		"-----BEGIN EC PRIVATE KEY-----\nx\n-----END EC PRIVATE KEY-----",
+		"plain text with no secret at all",
+	} {
+		f.Add(s)
+	}
+	r := New()
+	f.Fuzz(func(t *testing.T, s string) {
+		got, _ := r.Redact(s)
+		if want := referenceRedact(s); got != want {
+			t.Fatalf("prefilter changed the output:\nin   %q\ngot  %q\nwant %q", s, got, want)
+		}
+	})
+}
