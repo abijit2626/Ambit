@@ -74,17 +74,16 @@
   </rule>
 
   <!--
-    PENDING EMITTER, for a reason worth recording. An open-world MCP tool is one the
-    server itself marks as reaching outside a closed world, which makes its results
-    untrusted ingest. The annotation is known — the interposer reads it from tools/list
-    and it reaches Wazuh on mcp_list events — but it is NOT carried on tool CALL events:
-    those come from the hook path, and a hook payload contains no annotations. Joining
-    the interposer's per-tool annotations onto call events is an ambitd change that lands
-    with M2.
+    An open-world MCP tool is one the server itself marks as reaching outside a closed
+    world, which makes its results untrusted ingest. A hook payload carries no
+    annotations, so ambitd joins them on: it keeps what mcp-interpose last reported from
+    tools/list for each server and tool, and puts the hints on that tool's call events.
+    The join needs the interposer's -server name to be the server's key in the MCP
+    configuration (the <server> in mcp__<server>__<tool>), and a tool the interposer has
+    not listed since ambitd started carries no hints. A server that is not interposed
+    never carries them, so this rule cannot fire for it.
 
-    The same gap makes internal/filter's destructive-hint crossing criterion inert today.
-    It is harmless there, because an unclassified server makes the event cross anyway, but
-    it is the same missing join.
+    The hint is the server's own claim. It only adds scrutiny here.
   -->
   <rule id="100303" level="10">
     <decoded_as>json</decoded_as>
@@ -95,7 +94,7 @@
     <mitre>
       <id>T1041</id>
     </mitre>
-    <group>ambit_d9,ambit_pending_emitter,runbook_D9,</group>
+    <group>ambit_d9,runbook_D9,</group>
   </rule>
 
 </group>

@@ -314,7 +314,10 @@ What differs from Unix, and why it matters:
   [deploy/wazuh/README.md](deploy/wazuh/README.md) for what is and is not verified.
 
 `mcp-interpose` goes in front of one MCP server, per server, so Claude Code still sees
-that server under its own name and tool identity stays `mcp__<server>__<tool>`:
+that server under its own name and tool identity stays `mcp__<server>__<tool>`. Give
+`-server` the server's key from the MCP configuration: `ambitd` joins the interposer's
+per-tool annotations onto tool calls by that name, so a different name leaves calls
+without their destructive and open-world hints:
 
 ```jsonc
 {
@@ -458,10 +461,12 @@ team executes a runbook against a sample alert.
 - **Third-party monitoring restrictions are intentions until a tenancy model is chosen
   and tested.** They rest on Wazuh RBAC, agent groups and index restrictions. See
   [docs/02-architecture.md](docs/02-architecture.md#tenancy-for-third-party-monitoring).
-- **Three rules are inert and marked as such**, rather than shipped as if they worked:
-  `agent_entrypoint` has no emitter, MCP annotations do not reach tool-call events, and
-  the policy engine that sets `policy_decision` is M3. Sandbox allowlist denials have no
-  schema field at all. [docs/03-detection.md](docs/03-detection.md) records all four.
+- **Two kinds of rule are inert and marked as such**, rather than shipped as if they worked:
+  `agent_entrypoint` has no emitter (100204), and the policy engine that sets
+  `policy_decision` is M3 (D11). Sandbox allowlist denials have no schema field at all.
+  MCP annotations now reach tool-call events, joined from the interposer's last listing,
+  so 100303 is live for interposed servers. [docs/03-detection.md](docs/03-detection.md)
+  records all four.
 - **Three Wazuh behaviors are unconfirmed on a live manager and fail silently when
   wrong:** the syscheck parent SIDs, the SCA parent SID, and how a `<field>` regex
   matches an array-valued field. Confirm them on the deployed version before relying on

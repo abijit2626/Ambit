@@ -146,6 +146,9 @@ MODE=benign "$INTERPOSE" -server internal-wiki -config "$D/config.json" \
 "$INTERPOSE" -server wiki -config "$D/config.json" -baseline-dir /proc/ambit-cannot-write \
   -- "$D/server.sh" < "$D/session.jsonl" >/dev/null 2>>"$D/interpose.log" || true
 
+post '{"hook_event_name":"PostToolUse","session_id":"s_mcp","cwd":"/home/dev/src/myrepo","tool_name":"mcp__wiki__publish","tool_use_id":"t_m1","tool_input":{"page":"onboarding"},"tool_result":"published"}'
+post '{"hook_event_name":"PreToolUse","session_id":"s_mcp","cwd":"/home/dev/src/myrepo","tool_name":"mcp__internal-wiki__delete_page","tool_use_id":"t_m2","tool_input":{"page":"onboarding"}}'
+
 sleep 1
 kill "$PID" 2>/dev/null || true
 wait "$PID" 2>/dev/null || true
@@ -222,5 +225,9 @@ SYNTHETIC
 grep -m1 -F '"kind":"fp_sighting"' "$D/events.jsonl" >> "$OUT" || echo "  (no fp_sighting line)" >&2
 # rule 100200's event, appended last for the same reason; the first session_mode is s_4d2's bypassPermissions
 grep -m1 -F '"kind":"session_mode"' "$D/events.jsonl" >> "$OUT" || echo "  (no session_mode line)" >&2
+# MCP calls carrying the annotations ambitd joined from the interposer: 100303's event, and a trusted
+# server's destructive call that crosses for its hint alone
+grep -m1 -E '"kind":"tool_post".*"tool_mcp_openworld_hint":true' "$D/events.jsonl" >> "$OUT" || echo "  (no open-world tool_post)" >&2
+grep -m1 -E '"kind":"tool_pre".*"tool_mcp_destructive_hint":true' "$D/events.jsonl" >> "$OUT" || echo "  (no destructive tool_pre)" >&2
 
 echo "wrote $(wc -l < "$OUT" | tr -d ' ') fixture lines to $OUT"

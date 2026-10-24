@@ -12,6 +12,7 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 		return
 	}
 	c.interposeReports.Add(1)
+	c.rememberAnnotations(rep)
 
 	if rep.Degraded {
 		c.log.Warn("interposer degraded",

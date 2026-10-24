@@ -164,6 +164,9 @@ type Collector struct {
 
 	reasonMu     sync.Mutex
 	crossReasons map[string]int64
+
+	annMu sync.Mutex
+	ann   annotationCache
 }
 
 type Options struct {
@@ -441,6 +444,9 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 		if tl, ok := c.cfg.ToolLabels(server, tool); ok {
 			t.MCP.Classified = true
 			t.MCP.Labels = tl.Names
+		}
+		if a, ok := c.annotationsFor(server, tool); ok {
+			t.MCP.Annotations = a
 		}
 	}
 
