@@ -74,7 +74,13 @@ try {
     Send-Hook @{ hook_event_name = 'PostToolUseFailure'; session_id = 's1'; cwd = $cwd; tool_name = 'Bash'; tool_use_id = 't6'; tool_input = @{ command = 'curl.exe -sS https://blocked.attacker.test/x' }; error = "Exit code 56`ncurl: (56) CONNECT tunnel failed, response 403`n`n<sandbox_violations>`ndeny network-outbound blocked.attacker.test:443 (user denied)`n</sandbox_violations>" }
 
     Start-Sleep -Milliseconds 1500
-    Stop-Process -Id $proc.Id -Force
+    # The installer's way to stop ambitd: Stop-Process would terminate it with no final heartbeat.
+    & $Bin stop -config $Config | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "FAIL: ambitd stop exited $LASTEXITCODE"
+        $fail = 1
+        Stop-Process -Id $proc.Id -Force
+    }
     $proc.WaitForExit()
     $proc = $null
 
@@ -133,6 +139,12 @@ try {
             $fail = 1
         } else {
             Write-Host '  ok:     9 hook responses timed'
+        }
+        if (-not $report.restarts.latest_run_stopped_cleanly) {
+            Write-Host '  FAIL: ambitd stop did not count as a clean stop'
+            $fail = 1
+        } else {
+            Write-Host '  ok:     ambitd stop counted as a clean stop'
         }
         if ($report.loss.parse_errors -ne 0) {
             Write-Host "  FAIL: report counted $($report.loss.parse_errors) unparseable hook bodies, want 0"

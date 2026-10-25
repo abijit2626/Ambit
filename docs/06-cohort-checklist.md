@@ -89,11 +89,12 @@ Each one will otherwise cost the cohort a week to discover.
      counter is cumulative for its run, so a run is lost to the report only when all its health
      events have been deleted; the warning says the window may be missing older runs.
 
-   A clean stop is a SIGTERM or Ctrl-C, which is how systemd and launchd stop a service. On
-   Windows, `Stop-ScheduledTask`, the installer and a reboot end `ambitd` by terminating the
-   process, which leaves it no chance to write a final event, so expect Windows runs to end
-   `unclean` (inferred from how the task is stopped; not yet observed). Read the downtime there,
-   not the stop kind.
+   A clean stop is a SIGTERM or Ctrl-C, which is how systemd and launchd stop a service, or
+   `ambitd stop`, which posts a per-run token to `/shutdown`. The Windows installer uses the
+   latter before an upgrade or uninstall (tested with PowerShell 7 against a real `ambitd` on
+   Linux; not yet run on a Windows machine). `Stop-ScheduledTask` by hand, and a reboot or
+   shutdown, still terminate the process with no chance to write a final event, so expect those
+   Windows runs to end `unclean`. Read the downtime there, not the stop kind.
 
 5. **Fingerprint keys are per endpoint unless you provision them.** `ambitd` creates its key if
    none exists at `fingerprint_key_path`. M0 and M1 only compare digests within one endpoint,
