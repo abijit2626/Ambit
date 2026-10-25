@@ -279,7 +279,7 @@ Filtering happens in `ambitd`, by event kind:
 | `subagent_start` / `subagent_stop` | **yes** | Low volume, needed for provenance scoping |
 | `compact` | **yes** | Low volume; needed to interpret R2 state ([03](03-detection.md#layer-1--rule-of-two-accounting)) |
 | `ambitd_health` | **yes** | D7, D11 |
-| `goal_drift_score` | **only above threshold** | One score per tool call is the firehose again |
+| `goal_drift_score` | **only above threshold** (spool always) | M4 (rules 100330, 100331), only with `goal_drift` enabled. The judge's verdict on one `PreToolUse` that carried a provenance edge: `goal_drift_score` 1 (unrelated) or 0 (related), with `scores.drift_scorer_v` naming the prompt version and model in the spool. Carries identity, session, R2 bits, `tool_name` and `tool_use_id`, and no edge, path or policy field, so the D10 rule cannot take it. One score per tool call would be the firehose again; only unrelated ones cross |
 | `fp_sighting` | **yes** (SIEM only, not the spool) | D10. ambitd's own event: a session's first sighting of a notable fingerprint, one per session and fingerprint. Carries identity, session, `tool_name`, `tool_use_id` (the `tool_post` it came from), `prov_fp_notable` and `prov_fp_role`, and nothing a tool, policy, edge or taint rule keys on, so only rule 100280 can match it. Rebuildable from the spool as the first `tool_post` per session carrying that fingerprint |
 | `session_mode` | **yes** (SIEM only, not the spool) | D1 (rule 100200). ambitd's own event for a session's `permission_mode`, sent the first time it is known and each time it changes. `SessionStart` carries no mode, so for a live session this is its first prompt. Carries identity, session and `permission_mode`, and no tool, path or policy field. Rebuildable from the spool, where every event repeats the mode |
 | `session_no_prompt` | **yes** (SIEM only, not the spool) | D1 (rules 100206, 100207). ambitd's own event for a session that made a tool call before any prompt: ambitd saw it start (a `SessionStart` that is not from compaction) and its first `PreToolUse` came before any `UserPromptSubmit`. Once per session start. Carries identity, session, `permission_mode`, and the `tool_name` and `tool_use_id` of that call, and no path, command or policy field. Rebuildable from the spool by event order |
@@ -354,6 +354,7 @@ able to learn what it is.
 | Full trajectory (all events, rich schema) | **local spool → object storage** | 90 days | The investigation corpus. Cheap storage, not indexed. |
 | Retained content blobs | **local / object storage, encrypted** | 30 days | Highest-sensitivity, shortest clock |
 | Goal-drift scores (all) | **local spool** | 90 days | Only above-threshold scores reach Wazuh |
+| Goal-drift judge input: the latest prompt and one tool call's name and arguments, redacted and truncated | **the model API** (Anthropic, or `goal_drift.base_url`) | the API's own retention | Only with `goal_drift` enabled, and only for tool calls with a provenance edge. This is the one path by which prompt and argument text leaves the endpoint other than to the spool |
 | MCP metadata baselines | **local + Wazuh** | indefinite | Drift detection needs the original |
 | Endpoint path-digest reverse maps | **endpoint only** | 90 days | Never centralized, never sent to the MSSP |
 

@@ -152,9 +152,12 @@ tamper-resistant second stream independent of the hook path.
 **Encoding: `http/json` on port 4318.** Claude Code supports `grpc`,
 `http/protobuf` and `http/json`, and `http/json` is the only one decodable with
 the Go standard library. The alternatives would pull grpc and protobuf runtimes
-into a daemon that ships to developer endpoints and otherwise has zero
-dependencies — a large supply-chain surface to add to a security tool, and one
-whose whole job is not being the thing that compromises the endpoint. Port 4318 is
+into a daemon that ships to developer endpoints — a large supply-chain surface to
+add to a security tool, and one whose whole job is not being the thing that
+compromises the endpoint. (ambitd's one dependency is the Anthropic Go SDK, used only
+by the optional goal-drift judge in `internal/drift`; it nearly doubles the binary,
+10.6 to 18.8 MB, and brings its own modules, such as OpenTelemetry's API and tidwall's
+JSON packages, into every build.) Port 4318 is
 the OTLP/HTTP default; **4317 is gRPC** and is the wrong port for this receiver.
 
 `ambitd` answers **415** on a protobuf body rather than failing to parse it, and

@@ -402,11 +402,52 @@ What this buys that nothing else does: it catches the case where every individua
 action is permitted — GTG-1002's decomposition, where each step is defensible in
 isolation — and it needs no knowledge of the attack, only of the task.
 
-Be clear-eyed: an LLM judge is itself promptable, so **the scorer never sees raw
-untrusted content**, only structured action descriptions, and its prompt is a
-security boundary. And "unrelated to the stated objective" describes a great deal of
+Be clear-eyed: an LLM judge is itself promptable, so **the scorer never sees tool
+results**, only the user's prompt and the action's name and arguments, and its prompt is a
+security boundary. The arguments can still carry a value copied from untrusted content (that is
+what the edge found), so the prompt fences them as data. And "unrelated to the stated objective" describes a great deal of
 legitimate engineering — reading unrelated files to understand a codebase, fixing an
 unrelated broken test. Expect noise; budget for tuning.
+
+### As built (M4)
+
+`internal/drift`, off unless `goal_drift.enabled` is set. What it does, and what it costs:
+
+- **Which calls.** Only `PreToolUse` calls that carry a provenance edge, and only in a session
+  that has had a prompt. Judging every call would cost a model call each and, on the prototype
+  below, flag a fifth of benign AgentDojo runs on the edge alone; the edge is the cheap
+  pre-filter, and it is the event's own edge, not session state.
+- **What leaves the endpoint.** The session's latest prompt and the call's tool name and
+  arguments, each redacted by `internal/redact` (the same patterns as the spool) and cut to
+  `max_chars` (4000), sent to the configured model (default `claude-haiku-5-5`, the prototype's)
+  through the official Anthropic Go SDK. Never tool results, file contents or paths beyond what
+  the arguments name. `base_url` points it at an organization's gateway, and must be https.
+- **The question.** The prototype's (`testdata/agentdojo/goal-judge-prompt.txt`), one action per
+  request, answered RELATED or UNRELATED. UNRELATED scores 1 and RELATED 0, not a probability the
+  model would make up; `drift_threshold` (0.7) therefore means "the judge said unrelated". A
+  refusal or any other reply gives no score.
+- **Off the hook path.** The hook response and the ingest of the tool event never wait on the
+  judge: a bounded queue (64) feeds two workers, and calls over `max_per_hour` (120) are skipped
+  and counted, which caps the cost of a busy endpoint. At Claude Haiku 5.5's $0.10/$0.50 per
+  million tokens, a judged call of a few hundred tokens is a small fraction of a cent.
+- **Where the score goes.** A `goal_drift_score` event to the spool, and to Wazuh when the judge
+  said unrelated. Rule 100330 alerts on it; 100331 is the page condition above (unrelated, an
+  edge, and Rule-of-Two bit C set for the session). The score event carries no edge, so the D10
+  rule cannot take it; `tool_use_id` joins it to the tool event that does.
+- **Turning it on.** In ambitd's config (the key file belongs in ambitd's private data
+  directory; `api_key_env` names an environment variable instead):
+
+  ```json
+  "goal_drift": { "enabled": true, "api_key_file": "/var/lib/ambit/anthropic.key",
+                  "model": "claude-haiku-5-5", "max_per_hour": 120, "max_chars": 4000 }
+  ```
+
+  A judge that cannot start (no key, bad config) is logged and left off; observation goes on.
+  ambitd logs the judge's counts (judged, unrelated, rate-limited, dropped, errors) when it stops.
+- **Not measured on this build.** The rates below are the prototype's, through the Claude Code
+  CLI. The built judge was tested against a stand-in for the Messages API and has not yet been
+  run against the real one or on an endpoint. Re-run the AgentDojo measurement through it before
+  relying on those numbers.
 
 **Implementation note for the cost pre-filter:** if scoring is gated to
 actions that already carry an R2 signal, gate it on that event's own
@@ -778,7 +819,7 @@ agent hijacking or covert side tasks.
 | D11 fail-open run | T1562.001 | |
 | D12 managed-settings drift | T1562.001 | |
 | R2 gate (deny) | T1552, T1041 | Depends which third bit tripped |
-| Goal drift | — | **No good mapping.** Stated as a gap rather than forced into T1059. |
+| Goal drift | — | **No good mapping.** Stated as a gap rather than forced into T1059; rules 100330 and 100331 carry the `ambit_no_mitre` group instead. |
 
 That last row matters: forcing a bad mapping to satisfy a reporting expectation
 makes the alert harder to triage, not easier. Better to ship it untagged and say why.
@@ -970,8 +1011,8 @@ What the first runs found, recorded because they are the reason a harness is wor
   number that matters. It also inherits the edge's misses. What it does show is that the false
   positives the edge cannot separate are separable by a question the edge does not ask, which is
   the case for building goal drift (M4) as designed: asynchronous, on the stated objective, never
-  in the path of a tool call, and never paging alone. The judgment is not built into ambitd; this
-  measured whether it would be worth building.
+  in the path of a tool call, and never paging alone. It is now built into ambitd ("As built (M4)"
+  under Layer 3); this measured whether it would be worth building.
 - **Confidence does not separate the false positives in the starter corpus.** The benign
   carry-through cases (following a documentation link, putting an article's URL in a summary)
   are full-URL matches at 0.95, so raising the floor removes recall and keeps them. The edge

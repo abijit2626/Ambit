@@ -330,6 +330,7 @@ func TestDerivedEventsAreMatchedOnlyByTheirOwnRules(t *testing.T) {
 		"session_mode":      {100200: true},
 		"session_no_prompt": {100206: true, 100207: true},
 		"sandbox_denial":    {100304: true, 100305: true},
+		"goal_drift_score":  {100330: true, 100331: true},
 	}
 	rules := loadRules(t)
 	byID := indexRules(rules)
