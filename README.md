@@ -159,6 +159,8 @@ internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
 internal/runstate/       ambitd.state: each run's last heartbeat and how it stopped
 internal/m0report/       `ambitd report`: the M0 exit criteria for one endpoint, from the spool
+internal/stopctl/        `ambitd stop`: a clean stop where the OS can only terminate (Windows)
+internal/drift/          M4 goal drift: asks a model whether an action with an edge serves the user's request
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
 internal/fsperm/         private directories: 0700 on Unix, an explicit ACL on Windows
@@ -177,6 +179,7 @@ testdata/agentdojo/      per-tool MCP labels for AgentDojo's four suites, and li
 ./scripts/dev-local.sh --status  # what was collected, then the M0 readout
 ambitd report -config <config>   # M0 criteria from the spool: hook p99, loss, restarts, interesting fraction
 ambitd doctor -config <config>   # will ambitd hear from Claude Code? hooks, sandbox allowlist, OTel protocol, health
+ambitd stop -config <config>     # stop the running ambitd cleanly (final heartbeat, clean stop recorded)
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
@@ -286,6 +289,15 @@ console program, and making it a service would add a dependency:
 .\scripts\install-system.ps1 -Status
 .\scripts\install-system.ps1 -Uninstall          # -Purge also removes the collected data
 ```
+
+Windows has no SIGTERM: `Stop-ScheduledTask` and `Stop-Process` terminate the process, so
+`ambitd` would never write its final heartbeat and every stop would read as unclean. The
+installer therefore asks first. At startup `ambitd` writes a random token to `stop.token` in
+its private data directory; the installer posts it to `/shutdown` on the hook address, which
+stops `ambitd` the way SIGTERM does on Unix, and forces only what is still running 15 seconds
+later. `ambitd stop -config <config>` does the same by hand. Only someone who can read the data
+directory (SYSTEM and Administrators) can stop it this way, which is who could kill it anyway. A
+reboot or shutdown still terminates it, so those stops stay unclean.
 
 What differs from Unix, and why it matters:
 
@@ -411,9 +423,9 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 | --- | --- | --- |
 | **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Installers run `ambitd` as a system service from boot (verified on Linux; not yet run on macOS or Windows). `ambitd report` computes the latency, loss and interesting-fraction criteria from the spool. Not yet deployed to a cohort. |
 | **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policies (an M0 subset for the observation-only bundle, and the full one). | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. The D1 rules for bypass mode (100200) and prompt-less sessions (100206, 100207), the open-world MCP rule (100303) and the sandbox-denial rules (100304, 100305) fire under `wazuh-logtest` 4.14.8 on fixtures from the real pipeline. |
-| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`), and the gate runs in shadow too (`internal/gate`): docs/03's table is evaluated on every `PreToolUse` under per-session and per-turn scoping, and the verdict is recorded on the event (`policy_shadow=true`, rules 100320–100323) and never returned, so no session behaves differently. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`), with a hand-written starter corpus and an AgentDojo adapter measured against published runs of real models (docs/03). Precision on a real developer cohort is still unmeasured: that is what a shadow cohort is for. MCP annotations are joined onto tool calls from the interposer. A prototype goal judge, offline, separated AgentDojo's false positives from its attacks (docs/03); it is not built. |
+| **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`), and the gate runs in shadow too (`internal/gate`): docs/03's table is evaluated on every `PreToolUse` under per-session and per-turn scoping, and the verdict is recorded on the event (`policy_shadow=true`, rules 100320–100323) and never returned, so no session behaves differently. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`), with a hand-written starter corpus and an AgentDojo adapter measured against published runs of real models (docs/03). Precision on a real developer cohort is still unmeasured: that is what a shadow cohort is for. MCP annotations are joined onto tool calls from the interposer. A prototype goal judge, offline, separated AgentDojo's false positives from its attacks (docs/03); it is now built as M4. |
 | **M3 Enforce** | Policy engine, signed policy bundles, split fail policy, containment-only active response. | Design only. |
-| **M4 Goal drift** | Async scoring of actions against the stated objective. | Design only. |
+| **M4 Goal drift** | Async scoring of actions against the stated objective. | Implemented, off by default (`goal_drift` in the config; it sends redacted prompts and tool arguments to a model API, see docs/03 Layer 3). Judges only tool calls that carry a provenance edge, with the prototype's question and model (Claude Haiku 5.5); rules 100330 and 100331 with runbook M4. Tested against a stand-in for the API, not yet run against the real API or on an endpoint, so the prototype's rates are the only measurement. |
 | **M5 Fleet correlation** | Cross-session fingerprint set intersection; session-shape analysis. | Design only. |
 
 Exit criteria gate each milestone. **M0:** a 5–10 endpoint volunteer cohort; p99 hook

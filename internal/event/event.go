@@ -332,6 +332,11 @@ type Health struct {
 
 	HookLatency *Latency `json:"hook_latency,omitempty"`
 	PrevRun     *PrevRun `json:"prev_run,omitempty"`
+
+	// LatencyReport marks the heartbeats whose hook latency crosses to the SIEM: one an hour and
+	// the final one. Every heartbeat would put a latency alert per endpoint per minute in the
+	// indexer; hourly is enough for a fleet view.
+	LatencyReport bool `json:"latency_report,omitempty"`
 }
 
 type PrevRun struct {

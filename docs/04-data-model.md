@@ -102,8 +102,10 @@ spools.
 
 ### The health event in the spool
 
-`ambitd_health` carries more in the spool than crosses to Wazuh (which gets only
-`health_status`, `health_queue_depth` and `health_dropped_events`). Every counter is cumulative
+`ambitd_health` carries more in the spool than crosses to Wazuh (which gets
+`health_status`, `health_queue_depth` and `health_dropped_events`, plus `health_hook_p99_us`,
+`health_hook_over_budget` and `health_hook_slow` on one heartbeat an hour and on the final one,
+marked `latency_report` in the spool; rules 100315 and 100316 turn those into a fleet latency view). Every counter is cumulative
 for the run that wrote it, so `ambitd report` keeps each run's last health event and sums
 across runs, and a final one is written on a clean shutdown.
 
@@ -119,7 +121,8 @@ across runs, and a final one is written on a clean shutdown.
   "hook_latency": { "count": 912, "over_budget": 0, "budget_us": 5000, "max_us": 840,
                     "p50_us": 250, "p95_us": 500, "p99_us": 1000,
                     "buckets": [ { "le_us": 250, "n": 600 }, "..." ], "overflow": 0 },
-  "prev_run": { "run_id": "...", "stop": "unclean", "last_heartbeat": "...", "down_sec": 480 }
+  "prev_run": { "run_id": "...", "stop": "unclean", "last_heartbeat": "...", "down_sec": 480 },
+  "latency_report": true                // hourly and on the final event: hook latency crosses to Wazuh
 }
 ```
 
@@ -213,8 +216,8 @@ and 25–31 for `session_start`, `config_change` and `ambitd_health`. An earlier
 of this document estimated 37; that was wrong, and it was wrong in the direction of
 under-counting. The real ceiling matters less than it looked, though: 50 is far under
 the 256 default for `decoder_order_size`, so the budget enforced in tests is 55 with a
-72-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
-added two).
+75-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
+added two, 72 until the hourly hook latency report added three).
 
 Two things keep the count honest. A single event never carries the tool, config and
 health blocks together, and a tool event never carries both the MCP and Bash blocks —
@@ -276,7 +279,7 @@ Filtering happens in `ambitd`, by event kind:
 | `subagent_start` / `subagent_stop` | **yes** | Low volume, needed for provenance scoping |
 | `compact` | **yes** | Low volume; needed to interpret R2 state ([03](03-detection.md#layer-1--rule-of-two-accounting)) |
 | `ambitd_health` | **yes** | D7, D11 |
-| `goal_drift_score` | **only above threshold** | One score per tool call is the firehose again |
+| `goal_drift_score` | **only above threshold** (spool always) | M4 (rules 100330, 100331), only with `goal_drift` enabled. The judge's verdict on one `PreToolUse` that carried a provenance edge: `goal_drift_score` 1 (unrelated) or 0 (related), with `scores.drift_scorer_v` naming the prompt version and model in the spool. Carries identity, session, R2 bits, `tool_name` and `tool_use_id`, and no edge, path or policy field, so the D10 rule cannot take it. One score per tool call would be the firehose again; only unrelated ones cross |
 | `fp_sighting` | **yes** (SIEM only, not the spool) | D10. ambitd's own event: a session's first sighting of a notable fingerprint, one per session and fingerprint. Carries identity, session, `tool_name`, `tool_use_id` (the `tool_post` it came from), `prov_fp_notable` and `prov_fp_role`, and nothing a tool, policy, edge or taint rule keys on, so only rule 100280 can match it. Rebuildable from the spool as the first `tool_post` per session carrying that fingerprint |
 | `session_mode` | **yes** (SIEM only, not the spool) | D1 (rule 100200). ambitd's own event for a session's `permission_mode`, sent the first time it is known and each time it changes. `SessionStart` carries no mode, so for a live session this is its first prompt. Carries identity, session and `permission_mode`, and no tool, path or policy field. Rebuildable from the spool, where every event repeats the mode |
 | `session_no_prompt` | **yes** (SIEM only, not the spool) | D1 (rules 100206, 100207). ambitd's own event for a session that made a tool call before any prompt: ambitd saw it start (a `SessionStart` that is not from compaction) and its first `PreToolUse` came before any `UserPromptSubmit`. Once per session start. Carries identity, session, `permission_mode`, and the `tool_name` and `tool_use_id` of that call, and no path, command or policy field. Rebuildable from the spool by event order |
@@ -351,6 +354,7 @@ able to learn what it is.
 | Full trajectory (all events, rich schema) | **local spool → object storage** | 90 days | The investigation corpus. Cheap storage, not indexed. |
 | Retained content blobs | **local / object storage, encrypted** | 30 days | Highest-sensitivity, shortest clock |
 | Goal-drift scores (all) | **local spool** | 90 days | Only above-threshold scores reach Wazuh |
+| Goal-drift judge input: the latest prompt and one tool call's name and arguments, redacted and truncated | **the model API** (Anthropic, or `goal_drift.base_url`) | the API's own retention | Only with `goal_drift` enabled, and only for tool calls with a provenance edge. This is the one path by which prompt and argument text leaves the endpoint other than to the spool |
 | MCP metadata baselines | **local + Wazuh** | indefinite | Drift detection needs the original |
 | Endpoint path-digest reverse maps | **endpoint only** | 90 days | Never centralized, never sent to the MSSP |
 

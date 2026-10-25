@@ -391,6 +391,55 @@ function Get-Process { param($Name, $ErrorAction) if ($script:alive) { [pscustom
 	}
 }
 
+// Stop-ScheduledTask and Stop-Process terminate ambitd with no final heartbeat, so Stop-Ambitd first asks
+// it to stop with the token it wrote, and only forces what is still running after that.
+func TestStopAmbitdAsksBeforeItForces(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("pwsh not installed")
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "ambit"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ambit", "stop.token"), []byte("tok123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(),
+		"ProgramW6432="+dir, "ProgramFiles="+dir, "ProgramData="+dir, "SystemRoot="+dir)
+	script, err := filepath.Abs(psScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubs := `
+$script:alive = $true
+$script:forced = $false
+$script:asked = ''
+function Get-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) [pscustomobject]@{ State = 'Running' } }
+function Disable-ScheduledTask { param($TaskName, $TaskPath) }
+function Stop-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction) $script:forced = $true }
+function Start-Sleep { param($Milliseconds) }
+function Get-Process { param($Name, $ErrorAction) if ($script:alive) { [pscustomobject]@{ Path = $BinPath } } }
+function Stop-Process { [CmdletBinding()] param([Parameter(ValueFromPipeline)]$InputObject, [switch]$Force) process { $script:forced = $true; $script:alive = $false } }
+function Invoke-WebRequest { param([switch]$UseBasicParsing, $Method, $TimeoutSec, $Headers, $Uri) $script:asked = $Method + ' ' + $Uri + ' ' + $Headers['X-Ambit-Stop-Token']; $script:alive = $false }
+Stop-Ambitd
+"asked=$script:asked forced=$script:forced"
+`
+	cmd := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", ". '"+script+"'"+stubs)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pwsh failed: %v\n%s", err, out)
+	}
+	got := string(out)
+	if !strings.Contains(got, "asked=Post http://127.0.0.1:7777/shutdown tok123") {
+		t.Errorf("Stop-Ambitd did not post the token to /shutdown: %s", got)
+	}
+	if !strings.Contains(got, "forced=False") || !strings.Contains(got, "ambitd stopped cleanly") {
+		t.Errorf("ambitd stopped when asked, yet Stop-Ambitd still forced it, or did not say so: %s", got)
+	}
+}
+
 func TestPowerShellInstallerWrapsCommandResultsBeforeCount(t *testing.T) {
 	unwrapped := regexp.MustCompile(`(^|[^@])\(\s*[A-Z][a-z]+-[A-Za-z]+[^()]*\)\.Count\b`)
 	for i, line := range strings.Split(read(t, psScript), "\n") {

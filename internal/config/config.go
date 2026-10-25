@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -58,6 +60,10 @@ type Config struct {
 
 	DriftThreshold float64 `json:"drift_threshold"`
 
+	// GoalDrift is the M4 judge. It is off by default: when on, ambitd sends the user's prompt and the
+	// arguments of tool calls that carry a provenance edge, redacted and truncated, to a model API.
+	GoalDrift GoalDrift `json:"goal_drift"`
+
 	// FPNotableSessionCap bounds how many notable fingerprints each session remembers having sent;
 	// a session sends an fp_sighting event only the first time it sees a fingerprint. See internal/collector/fpseen.go.
 	FPNotableSessionCap int `json:"fp_notable_session_cap"`
@@ -71,19 +77,85 @@ type Config struct {
 	Enforce bool `json:"enforce"`
 }
 
+type GoalDrift struct {
+	Enabled bool   `json:"enabled"`
+	Model   string `json:"model"`
+	// APIKeyFile is preferred over APIKeyEnv for a service: keep it in ambitd's private data directory.
+	APIKeyFile string `json:"api_key_file"`
+	APIKeyEnv  string `json:"api_key_env"`
+	// BaseURL overrides the API endpoint, for an organization's gateway. It must be https, or http to a
+	// loopback address, so prompts never cross a network in cleartext.
+	BaseURL        string `json:"base_url"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	MaxPerHour     int    `json:"max_per_hour"`
+	MaxChars       int    `json:"max_chars"`
+}
+
+// APIKey reads the key from the file when one is named, otherwise from the environment variable.
+func (g GoalDrift) APIKey() (string, error) {
+	if g.APIKeyFile != "" {
+		raw, err := os.ReadFile(g.APIKeyFile)
+		if err != nil {
+			return "", fmt.Errorf("goal_drift api_key_file: %w", err)
+		}
+		if k := strings.TrimSpace(string(raw)); k != "" {
+			return k, nil
+		}
+		return "", fmt.Errorf("goal_drift api_key_file %s is empty", g.APIKeyFile)
+	}
+	if k := strings.TrimSpace(os.Getenv(g.APIKeyEnv)); k != "" {
+		return k, nil
+	}
+	return "", fmt.Errorf("goal_drift: %s is not set and no api_key_file is configured", g.APIKeyEnv)
+}
+
+func (g GoalDrift) validate() error {
+	if !g.Enabled {
+		return nil
+	}
+	if g.Model == "" {
+		return errors.New("config: goal_drift.model is required when goal_drift is enabled")
+	}
+	if g.APIKeyFile == "" && g.APIKeyEnv == "" {
+		return errors.New("config: goal_drift needs api_key_file or api_key_env")
+	}
+	if g.TimeoutSeconds <= 0 || g.MaxPerHour <= 0 || g.MaxChars <= 0 {
+		return errors.New("config: goal_drift timeout_seconds, max_per_hour and max_chars must be positive")
+	}
+	if g.BaseURL != "" {
+		u, err := url.Parse(g.BaseURL)
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("config: goal_drift.base_url %q is not a URL", g.BaseURL)
+		}
+		host := u.Hostname()
+		loop := host == "localhost" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())
+		if u.Scheme != "https" && !(u.Scheme == "http" && loop) {
+			return fmt.Errorf("config: goal_drift.base_url %q must be https (or http to a loopback address): it carries prompts", g.BaseURL)
+		}
+	}
+	return nil
+}
+
 func Default() Config {
 	return Config{
-		HookAddr:            "127.0.0.1:7777",
-		EventsPath:          defaultPath("events.jsonl"),
-		TrajectoryPath:      defaultPath("trajectory.jsonl"),
-		EventsMaxBytes:      64 << 20,
-		EventsMaxFiles:      8,
-		TrajectoryMaxBytes:  256 << 20,
-		TrajectoryMaxFiles:  16,
-		BaselineDir:         defaultBaselineDir(runtime.GOOS, os.UserHomeDir),
-		FingerprintKeyPath:  defaultPath("fingerprint.key"),
-		SampleRate:          0.005,
-		DriftThreshold:      0.7,
+		HookAddr:           "127.0.0.1:7777",
+		EventsPath:         defaultPath("events.jsonl"),
+		TrajectoryPath:     defaultPath("trajectory.jsonl"),
+		EventsMaxBytes:     64 << 20,
+		EventsMaxFiles:     8,
+		TrajectoryMaxBytes: 256 << 20,
+		TrajectoryMaxFiles: 16,
+		BaselineDir:        defaultBaselineDir(runtime.GOOS, os.UserHomeDir),
+		FingerprintKeyPath: defaultPath("fingerprint.key"),
+		SampleRate:         0.005,
+		DriftThreshold:     0.7,
+		GoalDrift: GoalDrift{
+			Model:          "claude-haiku-5-5",
+			APIKeyEnv:      "ANTHROPIC_API_KEY",
+			TimeoutSeconds: 30,
+			MaxPerHour:     120,
+			MaxChars:       4000,
+		},
 		FPNotableSessionCap: 256,
 		HealthSeconds:       60,
 		LatencyBudgetMS:     5,
@@ -178,7 +250,10 @@ func (c *Config) Validate() error {
 	if c.HealthSeconds <= 0 {
 		return errors.New("config: health_seconds must be positive; the heartbeat is D7's fine half")
 	}
-	return nil
+	if c.DriftThreshold <= 0 || c.DriftThreshold > 1 {
+		return fmt.Errorf("config: drift_threshold %v out of range (0,1]", c.DriftThreshold)
+	}
+	return c.GoalDrift.validate()
 }
 
 func (c *Config) TrustedMCPSet() map[string]bool {

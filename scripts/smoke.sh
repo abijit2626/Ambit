@@ -48,7 +48,12 @@ post '{"hook_event_name":"PostToolUse","session_id":"s1","cwd":"/home/dev/src/my
 post '{"hook_event_name":"PostToolUseFailure","session_id":"s1","cwd":"/home/dev/src/myrepo","tool_name":"Bash","tool_use_id":"t5","tool_input":{"command":"curl -sS https://blocked.attacker.test/x"},"error":"Exit code 56\ncurl: (56) CONNECT tunnel failed, response 403\n\n<sandbox_violations>\ndeny network-outbound blocked.attacker.test:443 (user denied)\n</sandbox_violations>"}'
 
 sleep 1.5
-kill "$PID" 2>/dev/null || true
+# Stop it the way the Windows installer does, which must count as a clean stop like SIGTERM.
+if ! "$BIN" stop -config "$D/config.json" >"$D/stop.log" 2>&1; then
+  echo "FAIL: ambitd stop did not stop ambitd: $(cat "$D/stop.log")"
+  fail=1
+  kill "$PID" 2>/dev/null || true
+fi
 wait "$PID" 2>/dev/null || true
 
 echo
@@ -56,6 +61,11 @@ echo "SIEM-bound events: $(wc -l < "$D/events.jsonl")   spool: $(wc -l < "$D/tra
 
 if ! grep -q '"kind":"sandbox_denial"' "$D/events.jsonl"; then
   echo "FAIL: a sandbox denial did not cross as a sandbox_denial event"
+  fail=1
+fi
+
+if ! grep '"final"\|"kind":"ambitd_health"' "$D/events.jsonl" | tail -1 | grep -q '"health_hook_p99_us":'; then
+  echo "FAIL: the final heartbeat did not carry the hook latency report to the SIEM"
   fail=1
 fi
 

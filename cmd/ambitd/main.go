@@ -18,6 +18,7 @@ import (
 	"github.com/abijit2626/ambit/internal/collector"
 	"github.com/abijit2626/ambit/internal/config"
 	"github.com/abijit2626/ambit/internal/doctor"
+	"github.com/abijit2626/ambit/internal/drift"
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/hook"
@@ -27,6 +28,7 @@ import (
 	"github.com/abijit2626/ambit/internal/otlp"
 	"github.com/abijit2626/ambit/internal/runstate"
 	"github.com/abijit2626/ambit/internal/sink"
+	"github.com/abijit2626/ambit/internal/stopctl"
 )
 
 var version = "0.0.0-dev"
@@ -42,6 +44,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "report" {
 		os.Exit(m0report.Main(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	// Asks a running ambitd to stop the way SIGTERM would, for Windows, which has no SIGTERM to send.
+	if len(os.Args) > 1 && os.Args[1] == "stop" {
+		os.Exit(stopctl.Main(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ambitd:", err)
@@ -109,6 +115,7 @@ func run() error {
 	}
 	defer traj.Close()
 
+	scorer := openDriftScorer(cfg, log)
 	coll := collector.New(collector.Options{
 		Config:         cfg,
 		EventsSink:     events,
@@ -116,30 +123,45 @@ func run() error {
 		Extractor:      features.New(key),
 		Logger:         log,
 		Version:        version,
+		Drift:          scorer,
 	})
+
+	// Listen before the token is written: a second ambitd that cannot bind must not overwrite the
+	// token of the one that did.
+	ln, err := hook.Listen(cfg.HookAddr)
+	if err != nil {
+		return err
+	}
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	extra := map[string]http.Handler{
+		interpose.Path: interpose.NewHandler(coll.HandleInterpose, log),
+	}
+	if tok, err := stopctl.WriteToken(stopctl.TokenPath(cfg.TrajectoryPath)); err != nil {
+		log.Error("stop token unavailable; `ambitd stop` will not work and Windows stops will be unclean", "err", err)
+	} else {
+		extra[stopctl.Path] = stopctl.Handler(tok, func() {
+			log.Info("stop requested through " + stopctl.Path)
+			cancelRun()
+		})
+	}
 
 	srv, err := hook.NewServer(hook.Options{
 		Addr:    cfg.HookAddr,
 		Handler: coll,
-
-		Extra: map[string]http.Handler{
-			interpose.Path: interpose.NewHandler(coll.HandleInterpose, log),
-		},
+		Extra:   extra,
 
 		Decider: hook.ObserveOnly{},
 		Logger:  log,
 		Budget:  cfg.LatencyBudget,
 	})
 	if err != nil {
+		ln.Close()
 		return err
 	}
 
-	ln, err := hook.Listen(cfg.HookAddr)
-	if err != nil {
-		return err
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(runCtx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	var otlpSrv *otlp.Server
@@ -188,6 +210,15 @@ func run() error {
 	err = srv.Serve(ctx, ln)
 	stop()
 	<-done
+	if scorer != nil {
+		// judge calls already made are owed their score events; the final heartbeat comes after them
+		if !scorer.Close(10 * time.Second) {
+			log.Warn("goal-drift judge calls still running at shutdown; their scores are lost")
+		}
+		ds := scorer.Stats()
+		log.Info("goal-drift judge", "submitted", ds.Submitted, "judged", ds.Judged, "unrelated", ds.Unrelated,
+			"rate_limited", ds.RateLimited, "dropped", ds.Dropped, "errors", ds.Errors)
+	}
 	hb.emit(true)
 
 	st := coll.Stats()
@@ -213,6 +244,39 @@ func run() error {
 		"shadow_allow_alert", st.Shadow.AllowAlert,
 	)
 	return err
+}
+
+// openDriftScorer starts the goal-drift judge when the config turns it on. A judge that cannot start is
+// logged and left off: ambitd's observation does not depend on it.
+func openDriftScorer(cfg config.Config, log *slog.Logger) *drift.Scorer {
+	g := cfg.GoalDrift
+	if !g.Enabled {
+		return nil
+	}
+	apiKey, err := g.APIKey()
+	if err != nil {
+		log.Error("goal-drift judge off", "err", err)
+		return nil
+	}
+	judge, err := drift.NewAnthropic(drift.AnthropicOptions{APIKey: apiKey, Model: g.Model, BaseURL: g.BaseURL})
+	if err != nil {
+		log.Error("goal-drift judge off", "err", err)
+		return nil
+	}
+	sc, err := drift.New(drift.Options{
+		Judge:      judge,
+		MaxPerHour: g.MaxPerHour,
+		Timeout:    time.Duration(g.TimeoutSeconds) * time.Second,
+		MaxChars:   g.MaxChars,
+		Logger:     log,
+	})
+	if err != nil {
+		log.Error("goal-drift judge off", "err", err)
+		return nil
+	}
+	log.Info("goal-drift judge on: prompts and tool calls with a provenance edge go to the model API, redacted",
+		"model", g.Model, "max_per_hour", g.MaxPerHour)
+	return sc
 }
 
 func otlpAddrOrOff(cfg config.Config) string {
@@ -250,7 +314,13 @@ type heartbeat struct {
 	runID   string
 	prev    *event.PrevRun
 	rs      *runstate.File
+
+	lastReport time.Time
 }
+
+// latencyReportEvery is how often a heartbeat carries hook latency to the SIEM. The final heartbeat
+// always does, so a run shorter than this still reports on a clean stop.
+const latencyReportEvery = time.Hour
 
 func (h *heartbeat) loop(ctx context.Context) {
 	ticker := time.NewTicker(h.cfg.HealthInterval)
@@ -293,6 +363,13 @@ func (h *heartbeat) emit(final bool) {
 
 	now := time.Now().UTC()
 	lat := hs.Latency
+	if h.lastReport.IsZero() {
+		h.lastReport = h.start
+	}
+	report := final || now.Sub(h.lastReport) >= latencyReportEvery
+	if report {
+		h.lastReport = now
+	}
 	e := &event.Event{
 		EventID:    fmt.Sprintf("health-%d", now.UnixNano()),
 		TS:         now.Format(time.RFC3339Nano),
@@ -326,8 +403,9 @@ func (h *heartbeat) emit(final bool) {
 			ParseErrors:       hs.ParseErrors,
 			TrajectoryRetired: ts.Retired,
 
-			HookLatency: &lat,
-			PrevRun:     h.prev,
+			HookLatency:   &lat,
+			PrevRun:       h.prev,
+			LatencyReport: report,
 		},
 	}
 

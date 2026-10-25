@@ -3,6 +3,7 @@ package collector
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/abijit2626/ambit/internal/classify"
 	"github.com/abijit2626/ambit/internal/config"
+	"github.com/abijit2626/ambit/internal/drift"
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/filter"
@@ -53,6 +55,9 @@ type sessionState struct {
 	modeSent string
 
 	started, prompted, noPromptSent bool
+
+	// goal is the session's latest prompt, redacted, kept only while the goal-drift judge is on.
+	goal string
 }
 
 // observePrompting records the parts of a session's shape that "no prompt before a tool call" needs, and
@@ -201,6 +206,8 @@ type Collector struct {
 
 	annMu sync.Mutex
 	ann   annotationCache
+
+	drift *drift.Scorer
 }
 
 type Options struct {
@@ -210,6 +217,8 @@ type Options struct {
 	Extractor      *features.Extractor
 	Logger         *slog.Logger
 	Version        string
+	// Drift is the goal-drift judge; nil leaves it off.
+	Drift *drift.Scorer
 }
 
 func New(opts Options) *Collector {
@@ -245,6 +254,7 @@ func New(opts Options) *Collector {
 		sessions:       map[string]*sessionState{},
 		crossReasons:   map[string]int64{},
 		webDomainTrust: webDomainTrust,
+		drift:          opts.Drift,
 	}
 }
 
@@ -259,6 +269,7 @@ func (c *Collector) Handle(p *hook.Payload) {
 	}
 
 	c.emit(e)
+	c.scoreDrift(st, p, e)
 	c.emitModeChange(st, e)
 	c.emitNoPrompt(st, p, e)
 	c.emitSandboxDenial(st, p, e)
@@ -304,6 +315,61 @@ func (c *Collector) emitDerived(e *event.Event) bool {
 	}
 	c.derived.Add(1)
 	return true
+}
+
+// scoreDrift asks the goal-drift judge about a tool call that carries a provenance edge, which is where a
+// value from something the agent read reaches what it does next. Asking about every tool call would cost
+// a model call each and, on the prototype, flag far more benign calls (docs/03-detection.md). The score
+// arrives later on the judge's goroutine; it goes to the spool, and to the SIEM when it is over
+// drift_threshold.
+func (c *Collector) scoreDrift(st *sessionState, p *hook.Payload, e *event.Event) {
+	if c.drift == nil || e.Kind != event.KindToolPre || e.Tool == nil || len(e.Provenance.Edges) == 0 {
+		return
+	}
+	st.mu.Lock()
+	goal := st.goal
+	st.mu.Unlock()
+	if goal == "" {
+		return
+	}
+	raw, err := json.Marshal(p.ToolInput)
+	if err != nil {
+		return
+	}
+	input, _ := c.red.Redact(string(raw))
+	from := e
+	c.drift.Submit(drift.Request{Goal: goal, Tool: p.ToolName, Input: input}, func(r drift.Result) {
+		d := goalDriftScore(from, st, r)
+		c.traj.Write(d)
+		c.emitDerived(d)
+	})
+}
+
+// goalDriftScore is the event rules 100330 and 100331 read: the judge's score for one tool call, found
+// again by tool_use_id. It leaves out the provenance edge that made the call worth asking about: the tool
+// event already carried it to Wazuh (rule 100283), and an edge here would let that rule take this event.
+func goalDriftScore(from *event.Event, st *sessionState, r drift.Result) *event.Event {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	score := r.Score
+	d := &event.Event{
+		EventID:    newEventID(),
+		TS:         now,
+		IngestedAt: now,
+		Source:     event.SourceAmbitd,
+		SchemaV:    from.SchemaV,
+		Kind:       event.KindGoalDriftScore,
+		Endpoint:   from.Endpoint,
+		Actor:      from.Actor,
+		Agent:      from.Agent,
+		Session:    from.Session,
+		Tool:       &event.Tool{Name: from.Tool.Name, UseID: from.Tool.UseID},
+		R2:         from.R2,
+		Policy:     event.Policy{Decision: event.DecisionNone},
+		Scores:     event.Scores{GoalDrift: &score, DriftScorerV: r.Scorer},
+	}
+	d.Session.Sequence = st.next()
+	d.R2.Transition = false
+	return d
 }
 
 // emitModeChange sends a session_mode event when e is the first event of its session to carry a
@@ -483,6 +549,11 @@ func (c *Collector) fillPrompt(e *event.Event, p *hook.Payload, st *sessionState
 	declared := c.ext.Extract(clean)
 	st.prov.Declare(declared)
 	st.sens.Declare(declared)
+	if c.drift != nil {
+		st.mu.Lock()
+		st.goal = clean
+		st.mu.Unlock()
+	}
 	e.Prompt = &event.PromptInfo{
 		Text:       clean,
 		TextDigest: c.ext.Digest(prompt),
