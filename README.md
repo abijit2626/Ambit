@@ -159,6 +159,7 @@ internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
 internal/runstate/       ambitd.state: each run's last heartbeat and how it stopped
 internal/m0report/       `ambitd report`: the M0 exit criteria for one endpoint, from the spool
+internal/stopctl/        `ambitd stop`: a clean stop where the OS can only terminate (Windows)
 internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
 internal/fsperm/         private directories: 0700 on Unix, an explicit ACL on Windows
@@ -177,6 +178,7 @@ testdata/agentdojo/      per-tool MCP labels for AgentDojo's four suites, and li
 ./scripts/dev-local.sh --status  # what was collected, then the M0 readout
 ambitd report -config <config>   # M0 criteria from the spool: hook p99, loss, restarts, interesting fraction
 ambitd doctor -config <config>   # will ambitd hear from Claude Code? hooks, sandbox allowlist, OTel protocol, health
+ambitd stop -config <config>     # stop the running ambitd cleanly (final heartbeat, clean stop recorded)
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
@@ -286,6 +288,15 @@ console program, and making it a service would add a dependency:
 .\scripts\install-system.ps1 -Status
 .\scripts\install-system.ps1 -Uninstall          # -Purge also removes the collected data
 ```
+
+Windows has no SIGTERM: `Stop-ScheduledTask` and `Stop-Process` terminate the process, so
+`ambitd` would never write its final heartbeat and every stop would read as unclean. The
+installer therefore asks first. At startup `ambitd` writes a random token to `stop.token` in
+its private data directory; the installer posts it to `/shutdown` on the hook address, which
+stops `ambitd` the way SIGTERM does on Unix, and forces only what is still running 15 seconds
+later. `ambitd stop -config <config>` does the same by hand. Only someone who can read the data
+directory (SYSTEM and Administrators) can stop it this way, which is who could kill it anyway. A
+reboot or shutdown still terminates it, so those stops stay unclean.
 
 What differs from Unix, and why it matters:
 

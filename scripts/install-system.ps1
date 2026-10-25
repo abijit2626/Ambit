@@ -88,13 +88,48 @@ function Get-AmbitdProcess {
     return @(Get-Process -Name ambitd -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $BinPath })
 }
 
+function Get-StopTokenPath {
+    $traj = ''
+    if (Test-Path -LiteralPath $BinPath) {
+        try { $traj = ((& $BinPath -config $Config -print-config 2>$null | Out-String) | ConvertFrom-Json).trajectory_path } catch { $traj = '' }
+    }
+    if (-not $traj) { return (Join-Path $DataDir 'stop.token') }
+    return (Join-Path (Split-Path -Parent $traj) 'stop.token')
+}
+
+# Stop-ScheduledTask and Stop-Process terminate ambitd outright: no final heartbeat, and the next
+# run reports the stop as unclean. This asks it to stop first, the way `ambitd stop` does, with the
+# token it wrote at startup. It is done here rather than by running `ambitd stop`, because an
+# installed binary older than that subcommand would take it for a request to start a daemon.
+function Request-AmbitdStop {
+    if (@(Get-AmbitdProcess).Count -eq 0) { return }
+    $tokenPath = Get-StopTokenPath
+    if (-not (Test-Path -LiteralPath $tokenPath)) { return }
+    try {
+        $token = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
+        $null = Invoke-WebRequest -UseBasicParsing -Method Post -TimeoutSec 5 `
+            -Headers @{ 'X-Ambit-Stop-Token' = $token } -Uri ((Get-HookUrl) + '/shutdown')
+    } catch {
+        return
+    }
+    for ($i = 0; $i -lt 60; $i++) {
+        if (@(Get-AmbitdProcess).Count -eq 0) { Say 'ambitd stopped cleanly'; return }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
 function Stop-Ambitd {
     $t = Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
     if ($null -ne $t) {
         Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null
-        Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
     }
-    Get-AmbitdProcess | Stop-Process -Force -ErrorAction SilentlyContinue
+    Request-AmbitdStop
+    if (@(Get-AmbitdProcess).Count -gt 0) {
+        if ($null -ne $t) {
+            Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
+        }
+        Get-AmbitdProcess | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
     for ($i = 0; $i -lt 40; $i++) {
         if (@(Get-AmbitdProcess).Count -eq 0) { return }
         Start-Sleep -Milliseconds 250

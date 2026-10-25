@@ -27,6 +27,7 @@ import (
 	"github.com/abijit2626/ambit/internal/otlp"
 	"github.com/abijit2626/ambit/internal/runstate"
 	"github.com/abijit2626/ambit/internal/sink"
+	"github.com/abijit2626/ambit/internal/stopctl"
 )
 
 var version = "0.0.0-dev"
@@ -42,6 +43,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "report" {
 		os.Exit(m0report.Main(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	// Asks a running ambitd to stop the way SIGTERM would, for Windows, which has no SIGTERM to send.
+	if len(os.Args) > 1 && os.Args[1] == "stop" {
+		os.Exit(stopctl.Main(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ambitd:", err)
@@ -118,28 +123,42 @@ func run() error {
 		Version:        version,
 	})
 
+	// Listen before the token is written: a second ambitd that cannot bind must not overwrite the
+	// token of the one that did.
+	ln, err := hook.Listen(cfg.HookAddr)
+	if err != nil {
+		return err
+	}
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	extra := map[string]http.Handler{
+		interpose.Path: interpose.NewHandler(coll.HandleInterpose, log),
+	}
+	if tok, err := stopctl.WriteToken(stopctl.TokenPath(cfg.TrajectoryPath)); err != nil {
+		log.Error("stop token unavailable; `ambitd stop` will not work and Windows stops will be unclean", "err", err)
+	} else {
+		extra[stopctl.Path] = stopctl.Handler(tok, func() {
+			log.Info("stop requested through " + stopctl.Path)
+			cancelRun()
+		})
+	}
+
 	srv, err := hook.NewServer(hook.Options{
 		Addr:    cfg.HookAddr,
 		Handler: coll,
-
-		Extra: map[string]http.Handler{
-			interpose.Path: interpose.NewHandler(coll.HandleInterpose, log),
-		},
+		Extra:   extra,
 
 		Decider: hook.ObserveOnly{},
 		Logger:  log,
 		Budget:  cfg.LatencyBudget,
 	})
 	if err != nil {
+		ln.Close()
 		return err
 	}
 
-	ln, err := hook.Listen(cfg.HookAddr)
-	if err != nil {
-		return err
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(runCtx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	var otlpSrv *otlp.Server

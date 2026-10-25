@@ -94,6 +94,10 @@ Stated plainly, because the design depends on them and two of them are weak:
    Anything running locally can be killed. This is why the fleet plane treats
    *silence as a signal* and why policy is delivered through managed settings
    rather than files the developer (or malware running as them) can edit.
+   `ambitd stop` does not widen this: the `/shutdown` endpoint it uses needs a
+   per-run token kept in ambitd's private data directory, so only whoever could
+   already kill the process can use it, and a stop that way still ends the
+   heartbeat that D7 watches.
 2. **Claude Code itself is assumed to behave as documented.** Hooks fire,
    managed settings take precedence, the sandbox holds. If the binary is replaced,
    nothing here helps. Binary integrity is an endpoint-management problem, not
