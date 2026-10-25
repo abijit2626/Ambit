@@ -138,6 +138,8 @@ PY
   if [ -x "$BIN" ]; then
     echo
     "$BIN" report -config "$CONFIG" || warn "  ambitd report failed"
+    echo
+    "$BIN" doctor -config "$CONFIG" || warn "  ambitd doctor found a problem (above)"
   fi
 }
 

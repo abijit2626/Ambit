@@ -44,6 +44,27 @@ const (
 
 var healthKind = []byte(`"kind":"ambitd_health"`)
 
+var hookSource = []byte(`"source":"hook"`)
+
+// silentGrace is how long after its start a session may still be waiting for its first prompt without
+// counting as silent.
+const silentGrace = 2 * time.Minute
+
+type sessionSeen struct {
+	start   time.Time
+	started bool
+	other   bool
+}
+
+// Sessions counts the sessions whose start reached ambitd, and those that sent nothing else. SessionStart
+// arrives through a command hook and everything else through http hooks, so a session with only its start
+// is what an endpoint looks like when its http hooks are refused: with Claude Code's sandbox on, they go
+// through the sandbox's proxy, which refuses 127.0.0.1 unless it is an allowed domain.
+type Sessions struct {
+	Started int `json:"started"`
+	Silent  int `json:"silent"`
+}
+
 type Run struct {
 	RunID      string         `json:"run_id"`
 	Version    string         `json:"version,omitempty"`
@@ -116,7 +137,11 @@ type Report struct {
 	Loss          Loss     `json:"loss"`
 	Restarts      Restarts `json:"restarts"`
 	Interesting   Fraction `json:"interesting_fraction"`
+	Sessions      Sessions `json:"sessions"`
 	NotMeasurable []string `json:"not_measured_here"`
+
+	seen   map[string]*sessionSeen
+	lastTS time.Time
 }
 
 var notMeasurable = []string{
@@ -138,7 +163,7 @@ func SpoolFiles(trajectoryPath string) ([]string, error) {
 }
 
 func Build(files []string) (*Report, error) {
-	r := &Report{Files: files, NotMeasurable: notMeasurable}
+	r := &Report{Files: files, NotMeasurable: notMeasurable, seen: map[string]*sessionSeen{}}
 	byRun := map[string]*Run{}
 	for _, path := range files {
 		if err := r.scan(path, byRun); err != nil {
@@ -182,6 +207,8 @@ func (r *Report) scan(path string, byRun map[string]*Run) error {
 		}
 		if len(line) > 0 && bytes.Contains(line, healthKind) {
 			r.add(line, byRun)
+		} else if len(line) > 0 && bytes.Contains(line, hookSource) {
+			r.addHookEvent(line)
 		}
 		if err == io.EOF {
 			return nil
@@ -189,6 +216,38 @@ func (r *Report) scan(path string, byRun map[string]*Run) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
+	}
+}
+
+func (r *Report) addHookEvent(line []byte) {
+	var e struct {
+		TS      string     `json:"ts"`
+		Source  string     `json:"source"`
+		Kind    event.Kind `json:"kind"`
+		Session struct {
+			SessionID string `json:"session_id"`
+		} `json:"session"`
+	}
+	if json.Unmarshal(line, &e) != nil || e.Source != string(event.SourceHook) || e.Session.SessionID == "" {
+		return
+	}
+	ts, _ := time.Parse(time.RFC3339Nano, e.TS)
+	if ts.After(r.lastTS) {
+		r.lastTS = ts
+	}
+	s := r.seen[e.Session.SessionID]
+	if s == nil {
+		s = &sessionSeen{}
+		r.seen[e.Session.SessionID] = s
+	}
+	switch e.Kind {
+	case event.KindSessionStart:
+		if !s.started {
+			s.started, s.start = true, ts
+		}
+	case event.KindSessionEnd:
+	default:
+		s.other = true
 	}
 }
 
@@ -304,6 +363,16 @@ func (r *Report) summarize() {
 		l.Verdict = verdict(l.Fraction < LossCriterion)
 	}
 
+	for _, s := range r.seen {
+		if !s.started {
+			continue
+		}
+		r.Sessions.Started++
+		if !s.other && r.lastTS.Sub(s.start) >= silentGrace {
+			r.Sessions.Silent++
+		}
+	}
+
 	f := &r.Interesting
 	if f.ToolCalls > 0 {
 		f.Fraction = float64(f.ToolCrossed) / float64(f.ToolCalls)
@@ -391,6 +460,16 @@ func (r *Report) WriteText(w io.Writer, verbose bool) {
 		p("  all events: %d of %d crossed (%.2f%%), which includes prompts, session starts and interposer reports", f.Crossed, f.Handled, f.AllFraction*100)
 	}
 	p("")
+
+	if ss := r.Sessions; ss.Started > 0 {
+		p("sessions")
+		p("  %d started, %d sent nothing after SessionStart", ss.Started, ss.Silent)
+		if ss.Silent > 0 {
+			p("  WARNING: http hooks may be refused. With Claude Code's sandbox on, 127.0.0.1 must be in")
+			p("  sandbox.network.allowedDomains, or every hook but SessionStart fails (docs/06, blocker 7)")
+		}
+		p("")
+	}
 
 	p("measured elsewhere")
 	for _, s := range r.NotMeasurable {

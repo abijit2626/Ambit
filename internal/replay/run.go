@@ -57,6 +57,8 @@ type StepResult struct {
 
 	Hostile *bool `json:"hostile,omitempty"`
 
+	Derived []string `json:"derived,omitempty"`
+
 	Failures []string `json:"failures,omitempty"`
 }
 
@@ -132,7 +134,15 @@ func Run(sc *Scenario, opts Options) *Result {
 				trackSession(sessions, &sessionOrder, e)
 			}
 		}
-		sr.Crossed = len(events.items) > beforeEvents
+		for _, it := range events.items[beforeEvents:] {
+			s, _ := it.(*event.SIEMEvent)
+			if s != nil && s.Src == event.SourceAmbitd {
+				sr.Derived = append(sr.Derived, string(s.Kind))
+			} else {
+				sr.Crossed = true
+			}
+		}
+		sort.Strings(sr.Derived)
 
 		sr.Failures = check(st, &sr)
 		res.Steps = append(res.Steps, sr)
@@ -257,6 +267,13 @@ func check(st *Step, sr *StepResult) []string {
 	var f []string
 	fail := func(format string, a ...any) { f = append(f, fmt.Sprintf(format, a...)) }
 
+	if ex.Derived != nil {
+		want := append([]string(nil), (*ex.Derived)...)
+		sort.Strings(want)
+		if strings.Join(want, ",") != strings.Join(sr.Derived, ",") {
+			fail("expected derived events %v, got %v", want, sr.Derived)
+		}
+	}
 	if !sr.Produced {
 
 		return []string{fmt.Sprintf("no event was produced for hook %q, so nothing could be asserted", st.Payload.HookEventName)}

@@ -787,7 +787,7 @@ makes the alert harder to triage, not easier. Better to ship it untagged and say
 
 | # | Detector | Signal |
 | --- | --- | --- |
-| D1 | **Session with no human.** Non-interactive entrypoint, `permission_mode` = `bypassPermissions`, `SessionStart` with no `UserPromptSubmit`, immediate credential reads. | The s1ngularity signature. Highest-confidence detector in the system. |
+| D1 | **Session with no human.** Non-interactive entrypoint, `permission_mode` = `bypassPermissions`, `SessionStart` with no `UserPromptSubmit`, immediate credential reads. | The s1ngularity signature. Highest-confidence detector in the system. Built: bypass mode (100200, from `session_mode`), bypass plus a sensitive action (100201–100205), a tool call before any prompt (100206, 100207, from `session_no_prompt`). Not built: the entrypoint (100204 has no emitter). |
 | D2 | **Credential sweep.** N credential-path reads in a short window across unrelated directories. | Staging for exfiltration |
 | D3 | **Bypass attempt.** Invocation with `--dangerously-skip-permissions` / `--yolo` / `--trust-all-tools`, or `bypassPermissions` where managed policy disables it. | Active attack or serious policy violation |
 | D4 | **MCP metadata drift.** Tool name / description / schema hash differs from approved baseline. | Rug pull |
@@ -795,7 +795,7 @@ makes the alert harder to triage, not easier. Better to ship it untagged and say
 | D6 | **Config tamper.** FIM on `.claude/` and `.mcp.json` (with `whodata`), plus `ConfigChange`. | Suppression attempt |
 | D7 | **Telemetry gap.** Rule 504 for endpoint silence; SCA `p:ambitd` plus stale heartbeat for daemon death. | Daemon suppression |
 | D8 | **Poisoned instruction file.** `InstructionsLoaded` under a newly cloned or untrusted path. | Repo-carried injection |
-| D9 | **Egress anomaly.** Outbound volume or destination outside the endpoint's profile; any sandbox allowlist denial. | Exfiltration |
+| D9 | **Egress anomaly.** Outbound volume or destination outside the endpoint's profile; any sandbox allowlist denial. | Exfiltration. Built: network commands and secrets in them (100300–100302), open-world MCP results (100303), sandbox denials (100304, 100305, from `sandbox_denial`). Not built: per-endpoint destination profiling. |
 | D10 | **Cross-agent fingerprint match.** Scalar tripwire as a rule; full set intersection as a scheduled job. | Prompt Infection / propagation |
 | D11 | **Fail-open run.** Repeated `ambitd` unavailability. | Suppression |
 | D12 | **Managed-settings drift.** SCA assertion failure on the bundle. | Suppression / misconfiguration |
@@ -846,7 +846,7 @@ of time when three public ones exist:
 feeds trajectories to the real collector in-process and reports precision, recall, a
 confidence-floor sweep and Rule-of-Two saturation depth; the README documents the format.
 It measures the provenance engine and R2 accounting. It does not yet measure the Wazuh rules
-(those have their own fixture path below) or goal drift (M4). `testdata/replay` holds 33 scenarios written alongside the engine, by the same author,
+(those have their own fixture path below) or goal drift (M4). `testdata/replay` holds 35 scenarios written alongside the engine, by the same author,
 which is exactly the bias NIST's finding below warns about, so its numbers pin behavior and
 must not be read as a detection rate. The AgentDojo adapter is the first corpus that avoids
 that bias. Its attacks are AgentDojo's, not adapted to ambit, and that cuts both ways: by the

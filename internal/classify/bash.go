@@ -225,6 +225,9 @@ func classifySegment(seg string, depth int) string {
 	if severity(class) < severity(ClassNetwork) && reachesRemoteShare(seg) {
 		class = ClassNetwork
 	}
+	if class == ClassReadOnly && hasWriteRedirect(seg) {
+		class = ClassFilesystem
+	}
 	return class
 }
 

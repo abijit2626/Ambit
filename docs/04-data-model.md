@@ -100,6 +100,34 @@ spools.
 }
 ```
 
+### The health event in the spool
+
+`ambitd_health` carries more in the spool than crosses to Wazuh (which gets only
+`health_status`, `health_queue_depth` and `health_dropped_events`). Every counter is cumulative
+for the run that wrote it, so `ambitd report` keeps each run's last health event and sums
+across runs, and a final one is written on a clean shutdown.
+
+```jsonc
+"health": {
+  "status": "ok", "queue_depth": 0, "dropped_events": 0, "uptime_sec": 3600,
+  "run_id": "c6e170c50fcece26",        // random per start of ambitd
+  "final": true,                        // only on the shutdown event
+  "handled": 912, "crossed": 41, "derived": 7,   // derived: fp_sighting, session_mode and the like
+  "tool_calls": 700, "tool_crossed": 25,          // the interesting fraction's numerator and base
+  "trajectory_written": 950, "write_errors": 0, "parse_errors": 0,
+  "trajectory_retired_files": 0,        // spool files deleted at the size cap
+  "hook_latency": { "count": 912, "over_budget": 0, "budget_us": 5000, "max_us": 840,
+                    "p50_us": 250, "p95_us": 500, "p99_us": 1000,
+                    "buckets": [ { "le_us": 250, "n": 600 }, "..." ], "overflow": 0 },
+  "prev_run": { "run_id": "...", "stop": "unclean", "last_heartbeat": "...", "down_sec": 480 }
+}
+```
+
+`prev_run` comes from `ambitd.state`, a small file beside the spool that records each run's id,
+version, start, last heartbeat and, on a clean stop, when it stopped. The next run reads it to
+say whether the previous one stopped cleanly and how long ambitd was down (from the last
+heartbeat after an unclean stop, so an upper bound).
+
 ## SIEM-bound event (flat, one JSON object per line)
 
 Snake_case, scalar values only, no arrays of objects, no nesting beyond what a

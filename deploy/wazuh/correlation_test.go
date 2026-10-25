@@ -321,3 +321,44 @@ func TestNothingButRule100280MatchesAnFPSighting(t *testing.T) {
 		t.Fatal("no fp_sighting events in the fixtures; the check above checked nothing")
 	}
 }
+
+// The other events ambitd derives are built the same way: identity, session and their own fields, nothing a
+// tool rule keys on. Each must be matched only by the rules written for it, or a louder rule would win it
+// and its own alert would never be raised.
+func TestDerivedEventsAreMatchedOnlyByTheirOwnRules(t *testing.T) {
+	own := map[string]map[int]bool{
+		"session_mode":      {100200: true},
+		"session_no_prompt": {100206: true, 100207: true},
+		"sandbox_denial":    {100304: true, 100305: true},
+	}
+	rules := loadRules(t)
+	byID := indexRules(rules)
+	seen := map[string]int{}
+	for _, fixture := range []string{fixturesPath, alonePath} {
+		for i, ev := range loadFixtureFile(t, fixture) {
+			kind, _ := ev["kind"].(string)
+			allowed, ok := own[kind]
+			if !ok {
+				continue
+			}
+			seen[kind]++
+			for _, r := range rules {
+				if !modelled(r) {
+					continue
+				}
+				hit, err := matches(r, ev, byID)
+				if err != nil {
+					t.Fatalf("%s line %d, rule %d: %v", fixture, i+1, r.ID, err)
+				}
+				if hit && !allowed[r.ID] {
+					t.Errorf("%s line %d: rule %d matches a %s; only %v should", fixture, i+1, r.ID, kind, allowed)
+				}
+			}
+		}
+	}
+	for kind := range own {
+		if seen[kind] == 0 {
+			t.Errorf("no %s event in the fixtures; the check above checked nothing for it", kind)
+		}
+	}
+}

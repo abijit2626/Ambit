@@ -101,33 +101,48 @@ func (e *Extractor) Extract(text string) *event.Features {
 	ips := map[string]bool{}
 	hi := map[string]bool{}
 
-	for _, m := range reURL.FindAllString(text, -1) {
-		urls[m] = true
-		if h := hostFromURL(m); h != "" {
-			domains[Registrable(h)] = true
+	// None of these patterns can match across the whitespace \s means, so each runs only on the words that
+	// could hold a match. That gives the same matches as running it on the whole text, far more cheaply.
+	words := strings.FieldsFunc(text, isRegexpSpace)
+	for _, w := range words {
+		if strings.Contains(w, "://") {
+			for _, m := range reURL.FindAllString(w, -1) {
+				urls[m] = true
+				if h := hostFromURL(m); h != "" {
+					domains[Registrable(h)] = true
+				}
+			}
 		}
-	}
-	for _, m := range reEmail.FindAllString(text, -1) {
-		emails[strings.ToLower(m)] = true
-		if i := strings.LastIndex(m, "@"); i >= 0 {
-			domains[Registrable(m[i+1:])] = true
+		hostWords := []string{w}
+		if strings.Contains(w, "@") {
+			for _, m := range reEmail.FindAllString(w, -1) {
+				emails[strings.ToLower(m)] = true
+				if i := strings.LastIndex(m, "@"); i >= 0 {
+					domains[Registrable(m[i+1:])] = true
+				}
+			}
+			hostWords = strings.FieldsFunc(stripEmails(w), isRegexpSpace)
 		}
-	}
-
-	emailDomainsOnly := stripEmails(text)
-	for _, m := range reHost.FindAllString(emailDomainsOnly, -1) {
-		if looksLikeFilename(m) {
-			continue
+		if strings.Contains(w, ".") {
+			for _, hw := range hostWords {
+				for _, m := range reHost.FindAllString(hw, -1) {
+					if looksLikeFilename(m) {
+						continue
+					}
+					domains[Registrable(m)] = true
+				}
+			}
+			for _, m := range reIPv4.FindAllString(w, -1) {
+				ips[m] = true
+			}
 		}
-		domains[Registrable(m)] = true
-	}
-	for _, m := range reIPv4.FindAllString(text, -1) {
-		ips[m] = true
-	}
-	for _, m := range reToken.FindAllString(text, -1) {
-		for _, tok := range tokenVariants(m) {
-			if shannonBits(tok) >= MinEntropyBits {
-				hi[tok] = true
+		if len(w) >= MinEntropyTokenLen {
+			for _, m := range reToken.FindAllString(w, -1) {
+				for _, tok := range tokenVariants(m) {
+					if shannonBits(tok) >= MinEntropyBits {
+						hi[tok] = true
+					}
+				}
 			}
 		}
 	}
@@ -211,6 +226,11 @@ func Registrable(host string) string {
 func looksLikeFilename(s string) bool {
 	parts := strings.Split(strings.ToLower(s), ".")
 	return fileExtensions[parts[len(parts)-1]]
+}
+
+// isRegexpSpace is exactly the set \s matches in Go's regexp syntax.
+func isRegexpSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\f' || r == '\r'
 }
 
 func stripEmails(text string) string {

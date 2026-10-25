@@ -213,3 +213,53 @@ func TestMainWithNoSpoolFails(t *testing.T) {
 		t.Errorf("exit %d, stderr %q: want a failure naming the missing spool", code, stderr.String())
 	}
 }
+
+func hookEvent(at time.Time, kind event.Kind, sid string) *event.Event {
+	return &event.Event{TS: at.Format(time.RFC3339Nano), Source: event.SourceHook, Kind: kind, Session: event.Session{SessionID: sid}}
+}
+
+func TestReportCountsSessionsThatSentNothingAfterTheirStart(t *testing.T) {
+	traj := filepath.Join(t.TempDir(), "trajectory.jsonl")
+	writeLines(t, traj,
+		hookEvent(t0, event.KindSessionStart, "silent"),
+		hookEvent(t0, event.KindSessionStart, "fine"),
+		hookEvent(t0.Add(time.Second), event.KindPromptSubmit, "fine"),
+		hookEvent(t0.Add(time.Minute), event.KindSessionEnd, "silent"),
+		hookEvent(t0.Add(9*time.Minute), event.KindSessionStart, "just-started"),
+		hookEvent(t0.Add(10*time.Minute), event.KindPromptSubmit, "no-start-seen"),
+		health(t0.Add(10*time.Minute), event.Health{RunID: "r1"}),
+	)
+	r := build(t, traj)
+	if r.Sessions.Started != 3 || r.Sessions.Silent != 1 {
+		t.Errorf("sessions = %+v, want 3 started and 1 silent: a session end is not a hook that got through, and one started a minute ago may still be waiting for its prompt", r.Sessions)
+	}
+	var out bytes.Buffer
+	r.WriteText(&out, false)
+	if !strings.Contains(out.String(), "blocker 7") {
+		t.Errorf("text does not point at blocker 7:\n%s", out.String())
+	}
+}
+
+// The spool is ambitd's own output, but it can be truncated, rotated mid-line or hand-edited; the
+// report must never panic on it, and its verdicts stay in their vocabulary.
+func FuzzBuildFromAnySpool(f *testing.F) {
+	f.Add([]byte(`{"kind":"ambitd_health","ts":"2026-10-24T09:00:00Z","health":{"run_id":"r1","hook_latency":{"count":1,"buckets":[{"le_us":250,"n":1}]}}}` + "\n"))
+	f.Add([]byte(`{"kind":"session_start","source":"hook","ts":"x","session":{"session_id":"s"}}` + "\n{\"kind\":\"ambitd_health\""))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		p := filepath.Join(t.TempDir(), "trajectory.jsonl")
+		if err := os.WriteFile(p, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r, err := Build([]string{p})
+		if err != nil {
+			return
+		}
+		for _, v := range []string{r.Latency.Verdict, r.Loss.Verdict} {
+			if v != Pass && v != Fail && v != NoData {
+				t.Fatalf("verdict %q is not pass, fail or no_data", v)
+			}
+		}
+		var out bytes.Buffer
+		r.WriteText(&out, true)
+	})
+}

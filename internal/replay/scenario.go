@@ -55,6 +55,10 @@ type Expect struct {
 
 	Exfil      *bool  `json:"exfil"`
 	ExfilClass string `json:"exfil_class"`
+
+	// Derived lists the kinds of event ambitd derived from this step and sent to the SIEM (session_mode,
+	// session_no_prompt, sandbox_denial, fp_sighting), in any order. An empty list asserts none.
+	Derived *[]string `json:"derived"`
 }
 
 type Step struct {

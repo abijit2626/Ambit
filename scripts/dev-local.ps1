@@ -184,6 +184,9 @@ function Show-Status {
         Write-Host ''
         & $Bin report -config $Config
         if ($LASTEXITCODE -ne 0) { Write-Warn '  ambitd report failed' }
+        Write-Host ''
+        & $Bin doctor -config $Config
+        if ($LASTEXITCODE -ne 0) { Write-Warn '  ambitd doctor found a problem (above)' }
     }
 }
 

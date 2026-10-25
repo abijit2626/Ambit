@@ -314,3 +314,13 @@ func TestGroupingAndKeywordsDoNotHideTheCommand(t *testing.T) {
 		}
 	}
 }
+
+// Found by the same fuzz target: a write redirect upgraded read-only to filesystem only for the whole
+// command, so a harmless command beside it ("true && cat > f") hid the write.
+func TestAWriteRedirectCountsPerSegment(t *testing.T) {
+	for _, cmd := range []string{"cat > out.txt", "true && cat > out.txt", "true; cat > out.txt", "bash -c 'cat > out.txt'", "{ cat > out.txt; }"} {
+		if _, class := Bash(cmd); class != ClassFilesystem {
+			t.Errorf("Bash(%q) = %s; want filesystem", cmd, class)
+		}
+	}
+}
