@@ -61,7 +61,13 @@ Each one will otherwise cost the cohort a week to discover.
    the daemon restarted between the stop and the binary copy; the installer now disables the task
    first, and that change is not yet run on a real machine. What is not verified: the restart on
    Linux or macOS, and the macOS installer. Kill `ambitd` on a test machine of each kind and
-   watch it come back before rolling out.
+   watch it come back before rolling out: `sudo ./scripts/verify-restart.sh` does that on Linux
+   and macOS. It sends SIGKILL, waits for a different `ambitd` process whose health endpoint
+   answers, and prints how long that took (`--timeout` sets the limit, 120 s by default). The
+   script itself is tested against a real `ambitd` under a shell loop that stands in for the
+   service manager, so what it does not yet show is `systemd` or `launchd` doing the restart:
+   that is what running it on a test machine is for. On Windows, stop `ambitd.exe` by hand
+   and time the scheduled task.
 
 3. **Hook latency is measured inside the handler, in buckets.** `ambitd` times every `/hook`
    response and keeps a histogram (bucket bounds from 250 µs to 1 s, 5 ms among them), the count
