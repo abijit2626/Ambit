@@ -110,12 +110,16 @@ Each one will otherwise cost the cohort a week to discover.
    `sandbox.network.allowedDomains` with a 403 (observed on v2.1.310 under `claude -p`: every
    http hook failed with "HTTP 403", and ambitd saw only the `session_start` from the command
    hook). Adding `"127.0.0.1"` to `allowedDomains` made every hook arrive. Whether an
-   interactive session prompts the developer for it instead of failing is not observed. The M0
-   bundle sets no sandbox key, so this comes from the volunteer's own settings: ask each one
-   whether they run with the sandbox, and check `events.jsonl` gains a `prompt_submit` after
-   their first session. `ambitd report` counts the sessions that sent nothing after their
-   `SessionStart` and warns when there are any, which is this failure's signature. Allowing `127.0.0.1` also lets sandboxed commands reach every local port,
-   ambitd's included; docs/02 has the trade-off.
+   interactive session prompts the developer for it instead of failing is not observed.
+   **Resolved for managed endpoints:** the M0 bundle now carries `"127.0.0.1"` in
+   `sandbox.network.allowedDomains`, so a volunteer who installs it through
+   `install-system` needs nothing more. The bundle does not turn the sandbox on, so a
+   volunteer who runs without it is unaffected either way. Still open for anyone set up another
+   way (`dev-local`, or settings delivered without the bundle): `ambitd doctor` fails when the
+   sandbox is on without the entry, and `ambitd report` warns when sessions send nothing after
+   their `SessionStart`, which is this failure's signature. Allowing `127.0.0.1` lets sandboxed
+   commands reach every local port, ambitd's included; docs/02 has the trade-off, and the owner
+   accepted it when adopting the bundle entry.
 
 ## Prove it on one machine you own
 
@@ -197,7 +201,7 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
 | --- | --- | --- |
 | 5–10 endpoint volunteer cohort | Wazuh agent list for the group | 5–10 agents active and sending events |
 | p99 hook response under 5 ms | `ambitd report` on each endpoint (`sudo ambitd report -config <config>`; `install-system --status` and `dev-local.sh --status` run it too). It merges every run in the spool | The latency line says `[PASS]`: under 1% of responses over budget, on every endpoint. Look at the max and p95 too: a few at 4 ms and none at 200 ms is a different result from the reverse |
-| Zero developer-visible behavior change | Ask each volunteer: did a prompt appear or disappear, did anything run slower, did any tool call fail that would not have? Also diff their `permissions` and `sandbox` settings against before | Every answer is no, and the managed bundle changed nothing but `env` and `hooks` |
+| Zero developer-visible behavior change | Ask each volunteer: did a prompt appear or disappear, did anything run slower, did any tool call fail that would not have? Also diff their `permissions` and `sandbox` settings against before | Every answer is no, and the managed bundle changed nothing but `env`, `hooks`, and the one `sandbox.network.allowedDomains` entry for `127.0.0.1`, which does not turn the sandbox on but does let a sandboxed command reach local ports |
 | Spool event loss under 0.1% | `ambitd report`, the loss line. Cross-check against the `sink_gap` markers (rule 100313) on the manager | The loss line says `[PASS]`. State the restarts line next to it (blocker 4): downtime is loss the counter cannot see |
 | Interesting fraction measured | `ambitd report`, the interesting-fraction line: hook tool events that crossed, over all hook tool events | A number exists. It is not a pass/fail: if it is far from 2–5%, tighten the filter before M1 |
 | No `Too many fields for JSON decoder` | `sudo grep -i "too many fields" /var/ossec/logs/ossec.log` | No matches |

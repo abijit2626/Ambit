@@ -8,8 +8,11 @@
     "claude.ai.",
     "",
     "This file deliberately contains NO permission changes and NO sandbox",
-    "changes. M0's exit criterion is zero developer-visible behavior change,",
-    "because a baseline cannot be measured from a system that is already",
+    "enablement. Its one sandbox entry, 127.0.0.1 in network.allowedDomains, lets",
+    "ambitd's http hooks through the sandbox proxy on a machine that runs Claude",
+    "Code with the sandbox on (docs/06, blocker 7); it does not turn the sandbox on.",
+    "M0's exit criterion is zero developer-visible behavior change apart from that",
+    "entry, because a baseline cannot be measured from a system that is already",
     "changing behavior. Enforcement keys are not part of this file and are not",
     "deployed until the promotion ladder (shadow, then ask, then deny; see the",
     "Roadmap in README.md) has evidence behind it.",
@@ -48,6 +51,12 @@
       "the OTLP stream. ambitd already gets what it needs from the hook payloads;",
       "enabling these would widen the sensitive-data surface for no M0 benefit."
     ]
+  },
+
+  "sandbox": {
+    "network": {
+      "allowedDomains": ["127.0.0.1"]
+    }
   },
 
   "hooks": {
