@@ -106,9 +106,7 @@ func TestHandlerReceivesPayload(t *testing.T) {
 		"tool_input":      map[string]any{"command": "curl https://x.test"},
 	})
 
-	if c.count() != 1 {
-		t.Fatalf("handler saw %d payloads, want 1", c.count())
-	}
+	waitFor(t, func() bool { return c.count() == 1 }, "the handler to see the payload")
 	p := c.last()
 	if p.SessionID != "sess_1" || p.PermissionMode != "bypassPermissions" {
 		t.Errorf("payload fields not parsed: %+v", p)
@@ -283,5 +281,18 @@ func TestPayloadPaths(t *testing.T) {
 	}
 	if (&Payload{}).Paths() != nil {
 		t.Error("Paths() on an empty payload should be nil")
+	}
+}
+
+// waitFor polls until ok reports true, failing the test if it does not within a few seconds. Ingest runs
+// after the response, so a test that inspects the handler must wait for it.
+func waitFor(t *testing.T, ok func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }

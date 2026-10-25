@@ -70,8 +70,9 @@ Each one will otherwise cost the cohort a week to discover.
    report` merges every run in the spool and prints p50, p95 and p99. A quantile is the upper
    bound of its bucket, so read "p99 ≤ 5.0ms", not "p99 = 5.0ms". The pass/fail line does not
    depend on the buckets: a p99 under 5 ms is the same claim as fewer than 1% of responses over
-   budget, and that count is exact. The timing starts when the handler is entered, so it excludes
-   the client's connection time. `ambitd` still logs `hook response exceeded latency budget` for
+   budget, and that count is exact. It times parsing and the decision: the hook answers before
+   the collector handles the payload, so the figure excludes that work and the client's connection
+   time. Payloads a session has queued beyond its limit are counted as lost, not timed. `ambitd` still logs `hook response exceeded latency budget` for
    each slow response, which says when they happened.
 
 4. **"Event loss" counts what ambitd saw and failed to keep.** `ambitd report` adds three
