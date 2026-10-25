@@ -51,7 +51,8 @@ func fullEvent() *Event {
 		Policy: Policy{Decision: DecisionDeny, Reason: "r2 third bit", RuleIDs: []string{"r2.egress.deny", "prov.domain.match"}, BundleVersion: "2026-09-20.3", LatencyUS: 1840, Shadow: true},
 		Scores: Scores{GoalDrift: &drift, DriftScorerV: "v1"},
 		Config: &ConfigInfo{Source: "user_settings", LoadReason: "session_start", PathDigest: "hmac:cfg", Zone: ZoneHome, Trusted: false},
-		Health: &Health{Status: "ok", QueueDepth: 3, DroppedEvents: 0},
+		Health: &Health{Status: "ok", QueueDepth: 3, DroppedEvents: 0, LatencyReport: true,
+			HookLatency: &Latency{Count: 900, OverBudget: 12, BudgetUS: 5000, P99US: 7500}},
 	}
 }
 
@@ -104,11 +105,12 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 	}
 }
 
-// The ceiling was 70 until sandbox_denial added its two fields. The union describes an event that cannot
+// The ceiling was 70 until sandbox_denial added its two fields, and 72 until the hourly hook latency
+// report added three. The union describes an event that cannot
 // exist (no event carries the tool, config, health and denial blocks together); what matters is that it
 // stays far under Wazuh's decoder limit of 256 and that each real kind stays within the budget above.
 func TestSIEMEventFieldCeiling(t *testing.T) {
-	const ceiling = 72
+	const ceiling = 75
 	union := fullEvent()
 	union.Denial = denialBlock()
 	n, keys := fieldCount(t, Flatten(union))
@@ -332,4 +334,21 @@ func sandboxDenialEvent() *Event {
 	e.Policy = Policy{Decision: DecisionNone}
 	e.Denial = denialBlock()
 	return e
+}
+
+func TestFlattenCarriesHookLatencyOnlyOnReportHeartbeats(t *testing.T) {
+	e := healthEvent()
+	s := Flatten(e)
+	if s.HealthHookP99US != 7500 || s.HealthHookOver != 12 || !s.HealthHookSlow {
+		t.Errorf("report heartbeat: p99 %d, over %d, slow %v; want 7500, 12, true", s.HealthHookP99US, s.HealthHookOver, s.HealthHookSlow)
+	}
+	e.Health.HookLatency = &Latency{Count: 900, BudgetUS: 5000, P99US: 1000}
+	if s := Flatten(e); s.HealthHookSlow || s.HealthHookOver != 0 || s.HealthHookP99US != 1000 {
+		t.Errorf("fast run: %+v", s)
+	}
+	e.Health.LatencyReport = false
+	raw, _ := json.Marshal(Flatten(e))
+	if contains(string(raw), "health_hook_") {
+		t.Errorf("an ordinary heartbeat carried hook latency: %s", raw)
+	}
 }

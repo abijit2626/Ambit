@@ -106,4 +106,40 @@
     <group>ambit_d7,ambit_wazuh_sourced,runbook_D7,</group>
   </rule>
 
+  <!--
+    The hourly hook latency report, for a fleet-wide view of what ambitd costs each tool call.
+    ambitd puts health_hook_p99_us on one heartbeat an hour and on the final one, never on the
+    rest: every heartbeat would be an alert per endpoint per minute, and the base rule above is
+    level 0 so that heartbeats stay out of the indexer. Level 3 is the lowest that alerts by
+    default, so these are indexed for a dashboard and nobody is paged. The numbers are
+    cumulative for the run (since ambitd started), so an endpoint's latest report is its
+    current answer. A report heartbeat that is also degraded or dropping events alerts as
+    100311 or 100313 instead; the latency fields are in that alert's data all the same.
+  -->
+  <rule id="100315" level="3">
+    <if_sid>100310</if_sid>
+    <field name="health_hook_p99_us">\.+</field>
+    <description>ambit D7: hook latency on $(endpoint_id) - p99 $(health_hook_p99_us)us</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d7,runbook_D7,</group>
+  </rule>
+
+  <!--
+    The run's p99 is over the latency budget (latency_budget_ms, 5 ms by default). ambitd
+    answers each hook before it does any work on the payload, so a slow p99 means the
+    machine itself is starved or something is holding the hook socket, not that detection is
+    expensive. Nothing is lost when this fires; it is a performance finding, not a gap.
+  -->
+  <rule id="100316" level="6">
+    <if_sid>100315</if_sid>
+    <field name="health_hook_slow">^true$</field>
+    <description>ambit D7: hook p99 $(health_hook_p99_us)us is over budget on $(endpoint_id) ($(health_hook_over_budget) slow responses this run)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>ambit_d7,runbook_D7,</group>
+  </rule>
+
 </group>

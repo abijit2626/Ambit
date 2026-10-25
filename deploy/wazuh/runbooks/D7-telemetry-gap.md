@@ -1,6 +1,6 @@
 # Runbook D7 — telemetry gap
 
-**Rules:** 100310–100314 (group `ambit_d7`), plus Wazuh's own rule 504. **MITRE:** T1562.001.
+**Rules:** 100310–100316 (group `ambit_d7`), plus Wazuh's own rule 504. **MITRE:** T1562.001.
 
 A monitor that stops reporting produces a calm alert stream, which is indistinguishable from a
 quiet fleet unless something notices the silence. This detector exists because the adversary in
@@ -15,6 +15,7 @@ Four signals, from three different places on purpose:
 | ambitd is gone, agent alive | **100314** (SCA check 10007) | The daemon was killed; the endpoint still heartbeats |
 | ambitd present but degraded | **100311**, **100312** | Dropped events, failing sinks, one collection path silent |
 | Events were lost | **100313** | A window of the stream is unrecoverable |
+| Hook latency (not a gap) | **100315**, **100316** | The hourly latency report, and a run whose p99 is over budget |
 
 ## What this alert asserts
 
@@ -29,6 +30,14 @@ Four signals, from three different places on purpose:
 - **100314**: the Wazuh agent's SCA scan found no `ambitd` process. The report comes from a
   different process than the one being reported on, which is what makes it survive an adversary
   who kills ambitd.
+- **100315**: the hourly hook latency report. ambitd puts the run's hook p99 (and its count of
+  responses over budget) on one heartbeat an hour and on the final one. It is level 3 so it is
+  indexed for a fleet view and pages nobody. To see the fleet, take each `endpoint_id`'s latest
+  100315 or 100316 alert and read `data.health_hook_p99_us`.
+- **100316**: that run's p99 is over `latency_budget_ms`. ambitd answers every hook before it
+  touches the payload, so this means the endpoint is starved or something holds the hook socket.
+  No event is lost; it is a performance finding, and the M0 latency criterion is the place to
+  judge it (`ambitd report` on the endpoint gives the full histogram).
 
 ## What it does not assert
 
@@ -87,7 +96,8 @@ Four signals, from three different places on purpose:
 **Page** on 100314, on 100312, and on 100313 where the dropped count is large enough that a
 detector could plausibly have missed something.
 
-**Queue** single 100311 events, and 504 for endpoints that are routinely offline.
+**Queue** single 100311 events, and 504 for endpoints that are routinely offline. 100316 goes to
+whoever owns the rollout, not to the security queue; 100315 goes nowhere, it is for dashboards.
 
 **Escalate as an availability issue, same day, not on a threshold**, when degradation affects
 several endpoints at once: that is a deployment problem, and the fleet is partly blind until it

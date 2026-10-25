@@ -89,6 +89,9 @@ type SIEMEvent struct {
 	HealthStatus        string `json:"health_status,omitempty"`
 	HealthQueueDepth    int    `json:"health_queue_depth,omitempty"`
 	HealthDroppedEvents int64  `json:"health_dropped_events,omitempty"`
+	HealthHookP99US     int64  `json:"health_hook_p99_us,omitempty"`
+	HealthHookOver      int64  `json:"health_hook_over_budget,omitempty"`
+	HealthHookSlow      bool   `json:"health_hook_slow,omitempty"`
 
 	SandboxDenialOps     []string `json:"sandbox_denial_ops,omitempty"`
 	SandboxDenialDigests []string `json:"sandbox_denial_digests,omitempty"`
@@ -231,6 +234,11 @@ func Flatten(e *Event) *SIEMEvent {
 		s.HealthStatus = h.Status
 		s.HealthQueueDepth = h.QueueDepth
 		s.HealthDroppedEvents = h.DroppedEvents
+		if l := h.HookLatency; h.LatencyReport && l != nil && l.Count > 0 {
+			s.HealthHookP99US = l.P99US
+			s.HealthHookOver = l.OverBudget
+			s.HealthHookSlow = l.BudgetUS > 0 && l.P99US > l.BudgetUS
+		}
 	}
 
 	if d := e.Denial; d != nil {

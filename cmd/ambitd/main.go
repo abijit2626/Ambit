@@ -250,7 +250,13 @@ type heartbeat struct {
 	runID   string
 	prev    *event.PrevRun
 	rs      *runstate.File
+
+	lastReport time.Time
 }
+
+// latencyReportEvery is how often a heartbeat carries hook latency to the SIEM. The final heartbeat
+// always does, so a run shorter than this still reports on a clean stop.
+const latencyReportEvery = time.Hour
 
 func (h *heartbeat) loop(ctx context.Context) {
 	ticker := time.NewTicker(h.cfg.HealthInterval)
@@ -293,6 +299,13 @@ func (h *heartbeat) emit(final bool) {
 
 	now := time.Now().UTC()
 	lat := hs.Latency
+	if h.lastReport.IsZero() {
+		h.lastReport = h.start
+	}
+	report := final || now.Sub(h.lastReport) >= latencyReportEvery
+	if report {
+		h.lastReport = now
+	}
 	e := &event.Event{
 		EventID:    fmt.Sprintf("health-%d", now.UnixNano()),
 		TS:         now.Format(time.RFC3339Nano),
@@ -326,8 +339,9 @@ func (h *heartbeat) emit(final bool) {
 			ParseErrors:       hs.ParseErrors,
 			TrajectoryRetired: ts.Retired,
 
-			HookLatency: &lat,
-			PrevRun:     h.prev,
+			HookLatency:   &lat,
+			PrevRun:       h.prev,
+			LatencyReport: report,
 		},
 	}
 
