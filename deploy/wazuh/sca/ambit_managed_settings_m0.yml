@@ -2,8 +2,9 @@
 # ambit_managed_settings.yml. This is detector D12 while nothing is enforced.
 #
 # WHY A SECOND FILE. deploy/claude-code/managed-settings.m0.json deliberately sets no
-# permission rules and no sandbox, because M0's exit criterion is zero developer-visible
-# behavior change. The full policy asserts exactly those keys:
+# permission rules and no sandbox enablement, because M0's exit criterion is zero developer-visible
+# behavior change. Its one sandbox entry, 127.0.0.1 in network.allowedDomains, does not turn the
+# sandbox on, and the full policy does not assert it. The full policy asserts exactly the keys below:
 #
 #   10002  permissions.disableBypassPermissionsMode is "disable"
 #   10003  sandbox enabled, failIfUnavailable true, allowUnsandboxedCommands false

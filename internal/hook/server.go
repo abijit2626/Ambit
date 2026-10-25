@@ -44,11 +44,14 @@ type Server struct {
 
 	latency     *latencyRecorder
 	parseErrors atomic.Int64
+	ingest      *ingest
 }
 
 type Stats struct {
 	Latency     event.Latency
 	ParseErrors int64
+	// QueueDropped counts payloads the handler never saw because their session had too many waiting.
+	QueueDropped int64
 }
 
 type Options struct {
@@ -57,6 +60,9 @@ type Options struct {
 	Decider Decider
 	Logger  *slog.Logger
 	Budget  time.Duration
+
+	// SessionQueue bounds the payloads one session may have waiting for the handler; 0 is the default.
+	SessionQueue int
 
 	Extra map[string]http.Handler
 }
@@ -75,6 +81,7 @@ func NewServer(opts Options) (*Server, error) {
 		opts.Budget = 5 * time.Millisecond
 	}
 	s := &Server{
+		ingest:  newIngest(opts.Handler, opts.SessionQueue),
 		handler: opts.Handler,
 		decider: opts.Decider,
 		log:     opts.Logger,
@@ -107,6 +114,10 @@ func NewServer(opts Options) (*Server, error) {
 	return s, nil
 }
 
+// drainTimeout bounds how long Serve waits, after the listener closes, for payloads already accepted to be
+// handled. Those were answered, so their spool and SIEM lines are owed.
+const drainTimeout = 10 * time.Second
+
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	go func() {
 		<-ctx.Done()
@@ -114,7 +125,11 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		defer cancel()
 		_ = s.srv.Shutdown(shutCtx)
 	}()
-	if err := s.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err := s.srv.Serve(ln)
+	if !s.ingest.wait(drainTimeout) {
+		s.log.Warn("hook payloads still waiting for ingest at shutdown", "after", drainTimeout)
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
@@ -149,8 +164,8 @@ func (s *Server) serveHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := s.decider.Decide(&p)
-	s.handler.Handle(&p)
 	s.respond(w, resp, start)
+	s.ingest.enqueue(&p)
 }
 
 func (s *Server) respond(w http.ResponseWriter, resp *Response, start time.Time) {
@@ -170,7 +185,11 @@ func (s *Server) respond(w http.ResponseWriter, resp *Response, start time.Time)
 }
 
 func (s *Server) Stats() Stats {
-	return Stats{Latency: s.latency.snapshot(), ParseErrors: s.parseErrors.Load()}
+	return Stats{
+		Latency:      s.latency.snapshot(),
+		ParseErrors:  s.parseErrors.Load(),
+		QueueDropped: s.ingest.dropped.Load(),
+	}
 }
 
 func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {

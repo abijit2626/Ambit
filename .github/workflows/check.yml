@@ -61,6 +61,12 @@ jobs:
       - name: make smoke
         run: make smoke
 
+      # A short fuzz round over every fuzz target. The seed inputs already run as ordinary tests; this
+      # adds mutation for a few seconds each, which is how the bash-classifier wrapping bypass was found.
+      # Five seconds keeps the round near two minutes; `make fuzz FUZZTIME=...` runs it longer by hand.
+      - name: make fuzz
+        run: make fuzz FUZZTIME=5s
+
       # ambitd and mcp-interpose ship as static binaries to macOS, Linux, WSL2 and native
       # Windows endpoints. Nobody developing on Linux would notice a darwin or windows
       # build break, and the first person to find out would be whoever is deploying to a

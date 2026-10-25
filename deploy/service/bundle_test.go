@@ -142,11 +142,13 @@ func TestEarlierBundleHashIsPinnedInBothInstallers(t *testing.T) {
 	sum := sha256.Sum256([]byte(read(t, earlierBundle)))
 	want := hex.EncodeToString(sum[:])
 
-	if !strings.Contains(strings.ToLower(read(t, shScript)), `earlier_bundles="`+want+`"`) {
-		t.Errorf("install-system.sh does not list %s as the earlier bundle", want)
+	if !strings.Contains(strings.ToLower(read(t, shScript)), `earlier_bundles="`) ||
+		!strings.Contains(strings.ToLower(read(t, shScript)), want) {
+		t.Errorf("install-system.sh does not list %s as an earlier bundle", want)
 	}
-	if !strings.Contains(strings.ToLower(read(t, psScript)), `$earlierbundles = @('`+want+`')`) {
-		t.Errorf("install-system.ps1 does not list %s as the earlier bundle", want)
+	if !strings.Contains(strings.ToLower(read(t, psScript)), `$earlierbundles = @(`) ||
+		!strings.Contains(strings.ToLower(read(t, psScript)), "'"+want+"'") {
+		t.Errorf("install-system.ps1 does not list %s as an earlier bundle", want)
 	}
 	for _, path := range []string{bundle, bundleWindows} {
 		cur := sha256.Sum256([]byte(read(t, path)))
@@ -212,6 +214,7 @@ func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 	lib := shellLibrary(t)
 	newBundle, _ := filepath.Abs(bundle)
 	older, _ := filepath.Abs(earlierBundle)
+	beforeLoopback, _ := filepath.Abs("testdata/managed-settings.m0.before-loopback.json")
 
 	cases := []struct {
 		name, existing  string
@@ -223,6 +226,7 @@ func TestShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 		{name: "no managed settings yet", wantBecomesNew: true, wantOut: "installed managed settings"},
 		{name: "already the current bundle", existing: "@" + newBundle, wantBecomesNew: true, wantOut: "already match"},
 		{name: "the earlier bundle is upgraded", existing: "@" + older, wantBecomesNew: true, wantOut: "upgraded managed settings"},
+		{name: "the bundle before the loopback entry is upgraded", existing: "@" + beforeLoopback, wantBecomesNew: true, wantOut: "upgraded managed settings"},
 		{name: "an organization's own policy is left alone", existing: `{"permissions":{"deny":["Bash(rm *)"]}}`, wantErr: true, wantOut: "differ from the M0 bundle", wantUntouchedAs: `{"permissions":{"deny":["Bash(rm *)"]}}`},
 		{name: "the earlier bundle with one byte changed is not ours", existing: "@" + older + "+", wantErr: true, wantOut: "differ from the M0 bundle"},
 	}
@@ -410,4 +414,26 @@ func TestPowerShellInstallerUpgradesOnlyTheEarlierBundle(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Each bundle an installer shipped before the current one must stay upgradable, so the pinned hashes are
+// checked against the files in testdata: the shell installer pins the Unix bundle before the 127.0.0.1
+// sandbox entry, and the PowerShell installer the Windows one.
+func TestPreLoopbackBundlesAreUpgradableOnTheirPlatform(t *testing.T) {
+	for _, c := range []struct{ name, file, script, pin string }{
+		{"Unix", "testdata/managed-settings.m0.before-loopback.json", shScript, `earlier_bundles="`},
+		{"Windows", "testdata/managed-settings.m0.windows.before-loopback.json", psScript, `$earlierbundles = @(`},
+	} {
+		sum := sha256.Sum256([]byte(read(t, c.file)))
+		want := hex.EncodeToString(sum[:])
+		if !strings.Contains(strings.ToLower(read(t, c.script)), c.pin) || !strings.Contains(strings.ToLower(read(t, c.script)), want) {
+			t.Errorf("%s installer does not pin %s, so an endpoint with the earlier %s bundle would refuse to upgrade", c.name, c.file, c.name)
+		}
+		for _, path := range []string{bundle, bundleWindows} {
+			cur := sha256.Sum256([]byte(read(t, path)))
+			if hex.EncodeToString(cur[:]) == want {
+				t.Errorf("%s is byte for byte the %s earlier bundle, so it was not changed", path, c.name)
+			}
+		}
+	}
 }

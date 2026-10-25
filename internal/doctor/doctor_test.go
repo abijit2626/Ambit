@@ -54,12 +54,21 @@ func TestTheShippedBundlePasses(t *testing.T) {
 
 func TestSandboxWithoutLoopbackFails(t *testing.T) {
 	user := file(t, `{"sandbox":{"enabled":true,"network":{"allowedDomains":["github.com"]}}}`)
-	fs := Check([]File{bundle(t), user}, addr, true)
+	fs := Check([]File{user}, addr, true)
 	if got := level(fs, "sandbox"); got != Fail {
 		t.Errorf("sandbox = %s, want fail: the proxy refuses 127.0.0.1 (blocker 7)", got)
 	}
+}
+
+// The M0 bundle carries 127.0.0.1 in the sandbox allowlist, so a managed endpoint passes whatever its own
+// settings say, as long as they do not replace the list (a managed entry is merged, not overridden).
+func TestSandboxWithTheBundlesLoopbackPasses(t *testing.T) {
+	user := file(t, `{"sandbox":{"enabled":true,"network":{"allowedDomains":["github.com"]}}}`)
+	if got := level(Check([]File{bundle(t), user}, addr, true), "sandbox"); got != OK {
+		t.Errorf("sandbox with the bundle's 127.0.0.1 entry = %s, want ok", got)
+	}
 	ok := file(t, `{"sandbox":{"enabled":true,"network":{"allowedDomains":["127.0.0.1"]}}}`)
-	if got := level(Check([]File{bundle(t), ok}, addr, true), "sandbox"); got != OK {
+	if got := level(Check([]File{ok}, addr, true), "sandbox"); got != OK {
 		t.Errorf("sandbox with 127.0.0.1 allowed = %s, want ok", got)
 	}
 }
