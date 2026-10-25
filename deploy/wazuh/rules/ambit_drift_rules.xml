@@ -1,0 +1,50 @@
+<!--
+  ambit M4: goal drift.
+
+  Manager-side. IDs 100330-100339. Allocation map in ambit_mcp_rules.xml.
+
+  ambitd asks a model whether a tool call serves the request the user typed, for the tool
+  calls that carry a provenance edge (a value from something the agent read reached what it
+  does next). It is off unless goal_drift is enabled in ambitd's config, so an endpoint
+  without it sends none of these. Only scores at drift_threshold or above cross to Wazuh, and
+  the judge answers only RELATED or UNRELATED, so every goal_drift_score event here is an
+  UNRELATED verdict with goal_drift_score 1.
+
+  NO MITRE TAG. "The action does not serve the user's request" has no ATT&CK technique, and
+  docs/03-detection.md ships it untagged rather than forcing one; the ambit_no_mitre group
+  says so to rules_test.go.
+
+  WHAT THE JUDGE SAW: the user's latest prompt and the tool call's name and arguments, both
+  redacted and truncated, never the tool results. On the prototype (docs/03-detection.md) it
+  flagged 30 of 47 hostile and 1 of 132 benign edge actions on AgentDojo; that is the expected
+  shape, not a guarantee on this fleet.
+
+  The score event carries no provenance edge, though every judged call had one: the tool event
+  already sent it (rule 100283), and an edge here would let 100283 take this event. tool_use_id
+  joins the two.
+-->
+
+<group name="ambit,ambit_drift,">
+
+  <!-- The judge said a tool call that carries a provenance edge does not serve the user's request. -->
+  <rule id="100330" level="8">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^goal_drift_score$</field>
+    <description>ambit M4: $(tool_name) in session $(session_id) on $(endpoint_id) does not serve the user's request, per the goal-drift judge (tool_use_id $(tool_use_id))</description>
+    <group>ambit_m4,ambit_no_mitre,runbook_M4,</group>
+  </rule>
+
+  <!--
+    The page condition from docs/03-detection.md: unrelated to the request, carrying a value
+    from untrusted content, and in a session that can now change state or reach the outside
+    (Rule-of-Two bit C). Any one alone is noise; together they are the shape of an injected
+    side task.
+  -->
+  <rule id="100331" level="12">
+    <if_sid>100330</if_sid>
+    <field name="r2_c">^true$</field>
+    <description>ambit M4: unrelated action with an untrusted-content edge and an outward-capable session - $(tool_name) in $(session_id) on $(endpoint_id)</description>
+    <group>ambit_m4,ambit_no_mitre,runbook_M4,</group>
+  </rule>
+
+</group>

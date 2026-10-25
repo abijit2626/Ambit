@@ -18,6 +18,7 @@ import (
 	"github.com/abijit2626/ambit/internal/collector"
 	"github.com/abijit2626/ambit/internal/config"
 	"github.com/abijit2626/ambit/internal/doctor"
+	"github.com/abijit2626/ambit/internal/drift"
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/hook"
@@ -114,6 +115,7 @@ func run() error {
 	}
 	defer traj.Close()
 
+	scorer := openDriftScorer(cfg, log)
 	coll := collector.New(collector.Options{
 		Config:         cfg,
 		EventsSink:     events,
@@ -121,6 +123,7 @@ func run() error {
 		Extractor:      features.New(key),
 		Logger:         log,
 		Version:        version,
+		Drift:          scorer,
 	})
 
 	// Listen before the token is written: a second ambitd that cannot bind must not overwrite the
@@ -207,6 +210,15 @@ func run() error {
 	err = srv.Serve(ctx, ln)
 	stop()
 	<-done
+	if scorer != nil {
+		// judge calls already made are owed their score events; the final heartbeat comes after them
+		if !scorer.Close(10 * time.Second) {
+			log.Warn("goal-drift judge calls still running at shutdown; their scores are lost")
+		}
+		ds := scorer.Stats()
+		log.Info("goal-drift judge", "submitted", ds.Submitted, "judged", ds.Judged, "unrelated", ds.Unrelated,
+			"rate_limited", ds.RateLimited, "dropped", ds.Dropped, "errors", ds.Errors)
+	}
 	hb.emit(true)
 
 	st := coll.Stats()
@@ -232,6 +244,39 @@ func run() error {
 		"shadow_allow_alert", st.Shadow.AllowAlert,
 	)
 	return err
+}
+
+// openDriftScorer starts the goal-drift judge when the config turns it on. A judge that cannot start is
+// logged and left off: ambitd's observation does not depend on it.
+func openDriftScorer(cfg config.Config, log *slog.Logger) *drift.Scorer {
+	g := cfg.GoalDrift
+	if !g.Enabled {
+		return nil
+	}
+	apiKey, err := g.APIKey()
+	if err != nil {
+		log.Error("goal-drift judge off", "err", err)
+		return nil
+	}
+	judge, err := drift.NewAnthropic(drift.AnthropicOptions{APIKey: apiKey, Model: g.Model, BaseURL: g.BaseURL})
+	if err != nil {
+		log.Error("goal-drift judge off", "err", err)
+		return nil
+	}
+	sc, err := drift.New(drift.Options{
+		Judge:      judge,
+		MaxPerHour: g.MaxPerHour,
+		Timeout:    time.Duration(g.TimeoutSeconds) * time.Second,
+		MaxChars:   g.MaxChars,
+		Logger:     log,
+	})
+	if err != nil {
+		log.Error("goal-drift judge off", "err", err)
+		return nil
+	}
+	log.Info("goal-drift judge on: prompts and tool calls with a provenance edge go to the model API, redacted",
+		"model", g.Model, "max_per_hour", g.MaxPerHour)
+	return sc
 }
 
 func otlpAddrOrOff(cfg config.Config) string {

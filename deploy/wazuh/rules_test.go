@@ -24,6 +24,9 @@ const (
 
 	groupPendingEmitter = "ambit_pending_emitter"
 	groupWazuhSourced   = "ambit_wazuh_sourced"
+	// groupNoMitre marks an alert with no honest ATT&CK technique (goal drift, docs/03-detection.md),
+	// which ships untagged rather than with a forced one.
+	groupNoMitre = "ambit_no_mitre"
 )
 
 var allocated = map[string][][2]int{
@@ -34,6 +37,7 @@ var allocated = map[string][][2]int{
 	"ambit_egress_rules.xml":     {{100300, 100309}},
 	"ambit_telemetry_rules.xml":  {{100310, 100319}},
 	"ambit_gate_rules.xml":       {{100320, 100329}},
+	"ambit_drift_rules.xml":      {{100330, 100339}},
 }
 
 var externalParents = map[int]string{
@@ -277,7 +281,7 @@ func TestEveryRuleIsWellFormed(t *testing.T) {
 				if !runbookRE.MatchString(r.Groups) {
 					t.Errorf("groups %q name no runbook; every alerting rule carries a runbook group (runbook_Dn, runbook_R2) per docs/03-detection.md", r.Groups)
 				}
-				if len(r.Mitre.IDs) == 0 {
+				if len(r.Mitre.IDs) == 0 && !r.hasGroup(groupNoMitre) {
 					t.Error("no MITRE technique: external firms expect a technique id on every alert")
 				}
 			}
