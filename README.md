@@ -45,7 +45,8 @@ can provide one:
   communication)
 - The provenance fingerprint intersection
 - **The gate** — `allow` / `deny` / `ask`
-- Async goal-drift scoring against the objective the user actually stated
+- Async goal-drift scoring against the objective the user actually stated (M4: built, off
+  by default, because it sends redacted prompts and tool arguments to a model API)
 
 **Wazuh as the fleet plane** holds everything that is cross-event or cross-endpoint
 correlation, and it absorbs a large amount of what would otherwise have been our
@@ -165,7 +166,7 @@ internal/collector/      wiring: payload -> event -> sinks
 internal/config/         configuration, deliberately not delivered over Wazuh
 internal/fsperm/         private directories: 0700 on Unix, an explicit ACL on Windows
 deploy/wazuh/            localfile, syscheck, SCA policy (Unix and Windows), logtest fixtures
-deploy/wazuh/rules/      all twelve detectors and the gate's shadow verdicts, seven files, validated by go test
+deploy/wazuh/rules/      all twelve detectors, the gate's shadow verdicts and M4 goal drift, eight files, validated by go test
 deploy/wazuh/runbooks/   one per detector, for an analyst with no access to our source
 deploy/claude-code/      managed-settings bundle (M0: observation only)
 deploy/service/          ambitd as a system service: systemd unit, LaunchDaemon (Windows: a scheduled task)
@@ -421,7 +422,7 @@ than `deny`, and each rule is promoted shadow → `ask` → `deny` on reviewed e
 
 | Milestone | Scope | State |
 | --- | --- | --- |
-| **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Installers run `ambitd` as a system service from boot (verified on Linux; not yet run on macOS or Windows). `ambitd report` computes the latency, loss and interesting-fraction criteria from the spool. Not yet deployed to a cohort. |
+| **M0 Observe** | `ambitd` hook endpoint and OTLP receiver, spool and Wazuh sink, edge redaction, keyed features, FIM and SCA artifacts. Every hook response is `{}`. | Implemented and tested. Installers run `ambitd` as a system service from boot (verified on Linux; Windows ran once on one machine, macOS not yet). `ambitd report` computes the latency, loss and interesting-fraction criteria from the spool, and `ambitd doctor` checks that Claude Code will reach ambitd. `ambitd stop` gives a clean stop where the OS can only terminate (Windows installer). Each endpoint also sends its hook p99 to Wazuh once an hour (rules 100315, 100316) for a fleet latency view. Not yet deployed to a cohort. |
 | **M1 Inventory, drift, first rules** | `mcp-interpose` (D4 baseline, D5 metadata scan), Wazuh rules for D1–D12 with runbooks, SCA policies (an M0 subset for the observation-only bundle, and the full one). | Implemented. Rules validated offline against fixtures generated from the real pipeline; live-manager confirmation and an outside-analyst runbook test are open. The D1 rules for bypass mode (100200) and prompt-less sessions (100206, 100207), the open-world MCP rule (100303) and the sandbox-denial rules (100304, 100305) fire under `wazuh-logtest` 4.14.8 on fixtures from the real pipeline. |
 | **M2 Provenance and Rule-of-Two, alert only** | Provenance engine, shadow-mode gates, replay harness. | Partial. Rule-of-Two bit accounting runs in shadow mode (`internal/r2`), and the gate runs in shadow too (`internal/gate`): docs/03's table is evaluated on every `PreToolUse` under per-session and per-turn scoping, and the verdict is recorded on the event (`policy_shadow=true`, rules 100320–100323) and never returned, so no session behaves differently. The provenance engine is implemented (`internal/prov`): it fingerprints untrusted ingest per session, intersects it with each `PreToolUse` input, and puts edges and taint labels on the event, alert-only via rule 100283. The replay harness is implemented (`cmd/ambit-replay`), with a hand-written starter corpus and an AgentDojo adapter measured against published runs of real models (docs/03). Precision on a real developer cohort is still unmeasured: that is what a shadow cohort is for. MCP annotations are joined onto tool calls from the interposer. A prototype goal judge, offline, separated AgentDojo's false positives from its attacks (docs/03); it is now built as M4. |
 | **M3 Enforce** | Policy engine, signed policy bundles, split fail policy, containment-only active response. | Design only. |
@@ -552,6 +553,24 @@ team executes a runbook against a sample alert.
   session-level transition, or it skips every repeat of an already-tripped bit.
   Operator `TrustedMCPServers` classification is the larger coverage risk: marking a
   same-vendor admin tool `internal` removes it from Rule-of-Two and goal-drift coverage.
+- **Goal drift (M4) is built but unmeasured on a real endpoint.** `internal/drift` judges only
+  tool calls that carry a provenance edge (that edge is its pre-filter, taken from the call's
+  own event), so an attack whose values the edge misses is never judged. It was tested against a
+  stand-in for the Messages API, not the real one; the only accuracy numbers are the offline
+  prototype's on AgentDojo (docs/03), where it missed injected actions that look like the task.
+  A judge is itself promptable (the action's arguments are fenced as data, which is a mitigation,
+  not a guarantee), a RELATED verdict is not proof of innocence, and the score is 0 or 1 rather
+  than a probability. Turning it on sends the redacted prompt and tool arguments to a model API and
+  costs money, capped by `goal_drift.max_per_hour`; it is off unless configured.
+- **ambitd now has one dependency.** The goal-drift judge uses the Anthropic Go SDK, which grew
+  the binary from about 10.6 to 18.8 MB and pulls in a handful of modules. It is confined to
+  `internal/drift`, and `mcp-interpose` and the OTLP receiver still use only the standard
+  library. The earlier zero-dependency stance is documented in docs/02.
+- **A clean stop on Windows depends on the installer.** `ambitd stop` and the installer's
+  `Stop-Ambitd` ask ambitd to stop with a per-run token, so an upgrade or uninstall is recorded
+  as clean. A reboot, `Stop-ScheduledTask` by hand or a crash still ends it without a final
+  heartbeat and reads as unclean. The installer's new stop path ran under PowerShell 7 against a
+  real `ambitd` on Linux, and has not yet run on a Windows machine.
 
 ### Observed in a first lab run
 

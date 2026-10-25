@@ -53,7 +53,9 @@ operational constraints the rest of the design already commits to:
 
 R5, R6 and R7 are not preferences. R5 is load-bearing for code that is already
 written and tested; R6 is the M0 exit criterion; R7 is the stated reason
-`ambitd` has zero dependencies and ships as a static binary.
+`ambitd` kept zero dependencies and ships as a static binary. M4 goal drift later added one, the Anthropic Go SDK,
+and an opt-in outbound call to a model API; that is the single exception, confined to `internal/drift`
+([02](02-architecture.md)). `mcp-interpose` still has neither.
 
 ## Scorecard
 
