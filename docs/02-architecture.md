@@ -55,7 +55,7 @@ So:
 | Rule-of-Two bit accounting | **ambitd** | Needs live per-session state |
 | Provenance fingerprint intersection | **ambitd** | Needs the session's ingest fingerprint set in memory |
 | The gate (`allow` / `deny` / `ask`) | **ambitd** | Must return a verdict inline, in ms |
-| Goal-drift scoring | **ambitd**, async | Needs the session's declared objective and action history |
+| Goal-drift scoring | **ambitd**, async | Needs the session's declared objective and action history. Built as M4, off by default: a bounded queue and two workers call a model API off the hook path, only for tool calls that carry a provenance edge |
 | Cross-event correlation within an endpoint | **Wazuh rules** | `frequency` + `timeframe` does this natively |
 | Cross-endpoint and cross-session correlation | **Wazuh rules** | Manager sees the whole fleet |
 | Event store, retention, archiving | **Wazuh** | It is a SIEM; this is its job |
@@ -525,7 +525,7 @@ detection latency, not developer throughput.
 | `PreToolUse` → decision | p99 ≤ 5 ms, hard ceiling 250 ms | See fail policy below |
 | `PostToolUse` ingest | fire-and-forget, never blocks | Drop to local spool |
 | Append to `events.jsonl` | fire-and-forget | Spool; never block the hook path on disk |
-| Async detectors (goal drift) | seconds | Advisory only; never gates inline |
+| Async detectors (goal drift) | seconds, bounded by `goal_drift.timeout_seconds` (30) | Advisory only; never gates inline. A slow or failed judge call loses its score, never the tool call or the event |
 | Wazuh agent → manager | minutes | Wazuh agent buffers; `ambitd` rotates `events.jsonl` with a bounded cap |
 
 **Measured.** `BenchmarkHandleByKind` (`internal/collector`, one core of a cloud VM) measured the

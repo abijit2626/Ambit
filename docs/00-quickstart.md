@@ -38,12 +38,23 @@ If something seems off:
 ```sh
 ~/.ambit/ambitd doctor -config ~/.ambit/config.json   # will ambitd hear from Claude Code?
 ~/.ambit/ambitd report -config ~/.ambit/config.json   # latency, loss, restarts, what would go to Wazuh
+~/.ambit/ambitd stop -config ~/.ambit/config.json     # stop ambitd cleanly, so the stop is recorded as clean
 ```
 
 One thing to know: if you run Claude Code with its sandbox on, `127.0.0.1` has to be in
 `sandbox.network.allowedDomains`, or the sandbox refuses the hooks and ambitd hears almost
 nothing. Machines set up with `install-system` get that entry from the managed bundle; the
 `dev-local` setup on your own machine does not, so add it there. `ambitd doctor` checks this.
+
+## An optional extra: goal drift
+
+Everything above watches and reports. Goal drift adds one judgment: for a tool call that uses
+a value the agent read from an untrusted source, ambitd asks a small model whether the action
+serves what the user actually asked for, and reports the ones that clearly do not. It is **off
+by default**, because turning it on sends the user's latest prompt and that tool call's
+arguments (with secrets removed and the text shortened, never tool results) to a model API, and
+every judged call costs a small amount. To try it, set `goal_drift` in ambitd's config and give
+it an API key; see [docs/03-detection.md](03-detection.md), Layer 3.
 
 ## Roll it out to a team
 

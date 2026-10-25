@@ -66,7 +66,9 @@ Each one will otherwise cost the cohort a week to discover.
 3. **Hook latency is measured inside the handler, in buckets.** `ambitd` times every `/hook`
    response and keeps a histogram (bucket bounds from 250 µs to 1 s, 5 ms among them), the count
    over `latency_budget_ms` (default 5), and the maximum. The counters ride on every
-   `ambitd_health` event in the spool as `hook_latency`; they do not cross to Wazuh. `ambitd
+   `ambitd_health` event in the spool as `hook_latency`. Wazuh gets only the run's p99, the count over budget and a
+   slow flag, on one heartbeat an hour and the final one (`health_hook_*`, rules 100315 and 100316), enough for
+   a fleet dashboard; the histogram stays on the endpoint. `ambitd
    report` merges every run in the spool and prints p50, p95 and p99. A quantile is the upper
    bound of its bucket, so read "p99 ≤ 5.0ms", not "p99 = 5.0ms". The pass/fail line does not
    depend on the buckets: a p99 under 5 ms is the same claim as fewer than 1% of responses over

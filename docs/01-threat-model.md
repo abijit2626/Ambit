@@ -193,7 +193,7 @@ rather than *intended* would be overclaiming.
 | Injected instruction in a fetched page → agent writes exfil to a public repo | Provenance edge from ingest to action; Rule-of-Two third-bit gate on external communication after untrusted ingest |
 | Poisoned MCP tool description → agent passes credentials to attacker's tool | MCP interposer inspects and hashes descriptions at list time; drift alert against the approved baseline |
 | Rug pull on an approved server | Tool metadata hash comparison on every session start |
-| Decomposed malicious campaign | Fleet-level session-shape analysis; goal-drift scoring; aggregate review, not per-action blocking |
+| Decomposed malicious campaign | Fleet-level session-shape analysis; goal-drift scoring (built as M4, off by default; judges only actions that carry a provenance edge); aggregate review, not per-action blocking |
 | Cross-agent propagation | Content fingerprint matching between one session's ingest and another's output |
 | Malware edits agent config to disable hooks or widen permissions | Wazuh FIM with `whodata` on `.claude/` and `.mcp.json` reports which process wrote it; SCA asserts the managed bundle is still correct (D12); `ConfigChange` covers in-session changes that never touch disk |
 | Attacker kills the monitoring to work unobserved | Wazuh agent-disconnect alerting (rule 504, T1562.001); SCA `p:ambitd` liveness from a separate process; fail-open run detection (D11); inconsistency between four independent streams |
