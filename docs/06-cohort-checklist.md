@@ -113,7 +113,8 @@ Each one will otherwise cost the cohort a week to discover.
    interactive session prompts the developer for it instead of failing is not observed. The M0
    bundle sets no sandbox key, so this comes from the volunteer's own settings: ask each one
    whether they run with the sandbox, and check `events.jsonl` gains a `prompt_submit` after
-   their first session. Allowing `127.0.0.1` also lets sandboxed commands reach every local port,
+   their first session. `ambitd report` counts the sessions that sent nothing after their
+   `SessionStart` and warns when there are any, which is this failure's signature. Allowing `127.0.0.1` also lets sandboxed commands reach every local port,
    ambitd's included; docs/02 has the trade-off.
 
 ## Prove it on one machine you own
@@ -170,7 +171,10 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
    `deploy/claude-code/managed-settings.m0.json`. `--status` (`-Status`) shows the state.
 3. Optional configuration goes in `/etc/ambit/config.json`, `/usr/local/etc/ambit/config.json`
    or `C:\ProgramData\ambit\config.json`; restart the service after changing it.
-   `ambitd -print-config` shows the effective configuration. Set `trusted_repo_paths`,
+   `ambitd -print-config` shows the effective configuration, and `ambitd doctor -config <config>`,
+   run as the volunteer from their project directory, reads the Claude Code settings they will run
+   with and fails if a hook points elsewhere, the OTel exporter is not http/json, or the sandbox is
+   on without `127.0.0.1` allowed (blocker 7). Set `trusted_repo_paths`,
    `trusted_content_domains` and, if you classify MCP servers or tools, `trusted_mcp_servers` and
    `mcp_tool_labels`. An unset trusted-repo list makes D8 mostly noise early on, as its runbook
    says. Then run one Claude Code session, send one prompt, and check that `events.jsonl` gains a

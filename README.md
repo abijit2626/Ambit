@@ -90,6 +90,7 @@ platform, not a replacement for either.**
 
 | Doc | Contents |
 | --- | --- |
+| [00-quickstart.md](docs/00-quickstart.md) | What ambit is and how to try it, in plain terms |
 | [01-threat-model.md](docs/01-threat-model.md) | Five adversaries, assets, trust assumptions, the MSSP egress posture, residual risk |
 | [02-architecture.md](docs/02-architecture.md) | `ambitd`, `mcp-interpose`, Wazuh; interception points; FIM and SCA config; trust boundaries; latency and failure modes; tenancy |
 | [03-detection.md](docs/03-detection.md) | Three detection layers, the ambitd/Wazuh split, rule snippets, D1–D12, ATT&CK mappings, runbook requirements |
@@ -118,11 +119,12 @@ claiming coverage.
 
 ## Code
 
-The Go, shell and PowerShell source and the Makefile carry no comments, apart from the
+Most of the Go, shell and PowerShell source and the Makefile carry no comments, apart from the
 build-constraint lines Go reads. The reasoning that used to sit beside the code is in
 [docs/](docs/) and the tests, which are named for the behavior they pin; the version with the
 comments is the last commit before they were removed, `3a8cdc5`
-(`git show 3a8cdc5:path/to/file.go`). The Wazuh rules, SCA policies, the managed-settings bundle
+(`git show 3a8cdc5:path/to/file.go`). Code added since (`hook-forward`, `report`, `doctor`, the
+derived events, the fuzz targets) carries short doc comments where the reason is not in the code. The Wazuh rules, SCA policies, the managed-settings bundle
 and the CI workflow are configuration that operators read, and keep their comments.
 
 `ambitd` is **observe-only** (M0; see the Roadmap below). It receives Claude Code hook
@@ -174,6 +176,7 @@ testdata/agentdojo/      per-tool MCP labels for AgentDojo's four suites, and li
 ./scripts/dev-local.sh          # run it against your own Claude Code sessions
 ./scripts/dev-local.sh --status  # what was collected, then the M0 readout
 ambitd report -config <config>   # M0 criteria from the spool: hook p99, loss, restarts, interesting fraction
+ambitd doctor -config <config>   # will ambitd hear from Claude Code? hooks, sandbox allowlist, OTel protocol, health
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
 make smoke   # end-to-end: inert responses, correct filtering, no leaks
@@ -184,7 +187,7 @@ sudo ./scripts/install-system.sh --uninstall                       # remove it; 
 make cross   # static binaries for darwin, linux and windows, arm64/amd64
 make fixtures # regenerate the Wazuh rule fixtures from the real pipeline
 make replay   # replay testdata/replay through the collector; precision, recall, R2 saturation
-make fuzz     # each fuzz target for FUZZTIME (default 30s): redactor, bash classifier, MCP relay, no cleartext to the SIEM
+make fuzz     # every fuzz target (17) for FUZZTIME, default 30s: parsers, equivalence, no cleartext to the SIEM
 ```
 
 ### Replay harness
@@ -204,6 +207,9 @@ same JSON Claude Code posts, optionally wrapped with ground truth and assertions
  "hostile": true, "expect": {"edge": true, "edge_class": "url", "edge_from": 3}}
 ```
 
+A step can also assert `"derived": [...]`, the kinds of event ambitd derived from it and sent to
+the SIEM (`session_mode`, `session_no_prompt`, `sandbox_denial`, `fp_sighting`); `[]` asserts none.
+
 `hostile` is ground truth about the *action*: would an analyst want it paged. It is not
 "this came from untrusted input", because docs/03 names an agent summarizing a page and
 carrying its URLs across as a false positive, and following a link is the same mechanism. An
@@ -222,7 +228,7 @@ make replay                                   # the corpus, human-readable
 A gate on a metric the corpus cannot compute fails rather than passes. `go test ./...` runs
 the same corpus as a regression suite.
 
-**The starter corpus is 33 hand-written scenarios. Its numbers describe those scenarios and
+**The starter corpus is 35 hand-written scenarios. Its numbers describe those scenarios and
 nothing else**, and say nothing about precision on real traffic: it was written alongside the
 engine, by the same author, so it tests what that author thought of. It exists to pin behavior,
 include attacks adapted to defeat the engine (a paraphrased destination, a poisoned instruction

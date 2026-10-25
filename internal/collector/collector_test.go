@@ -58,13 +58,13 @@ func (m *memSink) decode(t *testing.T, i int) map[string]any {
 	return out
 }
 
-func newTestCollector(t *testing.T) (*Collector, *memSink, *memSink) {
+func newTestCollector(t testing.TB) (*Collector, *memSink, *memSink) {
 	t.Helper()
 	return newTestCollectorWith(t, nil)
 }
 
 // newTestCollectorWith is newTestCollector with a chance to change the config first.
-func newTestCollectorWith(t *testing.T, mut func(*config.Config)) (*Collector, *memSink, *memSink) {
+func newTestCollectorWith(t testing.TB, mut func(*config.Config)) (*Collector, *memSink, *memSink) {
 	t.Helper()
 	cfg := config.Default()
 	cfg.Home = "/home/dev"

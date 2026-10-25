@@ -64,6 +64,7 @@ type Summary struct {
 
 	MinConfidence float64               `json:"min_confidence"`
 	Confusion     Confusion             `json:"confusion"`
+	AnySignal     Confusion             `json:"any_signal"`
 	ByClass       map[string]ClassCount `json:"by_class"`
 	Sweep         []SweepPoint          `json:"sweep"`
 
@@ -80,6 +81,7 @@ type Summary struct {
 
 	Handled      int64               `json:"handled"`
 	Crossed      int64               `json:"crossed"`
+	Derived      int64               `json:"derived"`
 	CrossReasons map[string]int64    `json:"cross_reasons"`
 	Provenance   collector.ProvStats `json:"provenance"`
 }
@@ -148,6 +150,7 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 		}
 		s.Handled += r.Stats.Handled
 		s.Crossed += r.Stats.Crossed
+		s.Derived += r.Stats.Derived
 		for k, v := range r.Stats.CrossReasons {
 			s.CrossReasons[k] += v
 		}
@@ -167,6 +170,7 @@ func Summarize(results []*Result, minConfidence float64) Summary {
 	}
 
 	s.Confusion = confuse(evaluated, minConfidence)
+	s.AnySignal = confuseBy(evaluated, func(st StepResult) bool { return anySignal(st, minConfidence) })
 	for _, st := range evaluated {
 		if st.Edges == 0 || st.EdgeConfidence < minConfidence {
 			continue
@@ -298,9 +302,33 @@ func tally(c *Confusion, positive, truth bool) {
 }
 
 func confuse(steps []StepResult, floor float64) Confusion {
+	return confuseBy(steps, func(st StepResult) bool { return st.Edges > 0 && st.EdgeConfidence >= floor })
+}
+
+// anySignal is whether anything ambitd produces for an action would put it in front of an analyst: a
+// provenance edge, a shadow gate verdict that would block (deny or ask) under either scoping, or a
+// session_no_prompt derived from it.
+func anySignal(st StepResult, floor float64) bool {
+	if st.Edges > 0 && st.EdgeConfidence >= floor {
+		return true
+	}
+	for _, d := range []event.Decision{st.Decision, st.TurnDecision} {
+		if d == event.DecisionDeny || d == event.DecisionAsk {
+			return true
+		}
+	}
+	for _, k := range st.Derived {
+		if k == string(event.KindSessionNoPrompt) {
+			return true
+		}
+	}
+	return false
+}
+
+func confuseBy(steps []StepResult, positiveFn func(StepResult) bool) Confusion {
 	var c Confusion
 	for _, st := range steps {
-		positive := st.Edges > 0 && st.EdgeConfidence >= floor
+		positive := positiveFn(st)
 		hostile := st.Hostile != nil && *st.Hostile
 		switch {
 		case positive && hostile:
@@ -453,6 +481,13 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 	r, rok := c.Recall()
 	f, fok := c.FPR()
 	fmt.Fprintf(w, "  precision %s   recall %s   false-positive rate %s\n", fmtRatio(p, pok), fmtRatio(r, rok), fmtRatio(f, fok))
+	if a := s.AnySignal; a != (Confusion{}) {
+		ap, apok := a.Precision()
+		ar, arok := a.Recall()
+		af, afok := a.FPR()
+		fmt.Fprintf(w, "  any signal (edge, a blocking shadow verdict, or session_no_prompt): TP %d  FP %d  FN %d  TN %d  precision %s  recall %s  fpr %s\n",
+			a.TP, a.FP, a.FN, a.TN, fmtRatio(ap, apok), fmtRatio(ar, arok), fmtRatio(af, afok))
+	}
 	if len(s.ByClass) > 0 {
 		var parts []string
 		for _, k := range sortedKeys(s.ByClass) {
@@ -482,7 +517,7 @@ func WriteText(w io.Writer, results []*Result, s Summary, verbose bool) {
 	}
 	fmt.Fprint(w, "\n")
 
-	fmt.Fprintf(w, "\ncollection (a corpus is dense with events built to be interesting, so this fraction is NOT\ncomparable to the M0 interesting-fraction estimate from a real cohort)\n  handled %d, crossed %d (%s)\n", s.Handled, s.Crossed, pct(s.Crossed, s.Handled))
+	fmt.Fprintf(w, "\ncollection (a corpus is dense with events built to be interesting, so this fraction is NOT\ncomparable to the M0 interesting-fraction estimate from a real cohort)\n  handled %d, crossed %d (%s), plus %d events ambitd derived (session_mode, fp_sighting and the like)\n", s.Handled, s.Crossed, pct(s.Crossed, s.Handled), s.Derived)
 	if len(s.CrossReasons) > 0 {
 		var parts []string
 		for _, k := range sortedKeys(s.CrossReasons) {
@@ -576,6 +611,9 @@ func writeSteps(w io.Writer, r *Result, verbose bool) {
 		line := fmt.Sprintf("      step %-2d (line %d) %-18s R2 %-3s", st.N, st.Line, kindName(st), orDash(st.R2))
 		if st.Edges > 0 {
 			line += fmt.Sprintf(" edge %s %.2f <- step %d", st.EdgeClass, st.EdgeConfidence, st.EdgeFrom)
+		}
+		if len(st.Derived) > 0 {
+			line += " +" + strings.Join(st.Derived, " +")
 		}
 		if st.Crossed {
 			line += " [crossed]"

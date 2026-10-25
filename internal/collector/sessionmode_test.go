@@ -107,3 +107,27 @@ func TestSessionModeSurvivesARefusalAfterALaterChange(t *testing.T) {
 		t.Errorf("modeSent = %q: undoing an older send must not erase a newer one", st.modeSent)
 	}
 }
+
+func TestDerivedEventsAreCountedApartFromCrossed(t *testing.T) {
+	c, _, _ := newTestCollector(t)
+	c.Handle(start("s1", "startup"))
+	c.Handle(readCall("s1", "bypassPermissions", "t1"))
+	c.Handle(denied("s1"))
+
+	st := c.Stats()
+	if st.Crossed > st.Handled {
+		t.Errorf("crossed %d > handled %d: derived events must not count as crossed", st.Crossed, st.Handled)
+	}
+	if st.Derived < 3 {
+		t.Errorf("derived = %d, want at least 3 (session_mode, session_no_prompt, sandbox_denial)", st.Derived)
+	}
+}
+
+func TestRefusedDerivedEventIsNotCounted(t *testing.T) {
+	events := &refusable{memSink: &memSink{}, refuse: true}
+	c := newCollectorWithEventsSink(t, events)
+	c.Handle(modePrompt("s1", "bypassPermissions"))
+	if d := c.Stats().Derived; d != 0 {
+		t.Errorf("derived = %d after the sink refused everything, want 0", d)
+	}
+}

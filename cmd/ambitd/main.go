@@ -17,6 +17,7 @@ import (
 
 	"github.com/abijit2626/ambit/internal/collector"
 	"github.com/abijit2626/ambit/internal/config"
+	"github.com/abijit2626/ambit/internal/doctor"
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/hook"
@@ -35,6 +36,9 @@ func main() {
 	// deliver to hooks of type http. See internal/hookfwd.
 	if len(os.Args) > 1 && os.Args[1] == "hook-forward" {
 		os.Exit(hookfwd.Main(os.Args[2:], os.Stdin, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		os.Exit(doctor.Main(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "report" {
 		os.Exit(m0report.Main(os.Args[2:], os.Stdout, os.Stderr))
@@ -312,6 +316,7 @@ func (h *heartbeat) emit(final bool) {
 			Final:   final,
 			Handled: st.Handled,
 			Crossed: st.Crossed,
+			Derived: st.Derived,
 
 			ToolCalls:   st.HookToolCalls,
 			ToolCrossed: st.HookToolCrossed,

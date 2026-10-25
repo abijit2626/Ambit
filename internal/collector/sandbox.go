@@ -67,7 +67,7 @@ func cleanOp(op string) string {
 // emitSandboxDenial sends a sandbox_denial event for a failed or finished tool call whose output carries a
 // <sandbox_violations> block. It is not retried if the sink refuses it: the tool event itself is in the
 // spool with the block in its error.
-func (c *Collector) emitSandboxDenial(p *hook.Payload, e *event.Event) {
+func (c *Collector) emitSandboxDenial(st *sessionState, p *hook.Payload, e *event.Event) {
 	if e.Kind != event.KindToolFail && e.Kind != event.KindToolPost {
 		return
 	}
@@ -92,12 +92,6 @@ func (c *Collector) emitSandboxDenial(p *hook.Payload, e *event.Event) {
 		}
 	}
 
-	c.mu.Lock()
-	st := c.sessions[p.SessionID]
-	c.mu.Unlock()
-	if st == nil {
-		return
-	}
 	n := &event.Event{
 		EventID:    newEventID(),
 		TS:         e.TS,

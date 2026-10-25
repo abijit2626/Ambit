@@ -262,6 +262,11 @@ do_status() {
     echo
     "$BIN_PATH" report -config "$CONFIG" || echo "ambitd report failed" >&2
   fi
+  if [ -x "$BIN_PATH" ]; then
+    echo
+    echo "(doctor runs as $(id -un) here; run 'ambitd doctor' as each developer to read their own settings too)"
+    "$BIN_PATH" doctor -config "$CONFIG" || echo "ambitd doctor found a problem (above)" >&2
+  fi
 }
 
 mode=install bin="" purge=0
