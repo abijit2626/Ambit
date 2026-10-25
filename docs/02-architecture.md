@@ -525,16 +525,24 @@ detection latency, not developer throughput.
 | Async detectors (goal drift) | seconds | Advisory only; never gates inline |
 | Wazuh agent → manager | minutes | Wazuh agent buffers; `ambitd` rotates `events.jsonl` with a bounded cap |
 
-**Measured, and where the code differs from the table.** `PostToolUse` ingest is not yet
-fire-and-forget: `ambitd` fingerprints the tool result before it answers the hook, so the
-response waits on it. `BenchmarkHandleByKind` (`internal/collector`, one core of a cloud VM)
-measured a prompt at 7 µs, a `Read` at 17 µs, a Bash call at 52 µs, and a `WebFetch` result
-of 4 KB of link-dense documentation at 0.93 ms, down from 4.2 ms after redaction learned to skip
-patterns whose literals are absent and feature extraction learned to run per word. Cost grows
-with the result, at roughly 0.2 ms per KB of such text, so a 100 KB page holds its response for
-about 20 ms. Moving ingest off the response path keeps the table's promise, but it needs a
-per-session order so a following `PreToolUse` still sees the ingest it should match. That is
-an open decision, not a tuning knob.
+**Measured.** `BenchmarkHandleByKind` (`internal/collector`, one core of a cloud VM) measured the
+work behind a hook at 7 µs for a prompt, 17 µs for a `Read`, 52 µs for a Bash call, and 0.93 ms for
+a `WebFetch` result of 4 KB of link-dense documentation (4.2 ms before redaction and feature
+extraction learned to skip work they cannot need). Cost grows with the result, at roughly 0.2 ms
+per KB of such text.
+
+**How the response is kept off that work.** The hook answers first, and the payload is then handed
+to the collector on a queue for its session. Payloads of one session are handled one at a time, in
+arrival order, so a `PreToolUse` that follows a `PostToolUse` of the same session sees what that
+`PostToolUse` ingested; different sessions run in parallel. A session may have 1024 payloads
+waiting; more are dropped and counted as lost in the health event, rather than holding the agent.
+On shutdown `ambitd` waits up to ten seconds for accepted payloads to be handled before it closes
+its sinks. `ambitd report`'s hook latency therefore measures the response (parsing and the
+decision), which is what the 5 ms budget is about, and not the ingest behind it.
+
+The residual cost is what it is by design: an accepted payload may still be unhandled for a short
+time, so the spool can trail the response by milliseconds, and a crash in that window loses what
+was waiting. That window is what the drop counter and the crash record in `ambitd.state` report.
 
 **Fail policy on `ambitd` unavailability.** Split by action class, not global:
 
