@@ -6,7 +6,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BIN_PATH=/usr/local/bin/ambitd
 BUNDLE="$ROOT/deploy/claude-code/managed-settings.m0.json"
 
-EARLIER_BUNDLES="44fccfc3cec5e1b35c32c51d7a676ca9214eb15b3fe3099cd5298f2a28a56ed5"
+EARLIER_BUNDLES="44fccfc3cec5e1b35c32c51d7a676ca9214eb15b3fe3099cd5298f2a28a56ed5 75c7221167965f343ae3208ed3deae20dda1bdccef28ee39fc096e871ba22d7c"
 
 case "$(uname -s)" in
   Linux)

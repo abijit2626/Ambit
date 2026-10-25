@@ -466,8 +466,9 @@ team executes a runbook against a sample alert.
   nothing.** Claude Code sends `http` hooks through the sandbox's network proxy, and the proxy
   refuses a host that is not in `sandbox.network.allowedDomains` with a 403 (observed on
   v2.1.310 under `claude -p`; the `SessionStart` command hook still arrived). Allowing
-  `127.0.0.1` fixes delivery and lets sandboxed commands reach local ports. The M0 bundle sets no
-  sandbox key; the enforcement bundle in [docs/02](docs/02-architecture.md) allows it. See
+  `127.0.0.1` fixes delivery and lets sandboxed commands reach local ports. The M0 managed bundle
+  now carries that one entry, so machines set up with `install-system` get delivery without
+  anything more; `dev-local` and any other setup still need it, and `ambitd doctor` checks. See
   [docs/06-cohort-checklist.md](docs/06-cohort-checklist.md) blocker 7.
 - **Wazuh 4.x only.** Wazuh 5.x has no mechanism for the `frequency`, `timeframe`,
   `same_*` and `if_matched_sid` primitives that D2, D10's tripwire and D11 depend on,
