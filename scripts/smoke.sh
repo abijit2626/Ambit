@@ -59,6 +59,11 @@ if ! grep -q '"kind":"sandbox_denial"' "$D/events.jsonl"; then
   fail=1
 fi
 
+if ! grep '"final"\|"kind":"ambitd_health"' "$D/events.jsonl" | tail -1 | grep -q '"health_hook_p99_us":'; then
+  echo "FAIL: the final heartbeat did not carry the hook latency report to the SIEM"
+  fail=1
+fi
+
 if grep -q '"tool_use_id":"t1"' "$D/events.jsonl"; then
   echo "FAIL: an ordinary workdir read crossed to the SIEM sink"
   fail=1

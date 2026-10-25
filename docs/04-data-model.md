@@ -102,8 +102,10 @@ spools.
 
 ### The health event in the spool
 
-`ambitd_health` carries more in the spool than crosses to Wazuh (which gets only
-`health_status`, `health_queue_depth` and `health_dropped_events`). Every counter is cumulative
+`ambitd_health` carries more in the spool than crosses to Wazuh (which gets
+`health_status`, `health_queue_depth` and `health_dropped_events`, plus `health_hook_p99_us`,
+`health_hook_over_budget` and `health_hook_slow` on one heartbeat an hour and on the final one,
+marked `latency_report` in the spool; rules 100315 and 100316 turn those into a fleet latency view). Every counter is cumulative
 for the run that wrote it, so `ambitd report` keeps each run's last health event and sums
 across runs, and a final one is written on a clean shutdown.
 
@@ -119,7 +121,8 @@ across runs, and a final one is written on a clean shutdown.
   "hook_latency": { "count": 912, "over_budget": 0, "budget_us": 5000, "max_us": 840,
                     "p50_us": 250, "p95_us": 500, "p99_us": 1000,
                     "buckets": [ { "le_us": 250, "n": 600 }, "..." ], "overflow": 0 },
-  "prev_run": { "run_id": "...", "stop": "unclean", "last_heartbeat": "...", "down_sec": 480 }
+  "prev_run": { "run_id": "...", "stop": "unclean", "last_heartbeat": "...", "down_sec": 480 },
+  "latency_report": true                // hourly and on the final event: hook latency crosses to Wazuh
 }
 ```
 
@@ -213,8 +216,8 @@ and 25–31 for `session_start`, `config_change` and `ambitd_health`. An earlier
 of this document estimated 37; that was wrong, and it was wrong in the direction of
 under-counting. The real ceiling matters less than it looked, though: 50 is far under
 the 256 default for `decoder_order_size`, so the budget enforced in tests is 55 with a
-72-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
-added two).
+75-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
+added two, 72 until the hourly hook latency report added three).
 
 Two things keep the count honest. A single event never carries the tool, config and
 health blocks together, and a tool event never carries both the MCP and Bash blocks —
