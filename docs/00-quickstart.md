@@ -40,9 +40,10 @@ If something seems off:
 ~/.ambit/ambitd report -config ~/.ambit/config.json   # latency, loss, restarts, what would go to Wazuh
 ```
 
-One thing to know: if you run Claude Code with its sandbox on, add `127.0.0.1` to
+One thing to know: if you run Claude Code with its sandbox on, `127.0.0.1` has to be in
 `sandbox.network.allowedDomains`, or the sandbox refuses the hooks and ambitd hears almost
-nothing. `ambitd doctor` checks this.
+nothing. Machines set up with `install-system` get that entry from the managed bundle; the
+`dev-local` setup on your own machine does not, so add it there. `ambitd doctor` checks this.
 
 ## Roll it out to a team
 

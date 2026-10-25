@@ -25,11 +25,12 @@ $TaskPath = '\ambit\'
 $Icacls   = Join-Path $env:SystemRoot 'System32\icacls.exe'
 $Cmd      = Join-Path $env:SystemRoot 'System32\cmd.exe'
 
-# SHA-256 of the one bundle earlier versions of this installer shipped, which registered
-# SessionStart as an http hook. Claude Code does not deliver that event to an http hook, so a
-# file with exactly this content is ours and safe to upgrade; anything else may be an
+# SHA-256 of the bundles earlier versions of this installer shipped. The first registered
+# SessionStart as an http hook, which Claude Code does not deliver; the second is the bundle
+# before the 127.0.0.1 sandbox entry, which is the same as the current one minus that entry. A
+# file with exactly one of these contents is ours and safe to upgrade; anything else may be an
 # organization's own policy and is left alone.
-$EarlierBundles = @('44FCCFC3CEC5E1B35C32C51D7A676CA9214EB15B3FE3099CD5298F2A28A56ED5')
+$EarlierBundles = @('44FCCFC3CEC5E1B35C32C51D7A676CA9214EB15B3FE3099CD5298F2A28A56ED5', '924ED19E694628DDDD602D982FE6B5C5DFED88ACE7BA7D903B5405E879C49F44')
 
 $SidSystem = 'S-1-5-18'
 $SidAdmins = 'S-1-5-32-544'
