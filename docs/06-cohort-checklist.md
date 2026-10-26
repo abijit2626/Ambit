@@ -161,6 +161,15 @@ Each one will otherwise cost the cohort a week to discover.
    it prints nothing for a line that matches, and without it the result goes to stderr, so a
    loop built on `-q` reads as a manager where nothing fires.
 
+   `sudo ./scripts/verify-manager.sh` does this comparison for you. It feeds each fixture that
+   has a `.winners` file to one `wazuh-logtest` process and compares the rule that fired on every
+   event with the recorded answer, so a difference is reported as "line N: expected X, manager
+   said Y". It also checks that the rule files on the manager are byte-for-byte the repository's,
+   that `json` matched on every event, and that the manager log has no `Too many fields`. Its
+   tests run against a stand-in for `wazuh-logtest` that copies the output format
+   `scripts/record-winners.sh` already reads; it has not been run against a real manager, so
+   treat a surprising result as possibly the script's before it is the rules'.
+
    Check that `json` is the matched decoder, that the D4/D5 rules named in
    `deploy/wazuh/README.md` fire (100231, 100232, 100234, 100236, 100237, 100239, 100241–100246),
    and that no D5 rule fires on the findings-free drift. Rules 100241–100247 match array

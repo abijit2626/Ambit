@@ -23,8 +23,8 @@ and say where in the item.
 
 - [ ] The three silent-failure behaviors: syscheck parent SIDs, the SCA parent SID, and how a
       `<field>` regex matches an array.
-- [ ] Every fixture through `wazuh-logtest`, using the loop in `deploy/wazuh/README.md` and not
-      `-q`.
+- [ ] Every fixture through `wazuh-logtest`: `sudo ./scripts/verify-manager.sh` on the manager
+      (tested against a stand-in, never against a real engine). Not `-q`.
 - [ ] Windows agent: FIM wildcard expansion, log rotation under `log_format json`, SCA `f:` and
       `c:` rules, and `whodata`.
 - [ ] `agents_disconnection_time` 15m, `agents_disconnection_alert_time` 5m, archiving off.
