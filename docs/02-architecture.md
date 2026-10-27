@@ -203,8 +203,10 @@ real server. It sees `tools/list` responses, call arguments, and results. Its jo
    make policy stricter.**
 
 **Implementation status.** Jobs 1, 2 and 4 are built: `cmd/mcp-interpose` wraps one
-server per `.mcp.json` entry, hashes each tool's name, description and input schema
-against an approved baseline (`internal/baseline`), scans the advertised text
+server per `.mcp.json` entry, either a command it runs over stdio or, with `-url`, a server it
+reaches over Streamable HTTP or HTTP+SSE while presenting stdio to Claude Code (so the entry
+keeps its key and tool identity, and the interposer lives exactly as long as the session),
+hashes each tool's name, description and input schema against an approved baseline (`internal/baseline`), scans the advertised text
 (`internal/toolscan`), and emits `mcp_list` events through `ambitd`. Job 3 — recording
 results as provenance ingest — is done on the hook path, by `internal/prov`, and
 deliberately not by the interposer. The reason is double counting: the hook path already

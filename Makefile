@@ -72,6 +72,7 @@ FUZZ_TARGETS := \
 	./internal/mcp:FuzzRelayIsByteExact \
 	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \
 	./internal/mcp:FuzzParseNeverPanics \
+	./internal/sse:FuzzReaderNeverPanics \
 	./internal/collector:FuzzSandboxDenialsStayClean \
 	./internal/collector:FuzzNoContentCrossesToTheSIEMInCleartext \
 	./internal/collector:FuzzHandleArbitraryHookJSON \
