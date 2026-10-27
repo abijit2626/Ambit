@@ -385,6 +385,17 @@ results can never contain text written by someone else. That is the label to get
 because only untrusted results feed provenance. `testdata/agentdojo/mcp-tool-labels.json`
 classifies AgentDojo's four suites and is what the measurements in docs/03 use.
 
+To start from a draft rather than a blank page, run a session through `mcp-interpose`, then
+`mcp-interpose -server NAME -suggest-labels`. It reads the recorded tools and prints a
+`mcp_tool_labels` fragment on stdout and its reasoning for every tool on stderr; it never
+writes your config. The draft is deliberately timid: every entry keeps `untrusted`, `read_only`
+is suggested only when the tool's name starts with a reading verb *and* the server's own
+`readOnlyHint` says so (and nothing marks it destructive), `sensitive` is added on a private-data
+word in the name or description, and a tool with no reason for an entry is left out and keeps the
+default. A server writes its own names, hints and descriptions, so a hostile one can ask for
+`read_only`; treat each one as a claim to check against what the tool does. The heuristics are
+untested against real servers' tool lists.
+
 Properties the tests enforce, each because getting it wrong is silent:
 
 - **`ambitd` is inert.** Every hook response is `{}`. An empty response means no

@@ -61,7 +61,18 @@ Each one will otherwise cost the cohort a week to discover.
    the daemon restarted between the stop and the binary copy; the installer now disables the task
    first, and that change is not yet run on a real machine. What is not verified: the restart on
    Linux or macOS, and the macOS installer. Kill `ambitd` on a test machine of each kind and
-   watch it come back before rolling out.
+   watch it come back before rolling out: `sudo ./scripts/verify-restart.sh` does that on Linux
+   and macOS. It sends SIGKILL, waits for a different `ambitd` process whose health endpoint
+   answers, and prints how long that took (`--timeout` sets the limit, 120 s by default). The
+   script itself is tested against a real `ambitd` under a shell loop that stands in for the
+   service manager, so what it does not yet show is `systemd` or `launchd` doing the restart:
+   that is what running it on a test machine is for. On Windows, run
+   `.\scripts\verify-restart.ps1` from an Administrator PowerShell: it ends `ambitd` with
+   `Stop-Process -Force` (not `Stop-ScheduledTask`, which would test something else) and times the
+   scheduled task's repeating trigger bringing it back, so expect up to a minute or two and not
+   seconds (`-Timeout` defaults to 150). Its logic is tested under PowerShell 7 on Linux against a
+   real `ambitd`; the Windows task scheduler has not been in the loop, and Windows PowerShell 5.1
+   has not run it.
 
 3. **Hook latency is measured inside the handler, in buckets.** `ambitd` times every `/hook`
    response and keeps a histogram (bucket bounds from 250 µs to 1 s, 5 ms among them), the count
@@ -155,6 +166,15 @@ Each one will otherwise cost the cohort a week to discover.
    it prints nothing for a line that matches, and without it the result goes to stderr, so a
    loop built on `-q` reads as a manager where nothing fires.
 
+   `sudo ./scripts/verify-manager.sh` does this comparison for you. It feeds each fixture that
+   has a `.winners` file to one `wazuh-logtest` process and compares the rule that fired on every
+   event with the recorded answer, so a difference is reported as "line N: expected X, manager
+   said Y". It also checks that the rule files on the manager are byte-for-byte the repository's,
+   that `json` matched on every event, and that the manager log has no `Too many fields`. Its
+   tests run against a stand-in for `wazuh-logtest` that copies the output format
+   `scripts/record-winners.sh` already reads; it has not been run against a real manager, so
+   treat a surprising result as possibly the script's before it is the rules'.
+
    Check that `json` is the matched decoder, that the D4/D5 rules named in
    `deploy/wazuh/README.md` fire (100231, 100232, 100234, 100236, 100237, 100239, 100241–100246),
    and that no D5 rule fires on the findings-free drift. Rules 100241–100247 match array
@@ -220,6 +240,15 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
 | Stopping the Wazuh agent fires rule 504 | Stop the agent | Rule 504 after `agents_disconnection_alert_time` |
 | Reverting a managed-settings key fires D12 | Edit a key the deployed SCA policy asserts, for example the hook URL (check 10005) | Rule 100270. Use the M0 policy (blocker 1): against the full one, this result would be buried in permanent failures |
 | Someone outside the team executes a runbook against a sample alert | `./scripts/runbook-rehearsal.sh -o <new dir>`, hand over `analyst/` only, collect `FEEDBACK.md` | They reach a decision using only the alert and the runbook, with no question to the team |
+
+To check the alert rows, start `sudo ./scripts/expect-alert.sh --rule 100314 --agent <agent name>`
+on the manager, then cause the condition (`--rule 100234` for D4, `100270` for D12, `504` for a
+stopped agent, and `--timeout` as long as the SCA scan interval for D7 and D12). It notes where
+`alerts.json` ends when it starts, so an earlier test's alert cannot pass this one, and a failure
+lists the other rules the manager did alert on, which separates "the rule did not fire" from "the
+manager saw nothing". It matches the `"rule":{..."id"}` and `"agent":{..."name"}` fields of Wazuh's
+`alerts.json` lines. Its tests use lines written to that layout, and no real `alerts.json` has
+been run through it; check one line of yours against it first.
 
 For the last row, the packet alerts are built offline. For a rehearsal that counts, produce the
 alert on the manager instead: feed the packet's `full_log` line to `wazuh-logtest`, and give the
