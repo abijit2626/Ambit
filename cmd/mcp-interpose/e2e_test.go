@@ -8,12 +8,16 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -265,5 +269,106 @@ func TestSuggestLabelsNeedsARecordedServerAndASingleAction(t *testing.T) {
 	both := runProc(t, nil, "interpose", "-server", "wiki", "-config", cfg, "-suggest-labels", "-approve")
 	if both.code != 2 {
 		t.Errorf("two actions exited %d, want 2: %s", both.code, both.stderr)
+	}
+}
+
+type httpMCPServer struct {
+	mu   sync.Mutex
+	auth []string
+}
+
+func (s *httpMCPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "no stream here", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.ID) == 0 {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	s.mu.Lock()
+	s.auth = append(s.auth, r.Header.Get("Authorization"))
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	switch req.Method {
+	case "initialize":
+		w.Header().Set("Mcp-Session-Id", "e2e")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","serverInfo":{"name":"wiki","version":"3.2.0"}}}`, req.ID)
+	case "tools/list":
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","description":"Search the wiki","inputSchema":{"type":"object"}},{"name":"publish","description":"Publish a page to the wiki","inputSchema":{"type":"object"}}]}}`, req.ID)
+	default:
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"done"}]}}`, req.ID)
+	}
+}
+
+func TestInterposingAnHTTPServer(t *testing.T) {
+	srv := &httpMCPServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	cfg := writeConfig(t)
+
+	via := runProc(t, []string{"AMBIT_E2E_TOKEN=Bearer e2e-secret"},
+		"interpose", "-server", "wiki", "-config", cfg, "-url", ts.URL+"/mcp?key=q-secret", "-header-env", "Authorization=AMBIT_E2E_TOKEN")
+	if via.code != 0 {
+		t.Fatalf("exited %d: %s", via.code, via.stderr)
+	}
+	// Requests after initialize are posted concurrently, so their answers may come back in any
+	// order, as JSON-RPC allows; the first line is always initialize's.
+	direct := runProc(t, nil, "fake-mcp-server")
+	want := strings.SplitAfter(string(direct.stdout), "\n")
+	got := strings.SplitAfter(string(via.stdout), "\n")
+	if len(got) == 0 || got[0] != want[0] {
+		t.Errorf("initialize's answer is not first: %q", via.stdout)
+	}
+	sort.Strings(want)
+	sort.Strings(got)
+	if !reflect.DeepEqual(want, got) {
+		t.Errorf("client stream differs from the stdio server's\n stdio: %q\n http:  %q", direct.stdout, via.stdout)
+	}
+	srv.mu.Lock()
+	auth := srv.auth
+	srv.mu.Unlock()
+	if len(auth) != 3 {
+		t.Fatalf("server answered %d requests, want 3", len(auth))
+	}
+	for _, a := range auth {
+		if a != "Bearer e2e-secret" {
+			t.Errorf("Authorization = %q, want the value from the environment", a)
+		}
+	}
+	for _, secret := range []string{"e2e-secret", "q-secret"} {
+		if strings.Contains(via.stderr, secret) {
+			t.Errorf("%s leaked onto stderr: %s", secret, via.stderr)
+		}
+	}
+
+	show := runProc(t, nil, "interpose", "-server", "wiki", "-config", cfg, "-show")
+	var rec struct {
+		Tools map[string]json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(show.stdout, &rec); err != nil || len(rec.Tools) != 2 {
+		t.Errorf("the baseline did not record the HTTP server's 2 tools: %v\n%s", err, show.stdout)
+	}
+}
+
+func TestHTTPFlagsAreChecked(t *testing.T) {
+	cfg := writeConfig(t)
+	for name, args := range map[string][]string{
+		"url and command":    {"-url", "http://127.0.0.1:1/mcp", "--", "true"},
+		"header without url": {"-header", "X-A: b", "--", "true"},
+		"unset header env":   {"-url", "http://127.0.0.1:1/mcp", "-header-env", "Authorization=AMBIT_E2E_UNSET"},
+		"malformed header":   {"-url", "http://127.0.0.1:1/mcp", "-header", "no colon"},
+		"credentials in url": {"-url", "https://user:pw@example.test/mcp"},
+		"not http":           {"-url", "ftp://example.test/mcp"},
+		"unknown transport":  {"-url", "http://127.0.0.1:1/mcp", "-transport", "websocket"},
+	} {
+		got := runProc(t, nil, append([]string{"interpose", "-server", "wiki", "-config", cfg}, args...)...)
+		if got.code != 2 {
+			t.Errorf("%s: exited %d, want 2: %s", name, got.code, got.stderr)
+		}
 	}
 }

@@ -155,7 +155,8 @@ internal/otlp/           OTLP/HTTP receiver (http/json, zero dependencies)
 internal/mcp/            MCP stdio framing, tool metadata, the canonical hash
 internal/toolscan/       D5: instruction-shaped metadata, cross-server references
 internal/baseline/       D4: the approved baseline and its state machine
-internal/interpose/      the passthrough, the analyzer, the loopback report
+internal/interpose/      the passthrough, the HTTP bridge, the analyzer, the loopback report
+internal/sse/            text/event-stream reader for MCP's HTTP transports
 internal/loopback/       one definition of the loopback-bind control
 internal/sink/           JSON-lines writer with rotation and gap markers
 internal/runstate/       ambitd.state: each run's last heartbeat and how it stopped
@@ -351,6 +352,35 @@ without their destructive and open-world hints:
 }
 ```
 
+A server reached over HTTP goes behind `mcp-interpose` the same way: Claude Code starts the
+interposer as a stdio server, and the interposer speaks MCP's Streamable HTTP transport, or with
+`-transport sse` the older HTTP+SSE one, to the real server. Replace the entry's `type` and
+`url` with a command, keep its key, and pass credentials through the environment with
+`-header-env Name=VARIABLE` so they stay out of process listings. `-header 'Name: value'` is
+for headers that are not secret.
+
+```jsonc
+{
+  "mcpServers": {
+    "wiki": {
+      "command": "mcp-interpose",
+      "args": ["-server", "wiki", "-url", "https://wiki.example.com/mcp",
+               "-header-env", "Authorization=WIKI_MCP_AUTH"],
+      "env": { "WIKI_MCP_AUTH": "Bearer ${WIKI_TOKEN}" }
+    }
+  }
+}
+```
+
+The bridge sends the session's `Mcp-Session-Id` and negotiated `MCP-Protocol-Version` on every
+request, holds the server's GET stream for list-change notifications, resumes a response stream
+the server closed early with `Last-Event-ID`, and ends the session with
+`DELETE` when Claude Code exits. A request the server refuses or never answers gets a JSON-RPC
+error rather than hanging the call. An HTTP+SSE server's POST endpoint must be on the same origin
+as its stream, so a hostile `endpoint` event cannot redirect messages and credentials elsewhere.
+Servers that need Claude Code's own OAuth sign-in are not covered: the bridge sends fixed headers
+and cannot run that flow.
+
 ```sh
 mcp-interpose -server github -show      # what the server has advertised so far
 mcp-interpose -server github -approve   # the explicit operator step D4 compares against
@@ -513,8 +543,10 @@ team executes a runbook against a sample alert.
   matches an array-valued field. Confirm them on the deployed version before relying on
   the rules that use them. The array case has since matched on one fixture; see
   [Observed in a first lab run](#observed-in-a-first-lab-run).
-- **MCP coverage is stdio only.** `mcp-interpose` is a stdio wrapper and does not cover
-  servers reached over HTTP/SSE. `mcp_list` events usually carry no session id, because
+- **MCP coverage stops at OAuth.** `mcp-interpose` wraps stdio servers and bridges to
+  servers reached over Streamable HTTP or HTTP+SSE with fixed headers, but a server that
+  needs Claude Code's OAuth sign-in cannot be interposed, and the bridge has only run against
+  test servers, not a real remote one. `mcp_list` events usually carry no session id, because
   MCP does not carry one.
 - **Native Windows has no OS sandbox.** Claude Code's sandbox runs on macOS, Linux and
   WSL2; on native Windows it runs commands unsandboxed, so detection is the only layer

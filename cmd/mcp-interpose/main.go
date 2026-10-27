@@ -7,6 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -48,7 +51,12 @@ func run() (int, error) {
 		suggest     = flag.Bool("suggest-labels", false, "draft mcp_tool_labels for -server from its recorded tools and exit; review before use")
 		showVersion = flag.Bool("version", false, "print version and exit")
 		verbose     = flag.Bool("v", false, "verbose logging on stderr")
+		upstream    = flag.String("url", "", "reach the server over HTTP at this URL instead of running a command")
+		transport   = flag.String("transport", "http", "with -url: http (Streamable HTTP) or sse (the 2024-11-05 HTTP+SSE transport)")
+		headers     headerFlags
 	)
+	flag.Var(headerValue{&headers, false}, "header", "with -url: a request header, as 'Name: value'; repeatable. Visible to anyone who can list processes")
+	flag.Var(headerValue{&headers, true}, "header-env", "with -url: a request header whose value is read from an environment variable, as 'Name=VAR'; repeatable")
 	flag.Parse()
 
 	if *showVersion {
@@ -86,8 +94,23 @@ func run() (int, error) {
 	}
 
 	args := flag.Args()
-	if len(args) == 0 {
-		return 2, errors.New("no server command given; put it after --, as in: -server github -- npx -y @modelcontextprotocol/server-github")
+	var bridge *interpose.Bridge
+	if *upstream != "" {
+		if len(args) > 0 {
+			return 2, errors.New("-url and a server command are two ways to reach a server; give one")
+		}
+		b, err := newBridge(*upstream, *transport, headers)
+		if err != nil {
+			return 2, err
+		}
+		bridge = b
+	} else {
+		if len(headers) > 0 {
+			return 2, errors.New("-header and -header-env apply only with -url")
+		}
+		if len(args) == 0 {
+			return 2, errors.New("no server command given; put it after --, as in: -server github -- npx -y @modelcontextprotocol/server-github, or give -url for an HTTP server")
+		}
 	}
 
 	var (
@@ -113,6 +136,51 @@ func run() (int, error) {
 		SessionID: resolveSessionID(*sessionID),
 	})
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var (
+		code    int
+		pathErr error
+	)
+	if bridge != nil {
+		code, pathErr = runBridge(ctx, bridge, analyzer, log, *serverName)
+	} else {
+		code, pathErr = runStdio(ctx, args, analyzer, log, *serverName, dir, client.URL())
+	}
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+	analyzer.Close(closeCtx)
+	cancel()
+
+	st := analyzer.Stats()
+	sent, dropped := client.Stats()
+	log.Debug("interposer stopped",
+		"server", *serverName, "listings", st.Listings, "calls", st.Calls,
+		"frames_dropped", st.FramesDropped, "frames_unparsed", st.FramesUnparsed,
+		"reports_sent", sent, "reports_dropped", dropped+st.ReportsDropped)
+	if dropped+st.ReportsDropped > 0 {
+
+		log.Warn("interposer reports were not delivered to ambitd",
+			"server", *serverName, "dropped", dropped+st.ReportsDropped, "endpoint", client.URL())
+	}
+	return code, pathErr
+}
+
+func runBridge(ctx context.Context, b *interpose.Bridge, analyzer *interpose.Analyzer, log *slog.Logger, server string) (int, error) {
+	b.FromClient = os.Stdin
+	b.ToClient = os.Stdout
+	b.Analyzer = analyzer
+	b.Logger = log
+	log.Debug("interposing", "server", server, "host", b.URL.Host, "transport", b.Transport)
+	err := b.Run(ctx)
+	if err == nil || errors.Is(err, context.Canceled) {
+		return 0, nil
+	}
+	return 1, err
+}
+
+func runStdio(ctx context.Context, args []string, analyzer *interpose.Analyzer, log *slog.Logger, server, dir, reportsTo string) (int, error) {
 	cmd := exec.Command(args[0], args[1:]...)
 
 	cmd.Stderr = os.Stderr
@@ -133,11 +201,8 @@ func run() (int, error) {
 		return 1, fmt.Errorf("start %s: %w", args[0], err)
 	}
 	log.Debug("interposing",
-		"server", *serverName, "command", args[0], "pid", cmd.Process.Pid,
-		"baselines", dir, "reports_to", client.URL())
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+		"server", server, "command", args[0], "pid", cmd.Process.Pid,
+		"baselines", dir, "reports_to", reportsTo)
 
 	exited := make(chan struct{})
 	go func() {
@@ -169,21 +234,6 @@ func run() (int, error) {
 	waitErr := cmd.Wait()
 	close(exited)
 
-	closeCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
-	analyzer.Close(closeCtx)
-	cancel()
-
-	st := analyzer.Stats()
-	sent, dropped := client.Stats()
-	log.Debug("interposer stopped",
-		"server", *serverName, "listings", st.Listings, "calls", st.Calls,
-		"frames_dropped", st.FramesDropped, "frames_unparsed", st.FramesUnparsed,
-		"reports_sent", sent, "reports_dropped", dropped+st.ReportsDropped)
-	if dropped+st.ReportsDropped > 0 {
-
-		log.Warn("interposer reports were not delivered to ambitd",
-			"server", *serverName, "dropped", dropped+st.ReportsDropped, "endpoint", client.URL())
-	}
 	if proxyErr != nil {
 		log.Debug("relay ended with error", "err", proxyErr)
 	}
@@ -196,6 +246,92 @@ func run() (int, error) {
 		return 1, fmt.Errorf("wrapped server: %w", waitErr)
 	}
 	return 0, nil
+}
+
+func newBridge(raw, transport string, headers headerFlags) (*interpose.Bridge, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("-url: %w", err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, errors.New("-url: want an http or https URL with a host")
+	}
+	if u.User != nil {
+		return nil, errors.New("-url: put credentials in -header-env, not in the URL, where they show in every log line and process listing")
+	}
+	t, err := interpose.ParseTransport(transport)
+	if err != nil {
+		return nil, fmt.Errorf("-transport: %w", err)
+	}
+	h, err := headers.resolve(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme == "http" && len(h) > 0 && !isLoopbackHost(u.Hostname()) {
+		fmt.Fprintf(os.Stderr, "mcp-interpose: warning: sending headers to %s over plain http\n", u.Host)
+	}
+	return &interpose.Bridge{URL: u, Transport: t, Header: h}, nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+type headerFlag struct {
+	raw     string
+	fromEnv bool
+}
+
+type headerFlags []headerFlag
+
+type headerValue struct {
+	list    *headerFlags
+	fromEnv bool
+}
+
+func (v headerValue) String() string { return "" }
+
+func (v headerValue) Set(s string) error {
+	*v.list = append(*v.list, headerFlag{raw: s, fromEnv: v.fromEnv})
+	return nil
+}
+
+// resolve turns the flags into headers. A -header-env naming an unset or empty variable is an
+// error rather than an empty header: the server would answer 401 to every request, and the
+// developer would see a broken server with nothing saying why.
+func (hs headerFlags) resolve(getenv func(string) string) (http.Header, error) {
+	out := http.Header{}
+	for _, h := range hs {
+		sep := ":"
+		if h.fromEnv {
+			sep = "="
+		}
+		name, value, ok := strings.Cut(h.raw, sep)
+		name = strings.TrimSpace(name)
+		if !ok || name == "" || strings.ContainsAny(name, " \t\r\n:") {
+			if h.fromEnv {
+				return nil, fmt.Errorf("-header-env %q: want Name=VARIABLE", h.raw)
+			}
+			return nil, fmt.Errorf("-header %q: want 'Name: value'", h.raw)
+		}
+		value = strings.TrimSpace(value)
+		if h.fromEnv {
+			v := getenv(value)
+			if v == "" {
+				return nil, fmt.Errorf("-header-env %s: environment variable %s is unset or empty", name, value)
+			}
+			value = v
+		}
+		if strings.ContainsAny(value, "\r\n") {
+			return nil, fmt.Errorf("header %s: the value contains a line break", name)
+		}
+		out.Add(name, value)
+	}
+	return out, nil
 }
 
 func adminMode(dir, server string, approve, revoke bool) (int, error) {

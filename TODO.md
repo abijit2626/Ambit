@@ -66,7 +66,10 @@ condition below. It has only been tested on lines written to `alerts.json`'s doc
 - [ ] D9 per-endpoint egress destination profiling.
 - [ ] Try `mcp-interpose -suggest-labels` on the tool lists the cohort really uses, and tune its
       heuristics from what it gets wrong. The gate does nothing without labels.
-- [ ] MCP servers reached over HTTP/SSE; `mcp-interpose` covers stdio only.
+- [ ] `mcp-interpose -url` against a real remote MCP server, over both Streamable HTTP and
+      HTTP+SSE. It has only run against test servers in `internal/interpose/bridge_test.go`.
+- [ ] Remote MCP servers that need Claude Code's OAuth sign-in. The bridge sends fixed headers
+      and cannot run that flow.
 - [ ] A chosen and tested tenancy model for third-party monitoring.
 - [ ] M3 (enforce) and M5 (fleet correlation) are design only. They wait on evidence from the
       steps above, and enforcement begins at `ask`, not `deny`.
