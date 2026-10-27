@@ -10,6 +10,8 @@ and say where in the item.
 
 - [ ] Linux restart: `sudo ./scripts/verify-restart.sh` on a test machine under the installed
       systemd unit. The script is tested against a shell loop, not against systemd.
+- [ ] Windows restart: `.\scripts\verify-restart.ps1` from an Administrator PowerShell. Tested under
+      PowerShell 7 on Linux, never with the Windows task scheduler or Windows PowerShell 5.1.
 - [ ] macOS restart, and the macOS installer end to end. Neither has run on a real Mac.
 - [ ] Windows: the installer's new `ambitd stop` path, which has only run under PowerShell 7 on
       Linux.

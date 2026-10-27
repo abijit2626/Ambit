@@ -7,7 +7,7 @@ case "$(uname -s)" in
   Linux) CONFIG=/etc/ambit/config.json ;;
   Darwin) CONFIG=/usr/local/etc/ambit/config.json ;;
   *)
-    echo "unsupported OS $(uname -s); on Windows kill ambitd.exe by hand and watch Get-ScheduledTask" >&2
+    echo "unsupported OS $(uname -s); on Windows use scripts/verify-restart.ps1" >&2
     exit 1
     ;;
 esac
@@ -33,8 +33,7 @@ Passes when a different ambitd process is running and its health endpoint answer
 that comes back is not enough, because a daemon that starts and cannot serve is still
 unobserved. Exit status 0 on a pass, 1 on a failure, 2 on a usage error.
 
-Windows has no equivalent here: stop the ambitd.exe process by hand and watch the scheduled
-task, as the checklist describes.
+Windows: scripts/verify-restart.ps1.
 USAGE
   exit 2
 }

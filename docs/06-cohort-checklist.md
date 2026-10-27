@@ -66,8 +66,13 @@ Each one will otherwise cost the cohort a week to discover.
    answers, and prints how long that took (`--timeout` sets the limit, 120 s by default). The
    script itself is tested against a real `ambitd` under a shell loop that stands in for the
    service manager, so what it does not yet show is `systemd` or `launchd` doing the restart:
-   that is what running it on a test machine is for. On Windows, stop `ambitd.exe` by hand
-   and time the scheduled task.
+   that is what running it on a test machine is for. On Windows, run
+   `.\scripts\verify-restart.ps1` from an Administrator PowerShell: it ends `ambitd` with
+   `Stop-Process -Force` (not `Stop-ScheduledTask`, which would test something else) and times the
+   scheduled task's repeating trigger bringing it back, so expect up to a minute or two and not
+   seconds (`-Timeout` defaults to 150). Its logic is tested under PowerShell 7 on Linux against a
+   real `ambitd`; the Windows task scheduler has not been in the loop, and Windows PowerShell 5.1
+   has not run it.
 
 3. **Hook latency is measured inside the handler, in buckets.** `ambitd` times every `/hook`
    response and keeps a histogram (bucket bounds from 250 µs to 1 s, 5 ms among them), the count
