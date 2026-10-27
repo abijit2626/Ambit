@@ -16,6 +16,7 @@ import (
 	"github.com/abijit2626/ambit/internal/classify"
 	"github.com/abijit2626/ambit/internal/config"
 	"github.com/abijit2626/ambit/internal/drift"
+	"github.com/abijit2626/ambit/internal/egress"
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/filter"
@@ -208,6 +209,9 @@ type Collector struct {
 	ann   annotationCache
 
 	drift *drift.Scorer
+
+	egress     *egress.Profile
+	egressFull atomic.Bool
 }
 
 type Options struct {
@@ -219,6 +223,8 @@ type Options struct {
 	Version        string
 	// Drift is the goal-drift judge; nil leaves it off.
 	Drift *drift.Scorer
+	// Egress is the endpoint's destination profile; nil leaves D9's destination half off.
+	Egress *egress.Profile
 }
 
 func New(opts Options) *Collector {
@@ -255,6 +261,7 @@ func New(opts Options) *Collector {
 		crossReasons:   map[string]int64{},
 		webDomainTrust: webDomainTrust,
 		drift:          opts.Drift,
+		egress:         opts.Egress,
 	}
 }
 
@@ -273,6 +280,7 @@ func (c *Collector) Handle(p *hook.Payload) {
 	c.emitModeChange(st, e)
 	c.emitNoPrompt(st, p, e)
 	c.emitSandboxDenial(st, p, e)
+	c.emitEgress(st, p, e)
 	if sighting != nil && !c.emitDerived(sighting) {
 		// the events sink refused it (its queue is full): the session has not sent this fingerprint, so
 		// the next tool result that carries it must try again

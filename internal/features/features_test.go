@@ -194,6 +194,8 @@ func TestRegistrable(t *testing.T) {
 		"a.b.c.example.com":   "example.com",
 		"Example.COM":         "example.com",
 		"trailing.test.":      "trailing.test",
+		"10.0.3.4":            "10.0.3.4",
+		"2001:db8::1":         "2001:db8::1",
 	}
 	for in, want := range cases {
 		if got := Registrable(in); got != want {

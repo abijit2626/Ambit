@@ -40,6 +40,11 @@ const (
 	// KindSandboxDenial is ambitd's own event for a tool call that Claude Code's sandbox refused: the
 	// <sandbox_violations> block Claude Code appends to a failed command's error.
 	KindSandboxDenial Kind = "sandbox_denial"
+
+	// KindEgressDestination is ambitd's own event for the first contact this endpoint has made with a
+	// destination, by its egress profile. It is D9's destination half, and it is shadow: no rule alerts
+	// on it until a cohort has shown what a normal profile looks like.
+	KindEgressDestination Kind = "egress_destination"
 )
 
 const (
@@ -95,6 +100,7 @@ type Event struct {
 	Health     *Health     `json:"health,omitempty"`
 
 	Denial *SandboxDenial `json:"sandbox_denial,omitempty"`
+	Egress *Egress        `json:"egress,omitempty"`
 }
 
 type Endpoint struct {
@@ -353,4 +359,16 @@ type PrevRun struct {
 type SandboxDenial struct {
 	Ops           []string `json:"ops"`
 	TargetDigests []string `json:"target_digests"`
+}
+
+const (
+	EgressSourceBash    = "bash"
+	EgressSourceSandbox = "sandbox"
+)
+
+// Egress is a destination new to this endpoint's profile: the keyed digest of its registrable domain,
+// and whether a network command named it or the sandbox refused it.
+type Egress struct {
+	Source            string `json:"source"`
+	DestinationDigest string `json:"destination_digest"`
 }

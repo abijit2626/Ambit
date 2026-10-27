@@ -26,6 +26,7 @@ const (
 	ReasonNotableFP      = "notable_fingerprint"
 	ReasonSampled        = "sampled_remainder"
 	ReasonDriftAbove     = "drift_above_threshold"
+	ReasonEgressNew      = "egress_new_destination"
 	ReasonNotInteresting = ""
 )
 
@@ -94,6 +95,9 @@ func (f *Filter) Decide(e *event.Event) Verdict {
 		return Verdict{true, ReasonNotableFP}
 	case event.KindMCPList:
 		return f.decideMCPList(e)
+	case event.KindEgressDestination:
+		// One per destination new to the endpoint, so bounded by the profile; no rule alerts on it yet.
+		return Verdict{true, ReasonEgressNew}
 	}
 
 	if alwaysCross[e.Kind] {

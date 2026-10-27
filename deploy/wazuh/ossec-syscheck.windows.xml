@@ -101,6 +101,14 @@
     <ignore type="sregex">\\\.baseline-.*$</ignore>
     <ignore type="sregex">ambit\\.*\.jsonl$</ignore>
     <ignore type="sregex">ambit\\.*\.jsonl\.\d+$</ignore>
+    <!--
+      D9's destination profile gains a line each time the endpoint first contacts a
+      destination, which ambitd already reports as egress_destination. Watching it would
+      double every such event as a D6 file change. The cost: a rewrite of the profile
+      can hide a first contact from the shadow event, and no alert depends on that yet.
+      Revisit when egress_destination gets a rule. Unix does not watch this directory.
+    -->
+    <ignore type="sregex">ambit\\egress-profile\.txt$</ignore>
 
   </syscheck>
 </ossec_config>

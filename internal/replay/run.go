@@ -9,6 +9,7 @@ import (
 
 	"github.com/abijit2626/ambit/internal/collector"
 	"github.com/abijit2626/ambit/internal/config"
+	"github.com/abijit2626/ambit/internal/egress"
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 )
@@ -111,6 +112,7 @@ func Run(sc *Scenario, opts Options) *Result {
 		Extractor:      features.New(replayKey),
 		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Version:        "replay",
+		Egress:         egress.NewMemory(0),
 	})
 
 	res := &Result{Scenario: sc.Header, Path: sc.Path}

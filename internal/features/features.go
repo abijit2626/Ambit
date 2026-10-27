@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"math"
+	"net"
 	"regexp"
 	"sort"
 	"strings"
@@ -216,6 +217,11 @@ func hostFromURL(u string) string {
 
 func Registrable(host string) string {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	// An address has no registrable part: keeping the last two octets would make 10.0.3.4 and 1.2.3.4
+	// one destination.
+	if net.ParseIP(host) != nil {
+		return host
+	}
 	parts := strings.Split(host, ".")
 	if len(parts) <= 2 {
 		return host

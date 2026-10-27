@@ -92,6 +92,7 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 		{"config_change", configEvent()},
 		{"ambitd_health", healthEvent()},
 		{"sandbox_denial", sandboxDenialEvent()},
+		{"egress_destination", egressEvent()},
 	}
 
 	for _, c := range cases {
@@ -105,14 +106,15 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 	}
 }
 
-// The ceiling was 70 until sandbox_denial added its two fields, and 72 until the hourly hook latency
-// report added three. The union describes an event that cannot
+// The ceiling was 70 until sandbox_denial added its two fields, 72 until the hourly hook latency
+// report added three, and 75 until egress_destination added two. The union describes an event that cannot
 // exist (no event carries the tool, config, health and denial blocks together); what matters is that it
 // stays far under Wazuh's decoder limit of 256 and that each real kind stays within the budget above.
 func TestSIEMEventFieldCeiling(t *testing.T) {
-	const ceiling = 75
+	const ceiling = 77
 	union := fullEvent()
 	union.Denial = denialBlock()
+	union.Egress = &Egress{Source: EgressSourceBash, DestinationDigest: "hmac:d"}
 	n, keys := fieldCount(t, Flatten(union))
 	if n > ceiling {
 		t.Errorf("union of all blocks has %d fields, ceiling is %d: %v", n, ceiling, keys)
@@ -321,6 +323,14 @@ func healthEvent() *Event {
 	e.Provenance = Provenance{}
 	e.Policy = Policy{}
 	e.Scores = Scores{}
+	return e
+}
+
+func egressEvent() *Event {
+	e := sandboxDenialEvent()
+	e.Kind = KindEgressDestination
+	e.Denial = nil
+	e.Egress = &Egress{Source: EgressSourceSandbox, DestinationDigest: "hmac:d"}
 	return e
 }
 
