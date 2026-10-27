@@ -59,7 +59,8 @@ and say where in the item.
 - [ ] An emitter for `agent_entrypoint` (rule 100204 is inert). It needs a real Claude Code
       payload or attribute that carries it, which has not been found.
 - [ ] D9 per-endpoint egress destination profiling.
-- [ ] A way to label MCP tools, since the gate does nothing without labels.
+- [ ] Try `mcp-interpose -suggest-labels` on the tool lists the cohort really uses, and tune its
+      heuristics from what it gets wrong. The gate does nothing without labels.
 - [ ] MCP servers reached over HTTP/SSE; `mcp-interpose` covers stdio only.
 - [ ] A chosen and tested tenancy model for third-party monitoring.
 - [ ] M3 (enforce) and M5 (fleet correlation) are design only. They wait on evidence from the

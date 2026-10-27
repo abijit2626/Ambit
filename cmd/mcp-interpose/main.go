@@ -17,6 +17,7 @@ import (
 	"github.com/abijit2626/ambit/internal/baseline"
 	"github.com/abijit2626/ambit/internal/config"
 	"github.com/abijit2626/ambit/internal/interpose"
+	"github.com/abijit2626/ambit/internal/labelsuggest"
 )
 
 var version = "0.0.0-dev"
@@ -44,6 +45,7 @@ func run() (int, error) {
 		approve     = flag.Bool("approve", false, "approve the recorded surface for -server and exit")
 		revoke      = flag.Bool("revoke", false, "withdraw approval for -server and exit")
 		show        = flag.Bool("show", false, "print the recorded baseline for -server and exit")
+		suggest     = flag.Bool("suggest-labels", false, "draft mcp_tool_labels for -server from its recorded tools and exit; review before use")
 		showVersion = flag.Bool("version", false, "print version and exit")
 		verbose     = flag.Bool("v", false, "verbose logging on stderr")
 	)
@@ -73,7 +75,13 @@ func run() (int, error) {
 		dir = *baselineDir
 	}
 
-	if *approve || *revoke || *show {
+	if *approve || *revoke || *show || *suggest {
+		if n := countTrue(*approve, *revoke, *show, *suggest); n > 1 {
+			return 2, errors.New("-approve, -revoke, -show and -suggest-labels are separate actions; give one")
+		}
+		if *suggest {
+			return suggestMode(dir, *serverName)
+		}
 		return adminMode(dir, *serverName, *approve, *revoke)
 	}
 
@@ -221,6 +229,52 @@ func adminMode(dir, server string, approve, revoke bool) (int, error) {
 		}
 		return 0, printJSON(rec)
 	}
+}
+
+func countTrue(bs ...bool) int {
+	n := 0
+	for _, b := range bs {
+		if b {
+			n++
+		}
+	}
+	return n
+}
+
+// suggestMode prints a mcp_tool_labels fragment on stdout and the reasoning on stderr, so the
+// fragment can be redirected into a file while the review stays on screen.
+func suggestMode(dir, server string) (int, error) {
+	store, err := baseline.Open(dir)
+	if err != nil {
+		return 1, err
+	}
+	rec, err := store.Load(server)
+	if err != nil {
+		return 1, err
+	}
+	if len(rec.Tools) == 0 {
+		return 1, fmt.Errorf("nothing recorded for server %q yet; run a session first (store: %s)", server, store.Dir())
+	}
+	suggestions := labelsuggest.For(rec)
+
+	fmt.Fprintf(os.Stderr, "Draft labels for %q from %d recorded tools. Read this before using the fragment on stdout.\n\n", server, len(suggestions))
+	named := 0
+	for _, s := range suggestions {
+		verdict := "default (untrusted input, acts)"
+		if len(s.Labels) > 0 {
+			verdict = strings.Join(s.Labels, ", ")
+			named++
+		}
+		fmt.Fprintf(os.Stderr, "  %s -> %s\n", s.Tool, verdict)
+		for _, r := range s.Reasons {
+			fmt.Fprintf(os.Stderr, "      %s\n", r)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "\n%d of %d tools get an entry; the rest keep the default and are not in the fragment.\n", named, len(suggestions))
+	fmt.Fprintln(os.Stderr, "Every entry keeps \"untrusted\". read_only needs the name and the server's own hint to agree,")
+	fmt.Fprintln(os.Stderr, "and a server can lie in both, so check each read_only against what the tool really does.")
+	fmt.Fprintln(os.Stderr, "Merge the fragment into config.json by hand; this command never writes your config.")
+	return 0, printJSON(labelsuggest.Fragment(server, suggestions))
 }
 
 func printJSON(v any) error {
