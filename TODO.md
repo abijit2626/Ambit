@@ -44,6 +44,9 @@ and say where in the item.
 
 ## 4. M1: exercise the detectors
 
+Start `sudo ./scripts/expect-alert.sh --rule N --agent NAME` on the manager before causing each
+condition below. It has only been tested on lines written to `alerts.json`'s documented layout.
+
 - [ ] Every MCP server the cohort uses wrapped in `mcp-interpose`, reviewed and approved.
 - [ ] A mutated test server fires D4 (100234) in the same session.
 - [ ] Killing `ambitd` fires D7 (100314); stopping the Wazuh agent fires rule 504.

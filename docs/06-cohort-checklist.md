@@ -236,6 +236,15 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
 | Reverting a managed-settings key fires D12 | Edit a key the deployed SCA policy asserts, for example the hook URL (check 10005) | Rule 100270. Use the M0 policy (blocker 1): against the full one, this result would be buried in permanent failures |
 | Someone outside the team executes a runbook against a sample alert | `./scripts/runbook-rehearsal.sh -o <new dir>`, hand over `analyst/` only, collect `FEEDBACK.md` | They reach a decision using only the alert and the runbook, with no question to the team |
 
+To check the alert rows, start `sudo ./scripts/expect-alert.sh --rule 100314 --agent <agent name>`
+on the manager, then cause the condition (`--rule 100234` for D4, `100270` for D12, `504` for a
+stopped agent, and `--timeout` as long as the SCA scan interval for D7 and D12). It notes where
+`alerts.json` ends when it starts, so an earlier test's alert cannot pass this one, and a failure
+lists the other rules the manager did alert on, which separates "the rule did not fire" from "the
+manager saw nothing". It matches the `"rule":{..."id"}` and `"agent":{..."name"}` fields of Wazuh's
+`alerts.json` lines. Its tests use lines written to that layout, and no real `alerts.json` has
+been run through it; check one line of yours against it first.
+
 For the last row, the packet alerts are built offline. For a rehearsal that counts, produce the
 alert on the manager instead: feed the packet's `full_log` line to `wazuh-logtest`, and give the
 analyst what the manager actually reports. D11 and D12 have no offline packet (the manifest says
