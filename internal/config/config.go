@@ -36,6 +36,10 @@ type Config struct {
 
 	BaselineDir string `json:"baseline_dir"`
 
+	// EgressProfilePath is D9's per-endpoint destination profile. Empty means a file beside events_path,
+	// so a config that moves the spool moves the profile with it.
+	EgressProfilePath string `json:"egress_profile_path"`
+
 	FingerprintKeyPath string `json:"fingerprint_key_path"`
 
 	EndpointID string `json:"endpoint_id"`
@@ -161,6 +165,14 @@ func Default() Config {
 		LatencyBudgetMS:     5,
 		Enforce:             false,
 	}
+}
+
+// EgressProfile is where the egress destination profile lives.
+func (c Config) EgressProfile() string {
+	if c.EgressProfilePath != "" {
+		return c.EgressProfilePath
+	}
+	return filepath.Join(filepath.Dir(c.EventsPath), "egress-profile.txt")
 }
 
 func defaultPath(name string) string {

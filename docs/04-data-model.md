@@ -216,8 +216,9 @@ and 25–31 for `session_start`, `config_change` and `ambitd_health`. An earlier
 of this document estimated 37; that was wrong, and it was wrong in the direction of
 under-counting. The real ceiling matters less than it looked, though: 50 is far under
 the 256 default for `decoder_order_size`, so the budget enforced in tests is 55 with a
-75-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
-added two, 72 until the hourly hook latency report added three).
+77-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
+added two, 72 until the hourly hook latency report added three, 75 until
+`egress_destination` added two).
 
 Two things keep the count honest. A single event never carries the tool, config and
 health blocks together, and a tool event never carries both the MCP and Bash blocks —
@@ -284,6 +285,7 @@ Filtering happens in `ambitd`, by event kind:
 | `session_mode` | **yes** (SIEM only, not the spool) | D1 (rule 100200). ambitd's own event for a session's `permission_mode`, sent the first time it is known and each time it changes. `SessionStart` carries no mode, so for a live session this is its first prompt. Carries identity, session and `permission_mode`, and no tool, path or policy field. Rebuildable from the spool, where every event repeats the mode |
 | `session_no_prompt` | **yes** (SIEM only, not the spool) | D1 (rules 100206, 100207). ambitd's own event for a session that made a tool call before any prompt: ambitd saw it start (a `SessionStart` that is not from compaction) and its first `PreToolUse` came before any `UserPromptSubmit`. Once per session start. Carries identity, session, `permission_mode`, and the `tool_name` and `tool_use_id` of that call, and no path, command or policy field. Rebuildable from the spool by event order |
 | `sandbox_denial` | **yes** (SIEM only, not the spool) | D9 (rules 100304, 100305). ambitd's own event for a tool call Claude Code's sandbox refused, read from the last `<sandbox_violations>` block in the failed command's error (or its output). Carries identity, session, mode, `tool_name`, `tool_use_id`, `sandbox_denial_ops` (lowercase letters and hyphens only, else `other`) and `sandbox_denial_digests` (keyed digests of each host or path). Rebuildable from the spool's `tool_fail` |
+| `egress_destination` | **yes** (SIEM only, not the spool) | D9, shadow: no rule alerts on it. ambitd's own event for this endpoint's first contact with a destination: a registrable domain or address that a network-class Bash command names, or a host the sandbox refused. Carries identity, session, `tool_name`, `tool_use_id`, `egress_source` (`bash` or `sandbox`) and `egress_dest_digest`, the keyed digest of the registrable domain (an address is kept whole). One per destination per endpoint, bounded by the profile at `egress_profile_path` (default: `egress-profile.txt` beside `events_path`), which holds digests only and stops learning at 4096 destinations. |
 
 A `tool_pre` or `tool_post` event is **interesting** — and therefore crosses — when
 any of:

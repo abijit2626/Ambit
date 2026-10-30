@@ -10,7 +10,9 @@
   - **Volume and destination profiling is not a rule.** It needs a baseline per endpoint,
     which is a scheduled query over the indexer or the spool, not a threshold somebody
     picks. What a rule can do is the shape: network-capable commands, and the two
-    combinations that are suspicious on their own.
+    combinations that are suspicious on their own. ambitd now keeps the destination
+    profile itself and sends egress_destination on an endpoint's first contact with a
+    destination; it is shadow, so no rule here matches it yet.
   - **Sandbox allowlist denials are not in the schema at all.** Claude Code's sandbox
     denies an outbound connection and ambitd has no field to carry it — not an unpopulated
     field, an absent one. Adding it is an M2 schema change; until then, this detector sees

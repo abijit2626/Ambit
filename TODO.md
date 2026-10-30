@@ -63,7 +63,9 @@ condition below. It has only been tested on lines written to `alerts.json`'s doc
       `/clear` and long sessions.
 - [ ] An emitter for `agent_entrypoint` (rule 100204 is inert). It needs a real Claude Code
       payload or attribute that carries it, which has not been found.
-- [ ] D9 per-endpoint egress destination profiling.
+- [ ] D9 destination profiling on a cohort. `egress_destination` is built and shadow; read a few
+      days of it per endpoint before writing a rule, and decide how long a learning period
+      must be before a new destination is worth an alert. Volume profiling is not built.
 - [ ] Try `mcp-interpose -suggest-labels` on the tool lists the cohort really uses, and tune its
       heuristics from what it gets wrong. The gate does nothing without labels.
 - [ ] `mcp-interpose -url` against a real remote MCP server, over both Streamable HTTP and
