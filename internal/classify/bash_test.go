@@ -341,3 +341,22 @@ func TestNegationInsideABracketKeepsTheClass(t *testing.T) {
 		}
 	}
 }
+
+// The same holds for every other prefix the tokenizer leaves a bracket on: a wrapper or an assignment
+// run into "(" or "{" must not become the command.
+func TestPrefixInsideABracketKeepsTheClass(t *testing.T) {
+	for cmd, want := range map[string]string{
+		"(A= ac)":                       ClassFilesystem,
+		"(A=1 rm x)":                    ClassFilesystem,
+		"(sudo rm x)":                   ClassFilesystem,
+		"(env rm x)":                    ClassFilesystem,
+		"{nohup curl https://x.test; }": ClassNetwork,
+		"(time rm x)":                   ClassFilesystem,
+		"(exec curl https://x.test)":    ClassNetwork,
+		"({sudo git push)":              ClassVCSWrite,
+	} {
+		if _, got := Bash(cmd); got != want {
+			t.Errorf("Bash(%q) = %s, want %s", cmd, got, want)
+		}
+	}
+}
