@@ -160,6 +160,78 @@ func (e *Extractor) Extract(text string) *event.Features {
 	return f
 }
 
+// Destinations returns keyed digests of the places in text a network command can reach: the
+// registrable domain of each URL host and bare hostname, and each IPv4 address. It is Extract's domains
+// and addresses less two things: the domain of an email address, and a hostname-shaped word inside a
+// URL's path. "curl -d to=alice@example.org https://api.vendor.test/repo.git" contacts vendor.test, not
+// example.org or repo.git, though both remain domains the text carries for every other purpose.
+func (e *Extractor) Destinations(text string) []string {
+	out := map[string]bool{}
+	for _, w := range strings.FieldsFunc(text, isRegexpSpace) {
+		if strings.Contains(w, "://") {
+			for _, m := range reURL.FindAllString(w, -1) {
+				if h := hostFromURL(m); h != "" {
+					out[Registrable(h)] = true
+				}
+			}
+		}
+		if !strings.Contains(w, ".") {
+			continue
+		}
+		// The same pieces Extract scans, and the same matches, less any word that also sits in a URL's
+		// path in this word: a URL contributes its host only, and "repo.git" in its path is not somewhere
+		// it goes. The text is never rewritten and matches are only ever dropped, so every destination is
+		// one Extract also reports.
+		inPath := urlPathHosts(w)
+		hostWords := []string{w}
+		if strings.Contains(w, "@") {
+			hostWords = strings.FieldsFunc(stripEmails(w), isRegexpSpace)
+		}
+		for _, hw := range hostWords {
+			for _, h := range reHost.FindAllString(hw, -1) {
+				if !inPath[strings.ToLower(h)] && !looksLikeFilename(h) {
+					out[Registrable(h)] = true
+				}
+			}
+		}
+		urls := reURL.FindAllStringIndex(w, -1)
+		for _, m := range reIPv4.FindAllStringIndex(w, -1) {
+			if !insideAny(m[0], urls) {
+				out[w[m[0]:m[1]]] = true
+			}
+		}
+	}
+	return e.digestSet(out)
+}
+
+// urlPathHosts is the hostname-shaped words in the paths, queries and fragments of the URLs in w.
+func urlPathHosts(w string) map[string]bool {
+	if !strings.Contains(w, "://") {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, u := range reURL.FindAllString(w, -1) {
+		rest := u[strings.Index(u, "://")+3:]
+		i := strings.IndexAny(rest, "/?#")
+		if i < 0 {
+			continue
+		}
+		for _, h := range reHost.FindAllString(rest[i:], -1) {
+			out[strings.ToLower(h)] = true
+		}
+	}
+	return out
+}
+
+func insideAny(pos int, spans [][]int) bool {
+	for _, sp := range spans {
+		if pos >= sp[0] && pos < sp[1] {
+			return true
+		}
+	}
+	return false
+}
+
 func NotableFingerprint(f *event.Features) string {
 	if f == nil {
 		return ""

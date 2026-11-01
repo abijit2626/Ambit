@@ -23,13 +23,11 @@ func (c *Collector) emitEgress(st *sessionState, p *hook.Payload, e *event.Event
 		return
 	}
 	if e.Kind == event.KindToolPre && e.Tool.Bash != nil && classify.IsNetworkClass(e.Tool.Bash.CommandClass) {
-		if f := e.Tool.InputFeatures; f != nil {
-			for _, d := range f.Domains {
-				c.newDestination(st, e, event.EgressSourceBash, d)
-			}
-			for _, d := range f.IPs {
-				c.newDestination(st, e, event.EgressSourceBash, d)
-			}
+		// The same redacted text the input features came from, read for destinations only: an email
+		// address names a mailbox, not a host the command contacts.
+		clean, _ := c.red.Redact(renderInput(p))
+		for _, d := range c.ext.Destinations(clean) {
+			c.newDestination(st, e, event.EgressSourceBash, d)
 		}
 	}
 	for _, x := range toolDenials(p, e) {

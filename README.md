@@ -543,8 +543,9 @@ team executes a runbook against a sample alert.
   registrable domain or address a network command names or the sandbox refuses, as keyed
   digests in `egress_profile_path`, and sends an `egress_destination` event on first contact.
   Rule 100306 stores it at level 3 so a cohort can be reviewed on the manager; nothing pages on it
-  yet. Domains are read from the command text, so a host the command
-  builds at run time is missed and an email address in a request body counts as its domain.
+  yet. Hosts are read from the command text, so a host the command builds at run time is
+  missed. An email address in a request body, or a hostname-shaped word in a URL's path, is not
+  a destination.
   Volume is not profiled. The profile is outside FIM on Windows, where its directory is
   watched, so learning a destination is not also a D6 change.
 - **Two kinds of rule are inert and marked as such**, rather than shipped as if they worked:

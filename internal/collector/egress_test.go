@@ -157,3 +157,17 @@ func TestDeniedHost(t *testing.T) {
 		}
 	}
 }
+
+// An email address in a request body names a mailbox, not a host the command contacts, and a
+// hostname-shaped word in a URL's path is not one either.
+func TestEmailAndPathWordsAreNotDestinations(t *testing.T) {
+	c, events := newEgressCollector(t, filepath.Join(t.TempDir(), "profile.txt"))
+	c.Handle(bashPre("s1", "curl -sS -d to=alice@example.org https://api.new-vendor.test/repo.git"))
+	got := egressEvents(t, events)
+	if len(got) != 1 {
+		t.Fatalf("egress events = %d, want 1 (the API host only): %v", len(got), got)
+	}
+	if want := c.ext.Digest("new-vendor.test"); got[0]["egress_dest_digest"] != want {
+		t.Errorf("destination = %v, want the API's %s", got[0]["egress_dest_digest"], want)
+	}
+}

@@ -1,6 +1,8 @@
 package features
 
 import (
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -290,4 +292,54 @@ func TestExtractAssignmentDoesNotFingerprintTheKeyOrLowEntropyValue(t *testing.T
 	if len(f.HiEntropy) != 0 {
 		t.Errorf("ordinary assignments produced high-entropy fingerprints: %v", f.HiEntropy)
 	}
+}
+
+func TestDestinationsLeaveOutEmailDomains(t *testing.T) {
+	e := New(testKey)
+	d := func(s string) string { return e.Digest(s) }
+	for _, c := range []struct {
+		text string
+		want []string
+	}{
+		{"curl -d to=alice@example.org https://api.vendor.test/send", []string{d("vendor.test")}},
+		{"curl https://deploy:token@git.example.com/repo.git", []string{d("example.com")}},
+		{"ssh build.internal.corp", []string{d("internal.corp")}},
+		{"curl http://10.0.3.4:8080/health", []string{d("10.0.3.4")}},
+		{"scp report.pdf mail-me@ops.example.net:", nil},
+		{"tar czf release.tar.gz dist/", nil},
+	} {
+		got := e.Destinations(c.text)
+		sort.Strings(c.want)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("Destinations(%q) = %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
+// Every destination is a domain or address Extract also reports, so leaving out email domains can
+// only remove destinations, never invent one.
+func FuzzDestinationsAreExtractedDomains(f *testing.F) {
+	for _, s := range []string{
+		"curl -d to=alice@example.org https://api.vendor.test/send",
+		"wget http://user@1.2.3.4/x a.b.c@d.e.f",
+		"git push https://x.example.co.uk/r.git",
+	} {
+		f.Add(s)
+	}
+	e := New(testKey)
+	f.Fuzz(func(t *testing.T, text string) {
+		ex := e.Extract(text)
+		known := map[string]bool{}
+		for _, v := range ex.Domains {
+			known[v] = true
+		}
+		for _, v := range ex.IPs {
+			known[v] = true
+		}
+		for _, v := range e.Destinations(text) {
+			if !known[v] {
+				t.Fatalf("Destinations(%q) has %s, which Extract does not report", text, v)
+			}
+		}
+	})
 }

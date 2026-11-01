@@ -84,6 +84,7 @@ FUZZ_TARGETS := \
 	./internal/redact:FuzzRedactStripsADelimitedSecret \
 	./internal/redact:FuzzPrefilterChangesNothing \
 	./internal/features:FuzzPerWordExtractionChangesNothing \
+	./internal/features:FuzzDestinationsAreExtractedDomains \
 	./internal/classify:FuzzBashWrappingNeverLowersTheClass \
 	./internal/mcp:FuzzRelayIsByteExact \
 	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \

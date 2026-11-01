@@ -100,8 +100,8 @@ TODO.md section 3, in order:
    - no `Too many fields for JSON decoder` in the manager log
    - zero developer-visible change, confirmed by asking each volunteer
 4. **Read D9's shadow data.** How many `egress_destination` events per endpoint per day? How many in
-   the first week, against later weeks? Which were email domains from a request body, rather than
-   hosts? This is the input to decision 3 and to the first D9 rule.
+   the first week, against later weeks? Which were hosts nobody contacted, read from text that only
+   named them? This is the input to decision 3 and to the first D9 rule.
 5. **Record the cohort's MCP tool lists.** Run `ambitd doctor` in each project to confirm the
    servers are interposed. Then run `mcp-interpose -suggest-labels`. Add each server's tool list to
    `internal/labelsuggest/reference_test.go`, and correct the heuristics where they guess wrong.
