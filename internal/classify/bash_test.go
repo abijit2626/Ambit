@@ -324,3 +324,20 @@ func TestAWriteRedirectCountsPerSegment(t *testing.T) {
 		}
 	}
 }
+
+// Pipeline negation run into a bracket or the command word must not hide the command: CI's fuzzer found
+// "(! Cp)" classed other while "! Cp" is filesystem.
+func TestNegationInsideABracketKeepsTheClass(t *testing.T) {
+	for cmd, want := range map[string]string{
+		"(! cp a b)":                    ClassFilesystem,
+		"(!cp a b)":                     ClassFilesystem,
+		"!(cp a b)":                     ClassFilesystem,
+		"{ ! rm -rf x; }":               ClassFilesystem,
+		"(! curl -d @f https://x.test)": ClassNetwork,
+		"(!ls)":                         ClassReadOnly,
+	} {
+		if _, got := Bash(cmd); got != want {
+			t.Errorf("Bash(%q) = %s, want %s", cmd, got, want)
+		}
+	}
+}

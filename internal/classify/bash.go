@@ -385,7 +385,8 @@ func skipPrefix(tokens []string) int {
 		t := tokens[i]
 		switch {
 		case t == "&" || t == "sudo" || t == "env" || t == "nohup" || t == "exec" || t == "time":
-		case shellKeywords[t] || strings.Trim(t, "({") == "":
+		// A keyword or an opening bracket, alone or run together: "(", "{", "!", "(!".
+		case shellKeywords[strings.TrimLeft(t, "({")] || strings.Trim(t, "({") == "":
 		case envAssignment.MatchString(t):
 		default:
 			return i
@@ -624,7 +625,9 @@ func wslInner(args []string) (string, bool) {
 
 func baseName(tok string) string {
 
-	if t := strings.Trim(tok, "\"'(){}[]"); t != "" {
+	// A leading "!" is pipeline negation run into the word, as in "(!cp" or "!(cp"; it never names
+	// the command, and keeping it would let the negation hide the command from its class.
+	if t := strings.TrimRight(strings.TrimLeft(tok, "\"'(){}[]!"), "\"'(){}[]"); t != "" {
 		tok = t
 	}
 	tok = strings.ReplaceAll(tok, `\`, "/")
