@@ -67,7 +67,9 @@ condition below. It has only been tested on lines written to `alerts.json`'s doc
       days of it per endpoint before writing a rule, and decide how long a learning period
       must be before a new destination is worth an alert. Volume profiling is not built.
 - [ ] Try `mcp-interpose -suggest-labels` on the tool lists the cohort really uses, and tune its
-      heuristics from what it gets wrong. The gate does nothing without labels.
+      heuristics from what it gets wrong. The gate does nothing without labels. It is tested
+      against the reference MCP servers' tool names (`internal/labelsuggest/reference_test.go`);
+      add each cohort server's list there as it is recorded.
 - [ ] `mcp-interpose -url` against a real remote MCP server, over both Streamable HTTP and
       HTTP+SSE. It has only run against test servers in `internal/interpose/bridge_test.go`.
 - [ ] Remote MCP servers that need Claude Code's OAuth sign-in. The bridge sends fixed headers

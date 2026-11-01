@@ -43,13 +43,30 @@ func (s Suggestion) Relaxes() bool {
 	return false
 }
 
-var readVerbs = set("get", "list", "read", "search", "find", "fetch", "describe", "show", "view", "query", "lookup", "count", "check")
+var readVerbs = set("get", "list", "read", "search", "find", "describe", "show", "view", "query", "lookup", "count", "check")
 
-// A name containing any of these is not read-only whatever its prefix says: "get_and_delete".
+// A name containing any of these reaches an address the agent supplies. Fetching a URL only reads, but
+// the URL is a channel out: bit C is "state change or external communication", and a curl GET sets it
+// in Bash, so a tool that does the same is not suggested read_only either. "request" is not here:
+// "get_pull_request" reads.
+var reachWords = set("fetch", "download", "browse", "crawl", "scrape", "http", "https", "url",
+	"urls", "webhook", "curl", "wget", "ping")
+
+// A name containing any of these is not read-only whatever its prefix says: "get_and_delete". Adding a
+// word here can only keep a tool at the default. Words that are as often nouns ("type", "label",
+// "comment", "message", "order") are left out, because "get_label" reads.
 var actVerbs = set("set", "put", "post", "send", "write", "create", "update", "delete", "remove",
 	"add", "edit", "modify", "move", "rename", "run", "exec", "execute", "install", "upload",
 	"transfer", "pay", "publish", "push", "commit", "merge", "close", "open", "start", "stop",
-	"kill", "drop", "reset", "clear", "reply", "forward", "share", "invite", "grant", "revoke", "schedule", "cancel")
+	"kill", "drop", "reset", "clear", "reply", "forward", "share", "invite", "grant", "revoke", "schedule", "cancel",
+	"fix", "apply", "approve", "reject", "dismiss", "resolve", "assign", "unassign", "archive", "unarchive",
+	"restore", "sync", "import", "submit", "deploy", "trigger", "invoke", "navigate", "click", "fill",
+	"press", "enable", "disable", "lock", "unlock", "ban", "unban", "mute", "unmute", "follow", "unfollow",
+	"attach", "detach", "save", "store", "append", "insert", "replace", "patch", "rollback", "revert",
+	"restart", "reboot", "launch", "spawn", "terminate", "destroy", "purge", "wipe", "truncate", "overwrite",
+	"upsert", "sign", "mint", "swap", "buy", "sell", "refund", "withdraw", "deposit", "notify", "evaluate",
+	"eval", "checkout", "fork", "rebase", "pin", "unpin", "star", "unstar", "subscribe", "unsubscribe",
+	"register", "unregister", "authorize", "upgrade", "downgrade", "migrate", "provision", "scale")
 
 // Words in a tool's name that say it handles private data. Over-labelling here is the safe
 // direction: the label only adds a Rule-of-Two bit.
@@ -97,19 +114,35 @@ func words(name string) []string {
 
 func boolIs(p *bool, want bool) bool { return p != nil && *p == want }
 
+// withoutServerPrefix drops the server's own name from the front of a tool name, as many servers
+// write it ("slack_get_users" on the slack server), so the verb after it is the one judged. It only
+// moves which word is first; read_only still needs the server's readOnlyHint, and an acting word
+// anywhere in the name still blocks it. A name that is nothing but the server's name is kept.
+func withoutServerPrefix(ws, server []string) []string {
+	if len(server) == 0 || len(ws) <= len(server) {
+		return ws
+	}
+	for i := range server {
+		if ws[i] != server[i] {
+			return ws
+		}
+	}
+	return ws[len(server):]
+}
+
 // For returns one suggestion per tool in the record, sorted by tool name.
 func For(rec baseline.ServerRecord) []Suggestion {
 	out := make([]Suggestion, 0, len(rec.Tools))
 	for name, tr := range rec.Tools {
-		out = append(out, suggest(name, tr.Baseline))
+		out = append(out, suggest(rec.Server, name, tr.Baseline))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Tool < out[j].Tool })
 	return out
 }
 
-func suggest(name string, snap baseline.Snapshot) Suggestion {
+func suggest(server, name string, snap baseline.Snapshot) Suggestion {
 	s := Suggestion{Tool: name}
-	ws := words(name)
+	ws := withoutServerPrefix(words(name), words(server))
 	ann := snap.Annotations
 
 	sensitive := false
@@ -126,14 +159,18 @@ func suggest(name string, snap baseline.Snapshot) Suggestion {
 	}
 
 	readVerb := len(ws) > 0 && readVerbs[ws[0]]
-	actWord := ""
+	actWord, reachWord := "", ""
 	for _, w := range ws {
-		if actVerbs[w] {
+		if actWord == "" && actVerbs[w] {
 			actWord = w
-			break
+		}
+		if reachWord == "" && reachWords[w] {
+			reachWord = w
 		}
 	}
 	switch {
+	case reachWord != "":
+		s.Reasons = append(s.Reasons, "not read_only: the name contains \""+reachWord+"\", so the tool reaches an address the agent supplies, which is external communication (bit C) as a curl is")
 	case !readVerb:
 		s.Reasons = append(s.Reasons, "not read_only: the name does not start with a reading verb, so it is treated as acting")
 	case actWord != "":

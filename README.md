@@ -421,12 +421,15 @@ To start from a draft rather than a blank page, run a session through `mcp-inter
 `mcp-interpose -server NAME -suggest-labels`. It reads the recorded tools and prints a
 `mcp_tool_labels` fragment on stdout and its reasoning for every tool on stderr; it never
 writes your config. The draft is deliberately timid: every entry keeps `untrusted`, `read_only`
-is suggested only when the tool's name starts with a reading verb *and* the server's own
-`readOnlyHint` says so (and nothing marks it destructive), `sensitive` is added on a private-data
-word in the name or description, and a tool with no reason for an entry is left out and keeps the
-default. A server writes its own names, hints and descriptions, so a hostile one can ask for
-`read_only`; treat each one as a claim to check against what the tool does. The heuristics are
-untested against real servers' tool lists.
+is suggested only when the tool's name starts with a reading verb (after the server's own name, as
+in `slack_get_users`) *and* the server's own `readOnlyHint` says so, and nothing marks it
+destructive, names an acting verb, or says it reaches an address the agent supplies (`fetch`,
+`download`, `url`: a GET is still external communication, as a `curl` is). `sensitive` is added on a
+private-data word in the name or description, and a tool with no reason for an entry is left out and
+keeps the default. A server writes its own names, hints and descriptions, so a hostile one can ask
+for `read_only`; treat each one as a claim to check against what the tool does. The heuristics are
+tested against the tool names of the reference MCP servers, with every tool claiming
+`readOnlyHint`; they are not yet tested against a cohort's own servers.
 
 Properties the tests enforce, each because getting it wrong is silent:
 
