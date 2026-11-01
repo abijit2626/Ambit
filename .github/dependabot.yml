@@ -1,0 +1,29 @@
+# Dependency updates as pull requests, so a fix for a vulnerable module or action arrives without
+# anyone going looking. Every update still has to pass CI, which runs govulncheck and the full suite.
+#
+# Version updates are grouped per ecosystem into one weekly pull request, to keep review to one
+# sitting. Security updates are separate and immediate, but only once "Dependabot security updates"
+# is turned on in the repository's settings; this file cannot turn it on.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
