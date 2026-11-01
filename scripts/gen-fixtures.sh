@@ -239,5 +239,7 @@ grep -m1 -E '"kind":"session_no_prompt".*"permission_mode":"bypassPermissions"' 
 grep -m1 -E '"kind":"session_no_prompt".*"permission_mode":"default"' "$D/events.jsonl" >> "$OUT" || echo "  (no default session_no_prompt)" >&2
 # a refused outbound connection, in the error format Claude Code 2.1.310 sends: 100305
 grep -m1 -F '"kind":"sandbox_denial"' "$D/events.jsonl" >> "$OUT" || echo "  (no sandbox_denial)" >&2
+# an endpoint's first contact with a destination, D9's shadow profile: 100306
+grep -m1 -F '"kind":"egress_destination"' "$D/events.jsonl" >> "$OUT" || echo "  (no egress_destination)" >&2
 
 echo "wrote $(wc -l < "$OUT" | tr -d ' ') fixture lines to $OUT"

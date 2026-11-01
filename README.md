@@ -541,7 +541,8 @@ team executes a runbook against a sample alert.
 - **D9's destination profile is shadow and untested on a cohort.** ambitd records each
   registrable domain or address a network command names or the sandbox refuses, as keyed
   digests in `egress_profile_path`, and sends an `egress_destination` event on first contact.
-  No rule alerts on it yet. Domains are read from the command text, so a host the command
+  Rule 100306 stores it at level 3 so a cohort can be reviewed on the manager; nothing pages on it
+  yet. Domains are read from the command text, so a host the command
   builds at run time is missed and an email address in a request body counts as its domain.
   Volume is not profiled. The profile is outside FIM on Windows, where its directory is
   watched, so learning a destination is not also a D6 change.

@@ -2,6 +2,10 @@
 # fixture of the same name, one event per line, and this is the id of the rule that alerted on each
 # (- when no rule matched). Correlation rules show up here too. If you change a rule, re-record this
 # file the same way; TestWinnerModelAgreesWithWazuh compares the Go model against it.
+#
+# Exception, until it is re-recorded: line 55 (egress_destination, rule 100306) is the Go model's
+# answer, not wazuh-logtest's. It was added where no container runtime was available. Re-record
+# with: ./scripts/record-winners.sh events.sample, and delete this note.
 -
 -
 100201
@@ -56,3 +60,4 @@
 100316
 100330
 100331
+100306

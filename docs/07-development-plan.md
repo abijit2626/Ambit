@@ -47,18 +47,13 @@ Two branches touch the same part of a file, but in different hunks:
 
 These choices block later work. Each one lists its options.
 
-1. **Can anyone see `egress_destination` on the manager?** No rule matches it, and the manager keeps
-   only events a rule matches, because archiving is off by design
-   ([deploy/wazuh/README.md](../deploy/wazuh/README.md#do-not-enable-archiving)). So the shadow
-   event reaches Wazuh and is dropped there; it can only be read from each endpoint's
-   `events.jsonl`. The options:
-   - (a) A level-3 informational rule. It stores the event in the alerts index, it is never paged,
-     and its runbook says so.
-   - (b) Review on the endpoint only, per cohort member, during M0.
-
-   Option (a) makes the cohort review possible from one place. Option (b) keeps the manager quiet,
-   but it means pulling a file from every endpoint. The recommendation is (a), with the rule at the
-   same level as 100300, which already exists only to give context.
+1. **Can anyone see `egress_destination` on the manager?** *Decided: yes.* The manager keeps only
+   events a rule matches, because archiving is off by design
+   ([deploy/wazuh/README.md](../deploy/wazuh/README.md#do-not-enable-archiving)). So without a rule,
+   the shadow event reached Wazuh and was dropped there. Rule 100306 now stores it at level 3,
+   informational and never paged, so the cohort can be reviewed from one place. Its winner in
+   `events.sample.winners` is the Go model's answer until someone re-records it with
+   `wazuh-logtest`; this needs Docker (stage 3).
 2. **Should WebFetch and WebSearch feed the egress profile?** D9 profiles Bash network commands and
    sandbox denials, which were the two sources chosen. A WebFetch to a new host is also a first
    contact, but it never reaches the profile. Adding it is a small code change and a new
@@ -78,6 +73,7 @@ TODO.md sections 1 and 2 hold the detail. In order of what blocks the most:
 | --- | --- | --- |
 | Linux restart under systemd: `sudo ./scripts/verify-restart.sh` | Machine | The script passes on a test machine with the installed unit |
 | Every Wazuh fixture through `wazuh-logtest`: `sudo ./scripts/verify-manager.sh` | Machine | It passes on the manager, with no `-q` |
+| Rule 100306's winner recorded, not predicted: `./scripts/record-winners.sh events.sample` | Machine with Docker | `events.sample.winners` line 55 reads 100306 from logtest, and its header note is gone |
 | The three silent Wazuh behaviors: the syscheck parent SIDs, the SCA parent SID, and how a `<field>` regex matches an array | Machine | Each is confirmed on the deployed manager version |
 | A live `SessionStart` through `hook-forward`, and rule 100200 firing from a real session | Machine | An alert is seen for a real session |
 | `mcp-interpose -url` against a real remote server, over Streamable HTTP and over HTTP+SSE | Machine | Both transports run a session, and `-show` lists the tools |

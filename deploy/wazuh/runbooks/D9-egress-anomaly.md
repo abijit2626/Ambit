@@ -1,6 +1,6 @@
 # Runbook D9 — egress anomaly
 
-**Rules:** 100300–100303 (group `ambit_d9`). **MITRE:** T1041, T1567, T1552.
+**Rules:** 100300–100306 (group `ambit_d9`). **MITRE:** T1041, T1567, T1552.
 
 Exfiltration needs an outbound path, and a coding agent has several legitimately: git push,
 package installs, API calls. This detector reports the shape of outbound activity rather than
@@ -16,6 +16,7 @@ describes is not something a rule can do. ambitd now keeps the destination half 
 | 100303 | 10 | Result from an open-world MCP tool |
 | 100304 | 6 | Claude Code's sandbox refused something a tool call tried |
 | 100305 | 10 | **The sandbox blocked an outbound connection** |
+| 100306 | 3 | The endpoint contacted a destination new to it (shadow, informational) |
 
 ## What this alert asserts
 
@@ -33,11 +34,11 @@ describes is not something a rule can do. ambitd now keeps the destination half 
   nor the byte count. Do not read 100301 as "unusual for this endpoint": read it as "a rate that is
   hard to produce by hand". ambitd does keep a per-endpoint destination profile and sends an
   `egress_destination` event the first time the endpoint contacts a registrable domain or address,
-  read from a network command or a sandbox denial. **No rule matches that event, and the manager
-  keeps only events a rule matches** (archiving is off by design), so it is not in the alerts index:
-  it exists in the endpoint's `events.jsonl`, which is a request to us. Its `egress_dest_digest` is
-  the keyed digest of the registrable domain; `sandbox_denial_digests` are of the raw target
-  (`host:port`), so the two never compare equal.
+  read from a network command or a sandbox denial. Rule 100306 stores it at level 3 so it can be
+  searched beside these alerts, but it is informational: nothing pages on a new destination until a
+  cohort has shown what an endpoint's normal rate is. Its `egress_dest_digest` is the keyed digest of
+  the registrable domain; `sandbox_denial_digests` are of the raw target (`host:port`), so the two
+  never compare equal.
 - **100304 and 100305 report a blocked attempt, not a successful one.** They read the
   `<sandbox_violations>` block Claude Code adds to a refused command's error. The denied host or
   path is a keyed digest (`sandbox_denial_digests`); resolving it requires us. A program can print
@@ -69,11 +70,11 @@ describes is not something a rule can do. ambitd now keeps the destination half 
    content first. (The `tool_post` it names carries `prov_fp_notable` too, but a `tool_post`
    reaches the SIEM only when it is interesting for another reason; the spool has every one.) Egress after ingest is the shape the whole system exists to
    catch; egress alone, in a session doing ordinary work, usually is not.
-4. **Ask whether the destination was new to the endpoint.** Request the session's
-   `egress_destination` events from the endpoint's `events.jsonl`. One beside the alert says the
-   endpoint had never contacted that destination before. None says it had, or that the command
-   built the host at run time where ambitd cannot read it, or that the profile was off or full
-   (ambitd logs both). Treat a new destination after an untrusted ingest as the exfiltration shape.
+4. **Ask whether the destination was new to the endpoint.** Search rule 100306 for the same
+   `session_id`. One beside the alert says the endpoint had never contacted that destination before.
+   None says it had, or that the command built the host at run time where ambitd cannot read it, or
+   that the profile was off or full (ambitd logs both). A new destination after an untrusted ingest
+   is the exfiltration shape.
 5. **Check for credential reads before the egress.** A D2 alert or a `path_zone` = `credential`
    read in the same session, followed by network commands, is the staging-then-exfiltration
    sequence even without the sandbox denial or the destination.
@@ -86,8 +87,6 @@ describes is not something a rule can do. ambitd now keeps the destination half 
   resolves almost every alert: the destination is in the command line and nowhere else.
 - **Spool pull** for the session, to establish order: ingest, then credential access, then egress.
 - **The endpoint's role** — developer laptop or CI runner.
-- **Whether the destination was new to the endpoint:** its `egress_destination` events, which the
-  manager does not keep (see above).
 - **Whether the sandbox blocked it**, when 100304 and 100305 are silent: the sandbox may be off,
   the endpoint may be native Windows, or the denial was printed somewhere ambitd does not read.
   Claude Code's own logs on the endpoint may say.
@@ -111,3 +110,7 @@ same session.
 
 **Do not page** 100300; it is level 5 because it is ordinary developer traffic and exists to give
 the egress timeline during triage.
+
+**Do not page** 100306. It is shadow: it records an endpoint's first contact with each destination
+so the cohort's rate can be measured, and a developer reaches new hosts every day. Read it during
+triage, beside the alert that brought you here.

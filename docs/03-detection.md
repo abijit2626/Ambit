@@ -802,8 +802,9 @@ heartbeat for N minutes" is still not a rule; and **volume or destination profil
 rule**, which is why the rules report egress shape rather than anomaly. ambitd now keeps the
 destination half itself: a per-endpoint profile of keyed digests of every registrable domain or
 address a network command names or the sandbox refuses, and an `egress_destination` event the
-first time the endpoint contacts one. That event is shadow: no rule alerts on it until a cohort
-shows what a normal profile looks like. Volume is still not profiled.
+first time the endpoint contacts one. That event is shadow: rule 100306 stores it at level 3 so a
+cohort can be reviewed on the manager, and nothing pages on it until the cohort shows what a normal
+profile looks like. Volume is still not profiled.
 
 ### Proposed MITRE ATT&CK mappings
 
@@ -844,7 +845,7 @@ makes the alert harder to triage, not easier. Better to ship it untagged and say
 | D6 | **Config tamper.** FIM on `.claude/` and `.mcp.json` (with `whodata`), plus `ConfigChange`. | Suppression attempt |
 | D7 | **Telemetry gap.** Rule 504 for endpoint silence; SCA `p:ambitd` plus stale heartbeat for daemon death. | Daemon suppression |
 | D8 | **Poisoned instruction file.** `InstructionsLoaded` under a newly cloned or untrusted path. | Repo-carried injection |
-| D9 | **Egress anomaly.** Outbound volume or destination outside the endpoint's profile; any sandbox allowlist denial. | Exfiltration. Built: network commands and secrets in them (100300–100302), open-world MCP results (100303), sandbox denials (100304, 100305, from `sandbox_denial`), per-endpoint destination profiling in shadow (`egress_destination`, no rule yet). Not built: volume profiling, and an alert on a new destination. |
+| D9 | **Egress anomaly.** Outbound volume or destination outside the endpoint's profile; any sandbox allowlist denial. | Exfiltration. Built: network commands and secrets in them (100300–100302), open-world MCP results (100303), sandbox denials (100304, 100305, from `sandbox_denial`), per-endpoint destination profiling in shadow (`egress_destination`, stored by 100306 at level 3, never paged). Not built: volume profiling, and an alert on a new destination. |
 | D10 | **Cross-agent fingerprint match.** Scalar tripwire as a rule; full set intersection as a scheduled job. | Prompt Infection / propagation |
 | D11 | **Fail-open run.** Repeated `ambitd` unavailability. | Suppression |
 | D12 | **Managed-settings drift.** SCA assertion failure on the bundle. | Suppression / misconfiguration |
