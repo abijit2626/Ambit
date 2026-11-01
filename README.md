@@ -358,7 +358,8 @@ interposer as a stdio server, and the interposer speaks MCP's Streamable HTTP tr
 `-transport sse` the older HTTP+SSE one, to the real server. Replace the entry's `type` and
 `url` with a command, keep its key, and pass credentials through the environment with
 `-header-env Name=VARIABLE` so they stay out of process listings. `-header 'Name: value'` is
-for headers that are not secret.
+for headers that are not secret, and refuses a credential-named one (`Authorization`, `Cookie`,
+`X-Api-Key`, a `*-Token`).
 
 ```jsonc
 {

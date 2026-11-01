@@ -355,6 +355,20 @@ func TestInterposingAnHTTPServer(t *testing.T) {
 	}
 }
 
+func TestCredentialHeaderNames(t *testing.T) {
+	for name, want := range map[string]bool{
+		"Authorization": true, "Proxy-Authorization": true, "Cookie": true, "X-Api-Key": true,
+		"Api-Key": true, "X-Auth-Token": true, "Private-Token": true, "X-Access-Key": true,
+		"Ocp-Apim-Subscription-Key": true, "x_apikey": true, "X-Session-Id": true,
+		"Idempotency-Key": false, "X-Request-Id": false, "Accept-Language": false,
+		"X-Tenant": false, "User-Agent": false, "MCP-Feature-Flags": false,
+	} {
+		if got := isCredentialHeader(name); got != want {
+			t.Errorf("isCredentialHeader(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestHTTPFlagsAreChecked(t *testing.T) {
 	cfg := writeConfig(t)
 	for name, args := range map[string][]string{
@@ -362,6 +376,8 @@ func TestHTTPFlagsAreChecked(t *testing.T) {
 		"header without url": {"-header", "X-A: b", "--", "true"},
 		"unset header env":   {"-url", "http://127.0.0.1:1/mcp", "-header-env", "Authorization=AMBIT_E2E_UNSET"},
 		"malformed header":   {"-url", "http://127.0.0.1:1/mcp", "-header", "no colon"},
+		"credential header":  {"-url", "http://127.0.0.1:1/mcp", "-header", "Authorization: Bearer x"},
+		"api key header":     {"-url", "http://127.0.0.1:1/mcp", "-header", "X-Api-Key: x"},
 		"credentials in url": {"-url", "https://user:pw@example.test/mcp"},
 		"not http":           {"-url", "ftp://example.test/mcp"},
 		"unknown transport":  {"-url", "http://127.0.0.1:1/mcp", "-transport", "websocket"},
