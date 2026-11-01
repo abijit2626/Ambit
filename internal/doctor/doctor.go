@@ -225,6 +225,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	files, findings := Load(paths)
 	findings = append(findings, healthFinding(cfg.HookAddr))
 	findings = append(findings, egressFinding(cfg.EgressProfile()))
+	findings = append(findings, filesFinding(cfg)...)
 	findings = append(findings, Check(files, cfg.HookAddr, cfg.OTLPEnabled)...)
 	mcpFiles, mcpProblems := LoadMCP(append(MCPPaths(home, cwd), extraMCP...), cwd)
 	findings = append(findings, mcpProblems...)
