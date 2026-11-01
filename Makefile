@@ -7,7 +7,7 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
 EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 
-.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures replay fuzz lint
+.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures replay fuzz lint vuln
 
 all: check build
 
@@ -34,6 +34,13 @@ STATICCHECK := honnef.co/go/tools/cmd/staticcheck@2025.1.1
 
 lint:
 	go run $(STATICCHECK) ./...
+
+# govulncheck reports known vulnerabilities in the code paths ambit actually calls, in its modules
+# and in the Go standard library. It needs vuln.go.dev, so it fails offline rather than passing.
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
+vuln:
+	go run $(GOVULNCHECK) ./...
 
 check: vet race
 	@gofmt -l . | grep . && { echo "gofmt needed (see above)"; exit 1; } || echo "gofmt clean"
