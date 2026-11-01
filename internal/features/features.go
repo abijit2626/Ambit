@@ -160,6 +160,44 @@ func (e *Extractor) Extract(text string) *event.Features {
 	return f
 }
 
+// Destinations returns keyed digests of the places in text a network command can reach: the
+// registrable domain of each URL host and bare hostname, and each IPv4 address. It is Extract's domains
+// and addresses less two things: the domain of an email address, and a hostname-shaped word inside a
+// URL's path. "curl -d to=alice@example.org https://api.vendor.test/repo.git" contacts vendor.test, not
+// example.org or repo.git, though both remain domains the text carries for every other purpose.
+func (e *Extractor) Destinations(text string) []string {
+	out := map[string]bool{}
+	for _, w := range strings.FieldsFunc(text, isRegexpSpace) {
+		if strings.Contains(w, "://") {
+			for _, m := range reURL.FindAllString(w, -1) {
+				if h := hostFromURL(m); h != "" {
+					out[Registrable(h)] = true
+				}
+			}
+			// A URL contributes its host only: "repo.git" in its path is not somewhere it goes.
+			w = reURL.ReplaceAllString(w, " ")
+		}
+		if !strings.Contains(w, ".") {
+			continue
+		}
+		hostWords := []string{w}
+		if strings.Contains(w, "@") {
+			hostWords = strings.FieldsFunc(stripEmails(w), isRegexpSpace)
+		}
+		for _, hw := range hostWords {
+			for _, m := range reHost.FindAllString(hw, -1) {
+				if !looksLikeFilename(m) {
+					out[Registrable(m)] = true
+				}
+			}
+			for _, m := range reIPv4.FindAllString(hw, -1) {
+				out[m] = true
+			}
+		}
+	}
+	return e.digestSet(out)
+}
+
 func NotableFingerprint(f *event.Features) string {
 	if f == nil {
 		return ""
