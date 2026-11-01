@@ -253,6 +253,17 @@ func (c *Config) Validate() error {
 
 		return errors.New("config: events_path and trajectory_path must differ")
 	}
+	// The profile is appended to and read back as one digest per line: pointed at a sink it would be
+	// refused as damaged on the next start, and pointed at the key it would append to the key file.
+	for _, other := range []struct{ name, path string }{
+		{"events_path", c.EventsPath},
+		{"trajectory_path", c.TrajectoryPath},
+		{"fingerprint_key_path", c.FingerprintKeyPath},
+	} {
+		if other.path != "" && samePath(c.EgressProfile(), other.path) {
+			return fmt.Errorf("config: egress_profile_path and %s must differ", other.name)
+		}
+	}
 	if c.SampleRate < 0 || c.SampleRate > 1 {
 		return fmt.Errorf("config: sample_rate %v out of range [0,1]", c.SampleRate)
 	}
