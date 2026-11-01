@@ -47,6 +47,7 @@ type SIEMEvent struct {
 	MCPScanClasses   []string `json:"mcp_scan_classes,omitempty"`
 	MCPToolCount     int      `json:"mcp_tool_count,omitempty"`
 	MCPTrigger       string   `json:"mcp_trigger,omitempty"`
+	MCPTransport     string   `json:"mcp_transport,omitempty"`
 	BashArgv0        string   `json:"bash_argv0,omitempty"`
 	BashCommandClass string   `json:"bash_command_class,omitempty"`
 
@@ -182,6 +183,7 @@ func Flatten(e *Event) *SIEMEvent {
 			s.MCPScanClasses = m.ScanClasses
 			s.MCPToolCount = m.ToolCount
 			s.MCPTrigger = m.Trigger
+			s.MCPTransport = m.Transport
 		}
 		if b := t.Bash; b != nil {
 			s.BashArgv0 = b.Argv0

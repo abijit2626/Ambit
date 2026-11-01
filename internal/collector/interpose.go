@@ -25,6 +25,7 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 		trust = "internal"
 	}
 	st := c.interposeSession(rep)
+	transport := reportTransport(rep.Transport)
 
 	summary := c.interposeEvent(rep, st)
 	summary.Tool = &event.Tool{
@@ -42,6 +43,7 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 			Complete:      boolPtr(rep.Complete),
 			ServerVersion: rep.ServerInfo.Version,
 			CallsObserved: rep.CallsObserved,
+			Transport:     transport,
 		},
 	}
 	c.handled.Add(1)
@@ -67,6 +69,7 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 				Approved:         boolPtr(rep.Approved),
 				Complete:         boolPtr(rep.Complete),
 				ServerVersion:    rep.ServerInfo.Version,
+				Transport:        transport,
 
 				Annotations: t.Annotations,
 			},
@@ -75,6 +78,17 @@ func (c *Collector) HandleInterpose(rep *interpose.Report) {
 		c.interposeEvents.Add(1)
 		c.emit(e)
 	}
+}
+
+// reportTransport keeps a report's transport only if it is one the interposer sends. The report comes
+// from a process running as the developer and the value crosses to the SIEM in cleartext, so it must
+// not be able to carry arbitrary text.
+func reportTransport(t string) string {
+	switch t {
+	case interpose.TransportStdio, string(interpose.TransportHTTP), string(interpose.TransportSSE):
+		return t
+	}
+	return ""
 }
 
 func (c *Collector) interposeEvent(rep *interpose.Report, st *sessionState) *event.Event {

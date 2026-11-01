@@ -30,7 +30,7 @@ func fullEvent() *Event {
 				BaselineState: MCPStateDrift, PrevMetadataHash: "sha256:p",
 				ChangedFields: []string{"description"}, ScanClasses: []string{"hidden_instruction"},
 				ScanRules: []string{"hidden.ignore_previous"}, ToolCount: 12, DriftCount: 1,
-				Trigger: "tools_list", ServerVersion: "1.4.0", CallsObserved: 12},
+				Trigger: "tools_list", ServerVersion: "1.4.0", CallsObserved: 12, Transport: "http"},
 			Bash: &Bash{Argv0: "curl", CommandClass: "network", CommandDigest: "hmac:b"},
 			Paths: []PathRef{
 				{PathDigest: "hmac:p1", Zone: ZoneWorkdir, Op: "read"},
@@ -107,11 +107,11 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 }
 
 // The ceiling was 70 until sandbox_denial added its two fields, 72 until the hourly hook latency
-// report added three, and 75 until egress_destination added two. The union describes an event that cannot
+// report added three, 75 until egress_destination added two, and 77 until mcp_list's transport. The union describes an event that cannot
 // exist (no event carries the tool, config, health and denial blocks together); what matters is that it
 // stays far under Wazuh's decoder limit of 256 and that each real kind stays within the budget above.
 func TestSIEMEventFieldCeiling(t *testing.T) {
-	const ceiling = 77
+	const ceiling = 78
 	union := fullEvent()
 	union.Denial = denialBlock()
 	union.Egress = &Egress{Source: EgressSourceBash, DestinationDigest: "hmac:d"}

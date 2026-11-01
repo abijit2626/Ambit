@@ -22,6 +22,10 @@ import (
 
 type Transport string
 
+// TransportStdio is a server the interposer runs as a command, the original case. It is a report
+// value, not a bridge transport.
+const TransportStdio = "stdio"
+
 const (
 	// TransportHTTP is MCP's Streamable HTTP transport (2025-03-26 and later).
 	TransportHTTP Transport = "http"

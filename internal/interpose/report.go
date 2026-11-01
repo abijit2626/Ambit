@@ -28,6 +28,10 @@ type Report struct {
 	Server  string `json:"server"`
 	Trigger string `json:"trigger"`
 
+	// Transport is how the interposer reaches the server: stdio for a command it runs, http or sse
+	// for one it bridges to. Interposers before it was added send none.
+	Transport string `json:"transport,omitempty"`
+
 	SessionID string `json:"session_id,omitempty"`
 	PID       int    `json:"pid,omitempty"`
 	PPID      int    `json:"ppid,omitempty"`

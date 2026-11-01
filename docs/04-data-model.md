@@ -216,9 +216,9 @@ and 25–31 for `session_start`, `config_change` and `ambitd_health`. An earlier
 of this document estimated 37; that was wrong, and it was wrong in the direction of
 under-counting. The real ceiling matters less than it looked, though: 50 is far under
 the 256 default for `decoder_order_size`, so the budget enforced in tests is 55 with a
-77-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
+78-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
 added two, 72 until the hourly hook latency report added three, 75 until
-`egress_destination` added two).
+`egress_destination` added two, 77 until `mcp_list` gained `mcp_transport`).
 
 Two things keep the count honest. A single event never carries the tool, config and
 health blocks together, and a tool event never carries both the MCP and Bash blocks —
@@ -276,7 +276,7 @@ Filtering happens in `ambitd`, by event kind:
 | `permission_denied` | **yes** | Attack-attempt signal, low volume |
 | `instructions_loaded` | **yes** | D8; low volume |
 | `config_change` | **yes** | D6; low volume |
-| `mcp_list` | **yes** | D4, D5; once per server per session |
+| `mcp_list` | **yes** | D4, D5; once per server per session. `mcp_transport` says how the interposer reached the server: `stdio` for a command it runs, `http` or `sse` for a remote one; absent from an interposer that predates it |
 | `subagent_start` / `subagent_stop` | **yes** | Low volume, needed for provenance scoping |
 | `compact` | **yes** | Low volume; needed to interpret R2 state ([03](03-detection.md#layer-1--rule-of-two-accounting)) |
 | `ambitd_health` | **yes** | D7, D11 |

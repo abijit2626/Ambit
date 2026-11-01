@@ -393,3 +393,13 @@ func TestNotableSkipsTheQuietCases(t *testing.T) {
 func testLogger(w io.Writer) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
+
+func TestReportsCarryTheTransport(t *testing.T) {
+	send := &captureSender{}
+	a := NewAnalyzer(Options{Server: "wiki", Sender: send, Transport: string(TransportSSE)})
+	a.Close(context.Background())
+	all := send.all()
+	if len(all) == 0 || all[len(all)-1].Transport != "sse" {
+		t.Fatalf("reports = %+v, want the transport on each", all)
+	}
+}
