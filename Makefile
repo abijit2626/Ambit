@@ -43,7 +43,7 @@ lint:
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
 vuln:
-	go run $(GOVULNCHECK) ./...
+	GOTOOLCHAIN=$(TOOLCHAIN) go run $(GOVULNCHECK) ./...
 
 check: vet race
 	@gofmt -l . | grep . && { echo "gofmt needed (see above)"; exit 1; } || echo "gofmt clean"
