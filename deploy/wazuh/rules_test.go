@@ -94,11 +94,6 @@ func (r rule) hasExactGroup(name string) bool {
 	return false
 }
 
-func (r rule) parentIDs(t *testing.T) []int {
-	t.Helper()
-	return parseIDList(t, r.IfSID)
-}
-
 func parseIDList(t *testing.T, raw string) []int {
 	t.Helper()
 	var out []int

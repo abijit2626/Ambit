@@ -7,7 +7,7 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
 EXE := $(if $(filter Windows_NT,$(OS)),.exe,)
 
-.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures replay fuzz
+.PHONY: all build test race vet fmt check clean cross smoke smoke-windows fixtures replay fuzz lint
 
 all: check build
 
@@ -28,6 +28,12 @@ vet:
 
 fmt:
 	gofmt -l -w .
+
+# staticcheck, pinned so a new release cannot fail CI on code nobody changed.
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@2025.1.1
+
+lint:
+	go run $(STATICCHECK) ./...
 
 check: vet race
 	@gofmt -l . | grep . && { echo "gofmt needed (see above)"; exit 1; } || echo "gofmt clean"

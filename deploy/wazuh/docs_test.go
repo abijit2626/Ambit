@@ -57,7 +57,7 @@ func TestDocsDoNotTellAnOperatorToUseQuietLogtest(t *testing.T) {
 }
 
 func TestDocsDoNotTellAnOperatorToLookForSessionStart(t *testing.T) {
-	instruction := regexp.MustCompile("(?i)(check|confirm|verify|look for)[^\\n]*session_start")
+	instruction := regexp.MustCompile(`(?i)(check|confirm|verify|look for)[^\n]*session_start`)
 	for _, path := range markdownFiles(t) {
 		if strings.Contains(path, "runbooks") || strings.HasSuffix(path, "03-detection.md") || strings.HasSuffix(path, "04-data-model.md") {
 			continue
