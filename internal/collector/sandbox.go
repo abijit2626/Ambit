@@ -68,15 +68,7 @@ func cleanOp(op string) string {
 // <sandbox_violations> block. It is not retried if the sink refuses it: the tool event itself is in the
 // spool with the block in its error.
 func (c *Collector) emitSandboxDenial(st *sessionState, p *hook.Payload, e *event.Event) {
-	if e.Kind != event.KindToolFail && e.Kind != event.KindToolPost {
-		return
-	}
-	text := p.ToolFailure()
-	if !strings.Contains(text, violationsOpen) {
-		out, _ := p.ToolOutput()
-		text = out
-	}
-	ds := sandboxDenials(text)
+	ds := toolDenials(p, e)
 	if len(ds) == 0 {
 		return
 	}
@@ -92,25 +84,46 @@ func (c *Collector) emitSandboxDenial(st *sessionState, p *hook.Payload, e *even
 		}
 	}
 
+	n := derivedFrom(st, e, event.KindSandboxDenial)
+	n.Denial = d
+	c.emitDerived(n)
+}
+
+// toolDenials is the sandbox's refusals for a failed or finished tool call, read from the failure, or
+// from the output when the failure carries no block.
+func toolDenials(p *hook.Payload, e *event.Event) []denial {
+	if e.Kind != event.KindToolFail && e.Kind != event.KindToolPost {
+		return nil
+	}
+	text := p.ToolFailure()
+	if !strings.Contains(text, violationsOpen) {
+		out, _ := p.ToolOutput()
+		text = out
+	}
+	return sandboxDenials(text)
+}
+
+// derivedFrom starts an event ambitd derives from e: the same endpoint, actor, agent and session, the
+// next sequence number in the session, no policy decision, and only the tool's name and use id.
+func derivedFrom(st *sessionState, e *event.Event, kind event.Kind) *event.Event {
 	n := &event.Event{
 		EventID:    newEventID(),
 		TS:         e.TS,
 		IngestedAt: e.IngestedAt,
 		Source:     event.SourceAmbitd,
 		SchemaV:    e.SchemaV,
-		Kind:       event.KindSandboxDenial,
+		Kind:       kind,
 		Endpoint:   e.Endpoint,
 		Actor:      e.Actor,
 		Agent:      e.Agent,
 		Session:    event.Session{SessionID: e.Session.SessionID, PromptID: e.Session.PromptID, AgentID: e.Session.AgentID, AgentType: e.Session.AgentType},
 		R2:         e.R2,
 		Policy:     event.Policy{Decision: event.DecisionNone},
-		Denial:     d,
 	}
 	n.Session.Sequence = st.next()
 	n.R2.Transition = false
 	if e.Tool != nil {
 		n.Tool = &event.Tool{Name: e.Tool.Name, UseID: e.Tool.UseID}
 	}
-	c.emitDerived(n)
+	return n
 }

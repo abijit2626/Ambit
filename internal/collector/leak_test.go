@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/abijit2626/ambit/internal/egress"
 	"github.com/abijit2626/ambit/internal/hook"
 )
 
@@ -63,6 +64,7 @@ func siemText(s *memSink) string {
 func TestNoContentCrossesToTheSIEMInCleartext(t *testing.T) {
 	for _, canary := range canaries {
 		c, events, _ := newTestCollector(t)
+		c.egress = egress.NewMemory(0) // the egress event must not leak either
 		for _, p := range payloadsCarrying(canary) {
 			c.Handle(p)
 		}
@@ -95,6 +97,7 @@ func FuzzNoContentCrossesToTheSIEMInCleartext(f *testing.F) {
 	f.Fuzz(func(t *testing.T, which uint8, prefix, suffix string) {
 		canary := canaries[int(which)%len(canaries)]
 		c, events, _ := newTestCollector(t)
+		c.egress = egress.NewMemory(0) // the egress event must not leak either
 		for _, p := range payloadsCarrying(prefix + canary + suffix) {
 			c.Handle(p)
 		}
@@ -121,6 +124,7 @@ func FuzzHandleArbitraryHookJSON(f *testing.F) {
 			return
 		}
 		c, _, _ := newTestCollector(t)
+		c.egress = egress.NewMemory(0)
 		c.Handle(&p)
 		c.Handle(&p)
 		if st := c.Stats(); st.Crossed > st.Handled {

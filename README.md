@@ -213,7 +213,8 @@ same JSON Claude Code posts, optionally wrapped with ground truth and assertions
 ```
 
 A step can also assert `"derived": [...]`, the kinds of event ambitd derived from it and sent to
-the SIEM (`session_mode`, `session_no_prompt`, `sandbox_denial`, `fp_sighting`); `[]` asserts none.
+the SIEM (`session_mode`, `session_no_prompt`, `sandbox_denial`, `egress_destination`, `fp_sighting`);
+`[]` asserts none.
 
 `hostile` is ground truth about the *action*: would an analyst want it paged. It is not
 "this came from untrusted input", because docs/03 names an agent summarizing a page and
@@ -531,6 +532,13 @@ team executes a runbook against a sample alert.
 - **Third-party monitoring restrictions are intentions until a tenancy model is chosen
   and tested.** They rest on Wazuh RBAC, agent groups and index restrictions. See
   [docs/02-architecture.md](docs/02-architecture.md#tenancy-for-third-party-monitoring).
+- **D9's destination profile is shadow and untested on a cohort.** ambitd records each
+  registrable domain or address a network command names or the sandbox refuses, as keyed
+  digests in `egress_profile_path`, and sends an `egress_destination` event on first contact.
+  No rule alerts on it yet. Domains are read from the command text, so a host the command
+  builds at run time is missed and an email address in a request body counts as its domain.
+  Volume is not profiled. The profile is outside FIM on Windows, where its directory is
+  watched, so learning a destination is not also a D6 change.
 - **Two kinds of rule are inert and marked as such**, rather than shipped as if they worked:
   `agent_entrypoint` has no emitter (100204), and the policy engine that sets
   `policy_decision` is M3 (D11). Sandbox denials now cross as `sandbox_denial` events

@@ -19,6 +19,7 @@ import (
 	"github.com/abijit2626/ambit/internal/config"
 	"github.com/abijit2626/ambit/internal/doctor"
 	"github.com/abijit2626/ambit/internal/drift"
+	"github.com/abijit2626/ambit/internal/egress"
 	"github.com/abijit2626/ambit/internal/event"
 	"github.com/abijit2626/ambit/internal/features"
 	"github.com/abijit2626/ambit/internal/hook"
@@ -116,6 +117,12 @@ func run() error {
 	defer traj.Close()
 
 	scorer := openDriftScorer(cfg, log)
+	profile, err := egress.Load(cfg.EgressProfile(), egress.DefaultMaxDestinations)
+	if err != nil {
+		// D9's destination half is off for this run; every other detector is unaffected.
+		log.Error("egress profile unavailable; new destinations will not be reported", "err", err)
+		profile = nil
+	}
 	coll := collector.New(collector.Options{
 		Config:         cfg,
 		EventsSink:     events,
@@ -124,6 +131,7 @@ func run() error {
 		Logger:         log,
 		Version:        version,
 		Drift:          scorer,
+		Egress:         profile,
 	})
 
 	// Listen before the token is written: a second ambitd that cannot bind must not overwrite the

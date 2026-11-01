@@ -95,6 +95,9 @@ type SIEMEvent struct {
 
 	SandboxDenialOps     []string `json:"sandbox_denial_ops,omitempty"`
 	SandboxDenialDigests []string `json:"sandbox_denial_digests,omitempty"`
+
+	EgressSource     string `json:"egress_source,omitempty"`
+	EgressDestDigest string `json:"egress_dest_digest,omitempty"`
 }
 
 var zoneSeverity = map[string]int{
@@ -244,6 +247,10 @@ func Flatten(e *Event) *SIEMEvent {
 	if d := e.Denial; d != nil {
 		s.SandboxDenialOps = d.Ops
 		s.SandboxDenialDigests = d.TargetDigests
+	}
+	if g := e.Egress; g != nil {
+		s.EgressSource = g.Source
+		s.EgressDestDigest = g.DestinationDigest
 	}
 
 	return s
