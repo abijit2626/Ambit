@@ -72,6 +72,12 @@ jobs:
       - name: make lint
         run: make lint
 
+      # Known vulnerabilities in code ambitd and mcp-interpose actually call. Both ship as static
+      # binaries to endpoints, so a vulnerable dependency or standard library is on every machine
+      # in the cohort. Pinned in the Makefile.
+      - name: make vuln
+        run: make vuln
+
       # ambitd and mcp-interpose ship as static binaries to macOS, Linux, WSL2 and native
       # Windows endpoints. Nobody developing on Linux would notice a darwin or windows
       # build break, and the first person to find out would be whoever is deploying to a

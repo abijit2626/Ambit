@@ -1,6 +1,6 @@
 module github.com/abijit2626/ambit
 
-go 1.24
+go 1.26.10
 
 require github.com/anthropics/anthropic-sdk-go v1.84.0
 
