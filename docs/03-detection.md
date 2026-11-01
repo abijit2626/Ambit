@@ -236,7 +236,11 @@ should not either:
   domain 0.80; shingle 0.30 (advisory, and off unless `EnableShingles`). A domain the operator
   lists in `trusted_content_domains` is **down-weighted to 0.40, not dropped** — a trusted
   code host is also an exfiltration sink, and s1ngularity wrote to public repositories on
-  one.
+  one. A domain is compared by its registrable part, and under a suffix anyone can register
+  beneath (`co.uk`, `github.io`, `ngrok-free.app` and other common ones) that part keeps one
+  more label, so trusting `mycompany.github.io` does not trust every GitHub Pages site. The
+  suffix list is short, not the full public suffix list; an unlisted suffix falls back to the
+  last two labels.
 - **The set is bounded and says so.** 256 fingerprints per result, 8192 per session, oldest
   evicted first. Truncation and eviction are counted (`prov_truncated`, `prov_evicted` in
   the `ambitd stopped` log line); a non-zero count means an absent edge in some session is

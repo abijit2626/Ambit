@@ -202,9 +202,33 @@ func TestRegistrable(t *testing.T) {
 			t.Errorf("registrable(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
 
-	if got := Registrable("a.b.co.uk"); got != "co.uk" {
-		t.Errorf("registrable(a.b.co.uk) = %q; expected the documented co.uk approximation", got)
+// Under a suffix anyone can register beneath, the registrable part is one label more, or trusting one
+// site trusts every site on the platform.
+func TestRegistrableUnderAPublicSuffix(t *testing.T) {
+	cases := map[string]string{
+		"a.b.bbc.co.uk":                  "bbc.co.uk",
+		"bbc.co.uk":                      "bbc.co.uk",
+		"co.uk":                          "co.uk",
+		"docs.mycompany.github.io":       "mycompany.github.io",
+		"attacker.github.io":             "attacker.github.io",
+		"abc123.ngrok-free.app":          "abc123.ngrok-free.app",
+		"bucket.s3.amazonaws.com":        "bucket.s3.amazonaws.com",
+		"x.acct.blob.core.windows.net":   "acct.blob.core.windows.net",
+		"raw.githubusercontent.com":      "raw.githubusercontent.com",
+		"api.example.com.au":             "example.com.au",
+		"github.com":                     "github.com",
+		"api.github.com":                 "github.com",
+		"unlisted-suffix.example.zz.top": "zz.top",
+	}
+	for in, want := range cases {
+		if got := Registrable(in); got != want {
+			t.Errorf("registrable(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if Registrable("mycompany.github.io") == Registrable("attacker.github.io") {
+		t.Error("two GitHub Pages sites must be two registrable domains")
 	}
 }
 
