@@ -61,26 +61,35 @@ func (c *Collector) newDestination(st *sessionState, e *event.Event, source, dig
 }
 
 // deniedHost is the host in a sandbox target such as example.com:443 or [::1]:443, or "" for a target
-// that is not a host.
+// that is not a host. The target is the command output's claim, so anything that is neither an address
+// nor made only of the characters a hostname has (an ASCII letter, digit, dot, hyphen or underscore)
+// is refused rather than turned into a destination.
 func deniedHost(target string) string {
 	target = strings.TrimSpace(target)
 	if rest, ok := strings.CutPrefix(target, "["); ok {
-		if i := strings.Index(rest, "]"); i > 0 {
+		// Brackets hold an IPv6 address and nothing else.
+		if i := strings.Index(rest, "]"); i > 0 && net.ParseIP(rest[:i]) != nil {
 			return strings.ToLower(rest[:i])
 		}
 		return ""
 	}
-	if ip := net.ParseIP(target); ip != nil {
+	if net.ParseIP(target) != nil {
 		return strings.ToLower(target)
 	}
 	if i := strings.LastIndex(target, ":"); i >= 0 && isPort(target[i+1:]) {
 		target = target[:i]
 	}
-	if target == "" || strings.ContainsAny(target, "/\\ ") {
+	if net.ParseIP(target) != nil {
+		return strings.ToLower(target)
+	}
+	if target == "" {
 		return ""
 	}
-	if strings.Contains(target, ":") && net.ParseIP(target) == nil {
-		return ""
+	for i := 0; i < len(target); i++ {
+		c := target[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == '_') {
+			return ""
+		}
 	}
 	return strings.ToLower(target)
 }

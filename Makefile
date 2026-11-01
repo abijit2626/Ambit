@@ -82,6 +82,8 @@ FUZZ_TARGETS := \
 	./internal/collector:FuzzSandboxDenialsStayClean \
 	./internal/collector:FuzzNoContentCrossesToTheSIEMInCleartext \
 	./internal/collector:FuzzHandleArbitraryHookJSON \
+	./internal/collector:FuzzDeniedHostIsAHostOrNothing \
+	./internal/egress:FuzzLoadAnyFile \
 	./internal/otlp:FuzzDecodeNeverPanics \
 	./internal/toolscan:FuzzScanFieldsNeverPanics \
 	./internal/baseline:FuzzFileNameStaysInTheDirectory \
