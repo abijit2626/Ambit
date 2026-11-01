@@ -216,7 +216,7 @@ func TestEveryRuleThatMatchesAFixtureCanAlsoWinOne(t *testing.T) {
 		}
 	}
 	if len(won) == 0 {
-		t.Fatal(fmt.Sprintf("no rule won any of %d fixture files", len(winnerFixtures)))
+		t.Fatalf("no rule won any of %d fixture files", len(winnerFixtures))
 	}
 }
 

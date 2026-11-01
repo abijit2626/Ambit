@@ -67,6 +67,11 @@ jobs:
       - name: make fuzz
         run: make fuzz FUZZTIME=5s
 
+      # staticcheck catches what vet does not. It found a fuzz check that compared a hash with
+      # itself, so it could never fail. Pinned in the Makefile.
+      - name: make lint
+        run: make lint
+
       # ambitd and mcp-interpose ship as static binaries to macOS, Linux, WSL2 and native
       # Windows endpoints. Nobody developing on Linux would notice a darwin or windows
       # build break, and the first person to find out would be whoever is deploying to a

@@ -64,9 +64,19 @@ func FuzzParseNeverPanics(f *testing.F) {
 		_ = m.IsNotification()
 		_ = m.IDKey()
 		if l, err := ParseToolsList(m.Result); err == nil {
+			// The hash must not depend on how the server laid the tool out: re-encoding it
+			// reorders every object's keys, and must give the same hash.
 			for _, tool := range l.Tools {
-				if MetadataHash(tool) != MetadataHash(tool) {
-					t.Fatal("MetadataHash is not deterministic")
+				raw, err := json.Marshal(tool)
+				if err != nil {
+					continue
+				}
+				var again Tool
+				if err := json.Unmarshal(raw, &again); err != nil {
+					t.Fatalf("a tool that encoded does not decode: %v", err)
+				}
+				if MetadataHash(tool) != MetadataHash(again) {
+					t.Fatalf("MetadataHash changed when the tool was re-encoded: %s", raw)
 				}
 			}
 		}
