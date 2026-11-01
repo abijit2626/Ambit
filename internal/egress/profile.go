@@ -36,6 +36,9 @@ type Profile struct {
 	overflow int64
 }
 
+// ErrDamaged marks a profile file that holds something other than digests, or cannot be read through.
+var ErrDamaged = errors.New("egress: profile is damaged")
+
 // Load reads the profile at path. A missing file is an empty profile, the first run on this endpoint. A
 // file that cannot be read or holds a line that is not a digest is an error: the caller should run
 // without a profile and say so, rather than quietly learn from a damaged one.
@@ -46,16 +49,44 @@ func Load(path string, max int) (*Profile, error) {
 	if max < 1 {
 		max = DefaultMaxDestinations
 	}
-	p := &Profile{path: path, seen: map[string]struct{}{}, max: max}
 	if err := fsperm.PrivateDir(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("egress: create %s: %w", filepath.Dir(path), err)
 	}
+	seen, _, err := read(path, max)
+	if err != nil {
+		return nil, err
+	}
+	return &Profile{path: path, seen: seen, max: max}, nil
+}
+
+// Summary is what Inspect found.
+type Summary struct {
+	// Exists is false before the endpoint's first contact with any destination.
+	Exists bool
+	// Destinations is how many the file holds, counting each once.
+	Destinations int
+	// Full says the profile has reached DefaultMaxDestinations and no longer learns.
+	Full bool
+}
+
+// Inspect reads the profile at path without creating anything, for ambitd doctor. A damaged file is an
+// error wrapping ErrDamaged; one that cannot be opened is an error that does not.
+func Inspect(path string) (Summary, error) {
+	seen, exists, err := read(path, DefaultMaxDestinations)
+	if err != nil {
+		return Summary{}, err
+	}
+	return Summary{Exists: exists, Destinations: len(seen), Full: len(seen) >= DefaultMaxDestinations}, nil
+}
+
+func read(path string, max int) (map[string]struct{}, bool, error) {
+	seen := map[string]struct{}{}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return p, nil
+		return seen, false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("egress: open profile: %w", err)
+		return nil, false, fmt.Errorf("egress: open profile: %w", err)
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -66,16 +97,16 @@ func Load(path string, max int) (*Profile, error) {
 			continue
 		}
 		if !strings.HasPrefix(line, features.DigestPrefix) {
-			return nil, fmt.Errorf("egress: profile %s has a line that is not a digest", path)
+			return nil, true, fmt.Errorf("%w: %s has a line that is not a digest", ErrDamaged, path)
 		}
-		if len(p.seen) < p.max {
-			p.seen[line] = struct{}{}
+		if len(seen) < max {
+			seen[line] = struct{}{}
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("egress: read profile: %w", err)
+		return nil, true, fmt.Errorf("%w: read %s: %v", ErrDamaged, path, err)
 	}
-	return p, nil
+	return seen, true, nil
 }
 
 // NewMemory is a profile that is never written to disk, for replay, where every scenario starts on an
