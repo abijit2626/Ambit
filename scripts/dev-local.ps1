@@ -247,7 +247,7 @@ if ($Binary) {
     }
 } else {
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-        throw 'Go was not found on PATH. Install Go 1.24 or newer from https://go.dev/dl/, or pass -Binary with a prebuilt ambitd.exe.'
+        throw 'Go was not found on PATH. Install Go 1.26.10 or newer from https://go.dev/dl/, or pass -Binary with a prebuilt ambitd.exe.'
     }
     Push-Location $Root
     try {

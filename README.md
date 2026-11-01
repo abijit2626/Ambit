@@ -274,7 +274,7 @@ they behave exactly as on Linux. The setup scripts have PowerShell counterparts 
 under both the Windows PowerShell 5.1 that ships with the OS and PowerShell 7:
 
 ```powershell
-go build -o bin\ambitd.exe .\cmd\ambitd            # Go 1.24 or newer
+go build -o bin\ambitd.exe .\cmd\ambitd            # Go 1.26.10 or newer (go.mod sets the floor)
 powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1            # install
 powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Status    # the M0 readout
 powershell -ExecutionPolicy Bypass -File .\scripts\dev-local.ps1 -Uninstall

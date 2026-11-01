@@ -29,11 +29,14 @@ vet:
 fmt:
 	gofmt -l -w .
 
-# staticcheck, pinned so a new release cannot fail CI on code nobody changed.
+# staticcheck, pinned so a new release cannot fail CI on code nobody changed. `go run pkg@version`
+# builds it with whatever go is first on PATH, which can be older than go.mod's floor and then cannot
+# load the module; GOTOOLCHAIN makes it build with the toolchain this module selects.
 STATICCHECK := honnef.co/go/tools/cmd/staticcheck@2025.1.1
+TOOLCHAIN   := $(shell go env GOVERSION)
 
 lint:
-	go run $(STATICCHECK) ./...
+	GOTOOLCHAIN=$(TOOLCHAIN) go run $(STATICCHECK) ./...
 
 check: vet race
 	@gofmt -l . | grep . && { echo "gofmt needed (see above)"; exit 1; } || echo "gofmt clean"
