@@ -207,8 +207,9 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	cfgPath := fs.String("config", "", "ambitd config JSON (for hook_addr and otlp_enabled)")
-	var extra multi
+	var extra, extraMCP multi
 	fs.Var(&extra, "settings", "a Claude Code settings file to read as well (repeatable)")
+	fs.Var(&extraMCP, "mcp", "a file declaring mcpServers to read as well (repeatable)")
 	asJSON := fs.Bool("json", false, "print findings as JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -224,6 +225,9 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	files, findings := Load(paths)
 	findings = append(findings, healthFinding(cfg.HookAddr))
 	findings = append(findings, Check(files, cfg.HookAddr, cfg.OTLPEnabled)...)
+	mcpFiles, mcpProblems := LoadMCP(append(MCPPaths(home, cwd), extraMCP...), cwd)
+	findings = append(findings, mcpProblems...)
+	findings = append(findings, CheckMCP(mcpFiles)...)
 
 	worst := 0
 	for _, f := range findings {
@@ -235,13 +239,17 @@ func Main(args []string, stdout, stderr io.Writer) int {
 			read = append(read, f.Path)
 		}
 		sort.Strings(read)
+		mcpRead := mcpPaths(mcpFiles)
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(map[string]any{"settings_read": read, "findings": findings})
+		_ = enc.Encode(map[string]any{"settings_read": read, "mcp_read": mcpRead, "findings": findings})
 	} else {
 		fmt.Fprintln(stdout, "ambitd doctor")
 		for _, f := range files {
 			fmt.Fprintf(stdout, "  read %s\n", f.Path)
+		}
+		for _, p := range mcpPaths(mcpFiles) {
+			fmt.Fprintf(stdout, "  read %s (MCP servers)\n", p)
 		}
 		for _, f := range findings {
 			fmt.Fprintf(stdout, "  [%-4s] %-13s %s\n", strings.ToUpper(f.Level), f.Check, f.Detail)
