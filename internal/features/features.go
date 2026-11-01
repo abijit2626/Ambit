@@ -215,6 +215,14 @@ func hostFromURL(u string) string {
 	return strings.ToLower(rest)
 }
 
+// Registrable is the part of host that one party registers: example.com for a.b.example.com, and
+// example.co.uk or someone.github.io where the last two labels are a suffix anyone can register under.
+// Treating those as the registrable part would make trusting one GitHub Pages site trust them all, and
+// make every ngrok tunnel one destination.
+//
+// The suffixes are a short list of the common ones, not the whole public suffix list, to keep ambitd
+// free of a dependency and a file to update. A suffix missing from it falls back to the last two
+// labels, the old behaviour; one listed in error only narrows a match. Neither direction widens trust.
 func Registrable(host string) string {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	// An address has no registrable part: keeping the last two octets would make 10.0.3.4 and 1.2.3.4
@@ -226,8 +234,66 @@ func Registrable(host string) string {
 	if len(parts) <= 2 {
 		return host
 	}
-	return strings.Join(parts[len(parts)-2:], ".")
+	keep := 2
+	for n := maxSuffixLabels; n >= 2; n-- {
+		if n < len(parts) && publicSuffixes[strings.Join(parts[len(parts)-n:], ".")] {
+			keep = n + 1
+			break
+		}
+	}
+	return strings.Join(parts[len(parts)-keep:], ".")
 }
+
+const maxSuffixLabels = 4
+
+// publicSuffixes holds multi-label suffixes from the public suffix list: country second levels, and
+// hosting platforms where each customer gets a subdomain.
+var publicSuffixes = func() map[string]bool {
+	m := map[string]bool{}
+	for _, group := range []string{
+		// Country second levels.
+		"co.uk org.uk ac.uk gov.uk ltd.uk plc.uk me.uk net.uk nhs.uk sch.uk police.uk",
+		"com.au net.au org.au edu.au gov.au asn.au id.au",
+		"co.nz org.nz net.nz govt.nz ac.nz school.nz",
+		"co.jp ne.jp or.jp ac.jp go.jp ed.jp ad.jp gr.jp lg.jp",
+		"co.kr or.kr ne.kr ac.kr go.kr re.kr",
+		"co.in net.in org.in ac.in gov.in firm.in gen.in ind.in edu.in res.in",
+		"co.za org.za gov.za ac.za net.za web.za",
+		"com.br net.br org.br gov.br edu.br",
+		"com.cn net.cn org.cn gov.cn edu.cn ac.cn",
+		"com.hk org.hk net.hk edu.hk gov.hk",
+		"com.sg net.sg org.sg edu.sg gov.sg",
+		"com.tw org.tw net.tw edu.tw gov.tw",
+		"com.mx org.mx gob.mx edu.mx net.mx",
+		"com.ar org.ar gob.ar net.ar",
+		"com.tr org.tr net.tr gov.tr edu.tr",
+		"co.il org.il ac.il gov.il net.il",
+		"com.my org.my net.my edu.my gov.my",
+		"com.ph org.ph net.ph gov.ph edu.ph",
+		"co.id or.id ac.id go.id web.id net.id",
+		"co.th or.th ac.th go.th in.th net.th",
+		"com.vn net.vn org.vn gov.vn edu.vn",
+		"com.ua org.ua net.ua gov.ua",
+		"com.pk org.pk net.pk gov.pk edu.pk",
+		"com.eg org.eg gov.eg edu.eg",
+		"com.ng org.ng gov.ng edu.ng",
+		"com.sa org.sa gov.sa edu.sa",
+		"com.co org.co net.co gov.co",
+		"com.pl org.pl net.pl",
+		// Hosting platforms: one subdomain per customer, so one per party.
+		"github.io gitlab.io githubusercontent.com readthedocs.io",
+		"herokuapp.com netlify.app vercel.app pages.dev workers.dev r2.dev",
+		"appspot.com web.app firebaseapp.com cloudfront.net azurewebsites.net",
+		"s3.amazonaws.com blob.core.windows.net",
+		"ngrok.io ngrok.app ngrok-free.app trycloudflare.com",
+		"blogspot.com glitch.me onrender.com fly.dev deno.dev pythonanywhere.com",
+	} {
+		for _, s := range strings.Fields(group) {
+			m[s] = true
+		}
+	}
+	return m
+}()
 
 func looksLikeFilename(s string) bool {
 	parts := strings.Split(strings.ToLower(s), ".")
