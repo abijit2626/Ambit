@@ -207,7 +207,7 @@ func run() error {
 	runID, prev, rs := openRunState(cfg, log)
 	hb := &heartbeat{
 		cfg: cfg, coll: coll, srv: srv, events: events, traj: traj, otlpSrv: otlpSrv,
-		version: version, log: log, start: time.Now(), runID: runID, prev: prev, rs: rs,
+		version: version, log: log, start: time.Now(), runID: runID, prev: prev, rs: rs, egress: profile,
 	}
 	done := make(chan struct{})
 	go func() {
@@ -322,8 +322,21 @@ type heartbeat struct {
 	runID   string
 	prev    *event.PrevRun
 	rs      *runstate.File
+	egress  *egress.Profile
 
 	lastReport time.Time
+}
+
+func egressHealth(p *egress.Profile) *event.EgressHealth {
+	if p == nil {
+		return &event.EgressHealth{State: event.EgressProfileOff}
+	}
+	n := p.Size()
+	state := event.EgressProfileOn
+	if n >= egress.DefaultMaxDestinations {
+		state = event.EgressProfileFull
+	}
+	return &event.EgressHealth{State: state, Destinations: n}
 }
 
 // latencyReportEvery is how often a heartbeat carries hook latency to the SIEM. The final heartbeat
@@ -414,6 +427,7 @@ func (h *heartbeat) emit(final bool) {
 			HookLatency:   &lat,
 			PrevRun:       h.prev,
 			LatencyReport: report,
+			Egress:        egressHealth(h.egress),
 		},
 	}
 

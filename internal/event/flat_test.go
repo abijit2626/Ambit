@@ -52,7 +52,8 @@ func fullEvent() *Event {
 		Scores: Scores{GoalDrift: &drift, DriftScorerV: "v1"},
 		Config: &ConfigInfo{Source: "user_settings", LoadReason: "session_start", PathDigest: "hmac:cfg", Zone: ZoneHome, Trusted: false},
 		Health: &Health{Status: "ok", QueueDepth: 3, DroppedEvents: 0, LatencyReport: true,
-			HookLatency: &Latency{Count: 900, OverBudget: 12, BudgetUS: 5000, P99US: 7500}},
+			HookLatency: &Latency{Count: 900, OverBudget: 12, BudgetUS: 5000, P99US: 7500},
+			Egress:      &EgressHealth{State: EgressProfileOn, Destinations: 41}},
 	}
 }
 
@@ -107,11 +108,12 @@ func TestSIEMEventFieldBudgetPerKind(t *testing.T) {
 }
 
 // The ceiling was 70 until sandbox_denial added its two fields, 72 until the hourly hook latency
-// report added three, 75 until egress_destination added two, and 77 until mcp_list's transport. The union describes an event that cannot
+// report added three, 75 until egress_destination added two, 77 until mcp_list's transport, and 78 until the
+// heartbeat's egress profile state. The union describes an event that cannot
 // exist (no event carries the tool, config, health and denial blocks together); what matters is that it
 // stays far under Wazuh's decoder limit of 256 and that each real kind stays within the budget above.
 func TestSIEMEventFieldCeiling(t *testing.T) {
-	const ceiling = 78
+	const ceiling = 80
 	union := fullEvent()
 	union.Denial = denialBlock()
 	union.Egress = &Egress{Source: EgressSourceBash, DestinationDigest: "hmac:d"}
@@ -356,9 +358,12 @@ func TestFlattenCarriesHookLatencyOnlyOnReportHeartbeats(t *testing.T) {
 	if s := Flatten(e); s.HealthHookSlow || s.HealthHookOver != 0 || s.HealthHookP99US != 1000 {
 		t.Errorf("fast run: %+v", s)
 	}
+	if s := Flatten(e); s.HealthEgressState != EgressProfileOn || s.HealthEgressDests != 41 {
+		t.Errorf("report heartbeat lost the egress profile: %+v", s)
+	}
 	e.Health.LatencyReport = false
 	raw, _ := json.Marshal(Flatten(e))
-	if contains(string(raw), "health_hook_") {
-		t.Errorf("an ordinary heartbeat carried hook latency: %s", raw)
+	if contains(string(raw), "health_hook_") || contains(string(raw), "health_egress_") {
+		t.Errorf("an ordinary heartbeat carried hook latency or egress state: %s", raw)
 	}
 }
