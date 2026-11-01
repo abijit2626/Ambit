@@ -57,7 +57,7 @@ jobs:
 
       # End-to-end: inert hook responses, correct filtering, no cleartext leaks into the
       # SIEM-bound sink, and the interposer's byte-exact passthrough including a rug pull
-      # detected after approval.
+      # detected after approval, and the same server reached over HTTP through -url.
       - name: make smoke
         run: make smoke
 

@@ -5,7 +5,7 @@ AMBITD=${AMBITD:-./bin/ambitd}
 INTERPOSE=${INTERPOSE:-./bin/mcp-interpose}
 PORT=${PORT:-17998}
 D=$(mktemp -d)
-trap 'kill "${PID:-}" 2>/dev/null || true; rm -rf "$D"' EXIT
+trap 'kill "${PID:-}" "${HTTPPID:-}" 2>/dev/null || true; rm -rf "$D"' EXIT
 
 fail=0
 check() {
@@ -122,7 +122,47 @@ for s in "Ignore all previous" "exfil.attacker.test" "Publish a page" "Search th
 done
 
 echo
-echo "5. with ambitd down, the wrapped server still works"
+echo "5. the same server over HTTP, through -url"
+# The bridge posts requests after initialize concurrently, so their answers may come back in any order,
+# as JSON-RPC allows: the streams are compared as sorted lines, and initialize's answer must come first.
+TOKEN="Bearer smoke-token-$$"
+go build -o "$D/fake-http-mcp" ./scripts/fake-http-mcp
+"$D/fake-http-mcp" -ready "$D/http.addr" -log "$D/http.log" -want-auth "$TOKEN" 2>"$D/http.err" &
+HTTPPID=$!
+for _ in $(seq 1 50); do [ -s "$D/http.addr" ] && break; sleep 0.1; done
+HTTPADDR=$(cat "$D/http.addr" 2>/dev/null || true)
+
+: > "$D/events.jsonl"
+if SMOKE_MCP_AUTH="$TOKEN" "$INTERPOSE" -server wiki-http -config "$D/config.json" \
+  -url "http://$HTTPADDR/mcp?key=smoke-query-secret" -header-env Authorization=SMOKE_MCP_AUTH \
+  < "$D/session.jsonl" > "$D/http.out" 2>>"$D/interpose.log"; then check "the interposer exits cleanly when the client is done" 0; else check "the interposer exits cleanly when the client is done" 1; fi
+sleep 0.5
+
+if [ "$(head -1 "$D/http.out")" = "$(head -1 "$D/direct.out")" ] && \
+   [ "$(sort "$D/http.out")" = "$(sort "$D/direct.out")" ]; then
+  check "the client stream carries the stdio server's answers, initialize first" 0
+else
+  check "the client stream carries the stdio server's answers, initialize first" 1
+fi
+if grep -q 'auth=ok' "$D/http.log" 2>/dev/null && ! grep -q 'auth=wrong' "$D/http.log"; then
+  check "every request carried the token from the environment" 0
+else
+  check "every request carried the token from the environment" 1
+fi
+want "requests after initialize carried the server's session id" 'session="smoke-session"' "$D/http.log"
+want "the session was ended with DELETE" 'DELETE auth=ok session="smoke-session"' "$D/http.log"
+want "an HTTP server's tools are inventoried under its own key" '"tool_name":"mcp__wiki-http__search"' "$D/events.jsonl"
+for s in "smoke-token" "smoke-query-secret"; do
+  if grep -qF "$s" "$D/events.jsonl" "$D/interpose.log" 2>/dev/null; then
+    echo "  LEAKED: $s"
+    fail=1
+  else
+    echo "  clean:  $s"
+  fi
+done
+
+echo
+echo "6. with ambitd down, the wrapped server still works"
 kill "$PID" 2>/dev/null || true
 wait "$PID" 2>/dev/null || true
 PID=
