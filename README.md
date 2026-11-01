@@ -182,8 +182,8 @@ testdata/agentdojo/      per-tool MCP labels for AgentDojo's four suites, and li
 ./scripts/dev-local.sh --status  # what was collected, then the M0 readout
 ambitd report -config <config>   # M0 criteria from the spool: hook p99, loss, restarts, interesting fraction
 ambitd doctor -config <config>   # will ambitd hear from Claude Code? hooks, sandbox allowlist, OTel protocol, health,
-                                 # which MCP servers mcp-interpose stands in front of, and whether D9's
-                                 # egress profile loads
+                                 # which MCP servers mcp-interpose stands in front of, whether D9's
+                                 # egress profile loads, and whether ambitd's files are still private
 ambitd stop -config <config>     # stop the running ambitd cleanly (final heartbeat, clean stop recorded)
 make check   # go vet + race tests + gofmt
 make build   # bin/ambitd, bin/mcp-interpose
