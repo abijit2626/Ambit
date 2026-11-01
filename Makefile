@@ -100,6 +100,8 @@ FUZZ_TARGETS := \
 	./internal/baseline:FuzzFileNameStaysInTheDirectory \
 	./internal/baseline:FuzzObserveWithAnyRecordOnDisk \
 	./internal/config:FuzzLoadAnyFile \
+	./internal/doctor:FuzzLoadMCPAnyFile \
+	./internal/doctor:FuzzMCPFindingsNeverRepeatASecret \
 	./internal/m0report:FuzzBuildFromAnySpool
 
 fuzz:
