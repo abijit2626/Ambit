@@ -12,7 +12,7 @@
     picks. What a rule can do is the shape: network-capable commands, and the two
     combinations that are suspicious on their own. ambitd now keeps the destination
     profile itself and sends egress_destination on an endpoint's first contact with a
-    destination; it is shadow, so no rule here matches it yet.
+    destination; 100306 stores it, informational and never paged.
   - **Sandbox allowlist denials are not in the schema at all.** Claude Code's sandbox
     denies an outbound connection and ambitd has no field to carry it — not an unpopulated
     field, an absent one. Adding it is an M2 schema change; until then, this detector sees
@@ -127,6 +127,28 @@
     <if_sid>100304</if_sid>
     <field name="sandbox_denial_ops">network-outbound</field>
     <description>ambit D9: the sandbox blocked an outbound connection from $(tool_name) on $(endpoint_id) (session $(session_id))</description>
+    <mitre>
+      <id>T1041</id>
+    </mitre>
+    <group>ambit_d9,runbook_D9,</group>
+  </rule>
+
+  <!--
+    An endpoint's first contact with a destination: a registrable domain or address a network
+    command named, or a host the sandbox refused, that ambitd's per-endpoint egress profile had
+    not seen. The destination crosses only as a keyed digest (egress_dest_digest).
+
+    Level 3, informational, and never paged. The manager keeps only events a rule matches, and
+    archiving is off, so without this rule egress_destination reached the manager and was
+    dropped. It exists to put D9's shadow profile where a cohort can be reviewed from one
+    place: how many new destinations each endpoint sees per day, and how that falls off once
+    the profile has learned. Nothing alerts on a new destination until those numbers say what
+    a learning period and a threshold should be (docs/07-development-plan.md).
+  -->
+  <rule id="100306" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="kind">^egress_destination$</field>
+    <description>ambit D9 (shadow): $(endpoint_id) contacted a destination new to it, from $(egress_source), in session $(session_id)</description>
     <mitre>
       <id>T1041</id>
     </mitre>

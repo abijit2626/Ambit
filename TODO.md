@@ -27,6 +27,8 @@ and say where in the item.
       `<field>` regex matches an array.
 - [ ] Every fixture through `wazuh-logtest`: `sudo ./scripts/verify-manager.sh` on the manager
       (tested against a stand-in, never against a real engine). Not `-q`.
+- [ ] Re-record `events.sample.winners` with `./scripts/record-winners.sh events.sample` on a
+      machine with Docker. Line 55 (rule 100306) is the Go model's answer, not logtest's.
 - [ ] Windows agent: FIM wildcard expansion, log rotation under `log_format json`, SCA `f:` and
       `c:` rules, and `whodata`.
 - [ ] `agents_disconnection_time` 15m, `agents_disconnection_alert_time` 5m, archiving off.
