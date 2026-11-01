@@ -216,9 +216,10 @@ and 25–31 for `session_start`, `config_change` and `ambitd_health`. An earlier
 of this document estimated 37; that was wrong, and it was wrong in the direction of
 under-counting. The real ceiling matters less than it looked, though: 50 is far under
 the 256 default for `decoder_order_size`, so the budget enforced in tests is 55 with a
-78-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
+80-field ceiling on the synthetic union of every optional block (70 until `sandbox_denial`
 added two, 72 until the hourly hook latency report added three, 75 until
-`egress_destination` added two, 77 until `mcp_list` gained `mcp_transport`).
+`egress_destination` added two, 77 until `mcp_list` gained `mcp_transport`, 78 until the
+hourly heartbeat gained the egress profile's state).
 
 Two things keep the count honest. A single event never carries the tool, config and
 health blocks together, and a tool event never carries both the MCP and Bash blocks —
@@ -279,7 +280,7 @@ Filtering happens in `ambitd`, by event kind:
 | `mcp_list` | **yes** | D4, D5; once per server per session. `mcp_transport` says how the interposer reached the server: `stdio` for a command it runs, `http` or `sse` for a remote one; absent from an interposer that predates it |
 | `subagent_start` / `subagent_stop` | **yes** | Low volume, needed for provenance scoping |
 | `compact` | **yes** | Low volume; needed to interpret R2 state ([03](03-detection.md#layer-1--rule-of-two-accounting)) |
-| `ambitd_health` | **yes** | D7, D11 |
+| `ambitd_health` | **yes** | D7, D11. The hourly report heartbeat (and the final one) also carries `health_egress_state` (`on`, `full`, or `off` when the profile could not be loaded) and `health_egress_destinations`, stored with rule 100315's alert |
 | `goal_drift_score` | **only above threshold** (spool always) | M4 (rules 100330, 100331), only with `goal_drift` enabled. The judge's verdict on one `PreToolUse` that carried a provenance edge: `goal_drift_score` 1 (unrelated) or 0 (related), with `scores.drift_scorer_v` naming the prompt version and model in the spool. Carries identity, session, R2 bits, `tool_name` and `tool_use_id`, and no edge, path or policy field, so the D10 rule cannot take it. One score per tool call would be the firehose again; only unrelated ones cross |
 | `fp_sighting` | **yes** (SIEM only, not the spool) | D10. ambitd's own event: a session's first sighting of a notable fingerprint, one per session and fingerprint. Carries identity, session, `tool_name`, `tool_use_id` (the `tool_post` it came from), `prov_fp_notable` and `prov_fp_role`, and nothing a tool, policy, edge or taint rule keys on, so only rule 100280 can match it. Rebuildable from the spool as the first `tool_post` per session carrying that fingerprint |
 | `session_mode` | **yes** (SIEM only, not the spool) | D1 (rule 100200). ambitd's own event for a session's `permission_mode`, sent the first time it is known and each time it changes. `SessionStart` carries no mode, so for a live session this is its first prompt. Carries identity, session and `permission_mode`, and no tool, path or policy field. Rebuildable from the spool, where every event repeats the mode |

@@ -343,10 +343,27 @@ type Health struct {
 	HookLatency *Latency `json:"hook_latency,omitempty"`
 	PrevRun     *PrevRun `json:"prev_run,omitempty"`
 
+	// Egress is D9's destination profile as this run sees it. It crosses on the same hourly heartbeats
+	// as hook latency, so the fleet view shows an endpoint whose profile is off or full.
+	Egress *EgressHealth `json:"egress,omitempty"`
+
 	// LatencyReport marks the heartbeats whose hook latency crosses to the SIEM: one an hour and
 	// the final one. Every heartbeat would put a latency alert per endpoint per minute in the
 	// indexer; hourly is enough for a fleet view.
 	LatencyReport bool `json:"latency_report,omitempty"`
+}
+
+const (
+	EgressProfileOn   = "on"
+	EgressProfileFull = "full"
+	EgressProfileOff  = "off"
+)
+
+// EgressHealth is the state of the egress profile: on and learning, full and no longer reporting new
+// destinations, or off because it could not be loaded at start.
+type EgressHealth struct {
+	State        string `json:"state"`
+	Destinations int    `json:"destinations"`
 }
 
 type PrevRun struct {
