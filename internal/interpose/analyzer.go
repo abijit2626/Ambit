@@ -46,6 +46,9 @@ type Options struct {
 
 	SessionID string
 
+	// Transport is copied onto every report: TransportStdio, or the bridge's Transport.
+	Transport string
+
 	Now func() time.Time
 }
 
@@ -365,6 +368,7 @@ func (a *Analyzer) baseReport(trigger string) *Report {
 		TS:               a.now().UTC().Format(time.RFC3339Nano),
 		Server:           a.opts.Server,
 		Trigger:          trigger,
+		Transport:        a.opts.Transport,
 		SessionID:        a.opts.SessionID,
 		PID:              os.Getpid(),
 		PPID:             os.Getppid(),

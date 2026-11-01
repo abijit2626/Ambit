@@ -197,6 +197,10 @@ type MCP struct {
 	ServerVersion string `json:"server_version,omitempty"`
 
 	CallsObserved int64 `json:"calls_observed,omitempty"`
+
+	// Transport is how the interposer reached the server: stdio, http or sse. Empty for an interposer
+	// that predates it, and on tool calls, which come from hooks.
+	Transport string `json:"transport,omitempty"`
 }
 
 type Annotations struct {

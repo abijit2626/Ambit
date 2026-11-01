@@ -243,3 +243,33 @@ func TestNoServerMetadataTextCrosses(t *testing.T) {
 		}
 	}
 }
+
+// The transport says whether the server is local or remote, which changes what an analyst asks about
+// a drift. It crosses in cleartext, so only the values the interposer sends may cross at all.
+func TestInterposeTransportCrossesOnlyAsAKnownValue(t *testing.T) {
+	for _, c := range []struct{ sent, want string }{
+		{interpose.TransportStdio, "stdio"},
+		{string(interpose.TransportHTTP), "http"},
+		{string(interpose.TransportSSE), "sse"},
+		{"", ""},
+		{"https://mcp.example.com/mcp?key=SECRET", ""},
+	} {
+		coll, events, _ := newTestCollector(t)
+		rep := listingReport()
+		rep.Transport = c.sent
+		coll.HandleInterpose(rep)
+		lines := siemLines(t, events, event.KindMCPList)
+		if len(lines) == 0 {
+			t.Fatalf("%q: no mcp_list crossed", c.sent)
+		}
+		for _, m := range lines {
+			got, _ := m["mcp_transport"].(string)
+			if got != c.want {
+				t.Errorf("sent %q: mcp_transport = %q, want %q", c.sent, got, c.want)
+			}
+		}
+		if strings.Contains(siemText(events), "SECRET") {
+			t.Errorf("sent %q: a report's transport carried text to the SIEM", c.sent)
+		}
+	}
+}

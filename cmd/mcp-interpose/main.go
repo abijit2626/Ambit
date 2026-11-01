@@ -124,6 +124,10 @@ func run() (int, error) {
 			"dir", dir, "err", storeErr)
 	}
 
+	transportName := interpose.TransportStdio
+	if bridge != nil {
+		transportName = string(bridge.Transport)
+	}
 	client := interpose.NewClient(cfg.HookAddr)
 	analyzer := interpose.NewAnalyzer(interpose.Options{
 		Server:    *serverName,
@@ -134,6 +138,7 @@ func run() (int, error) {
 		Logger:    log,
 		Version:   version,
 		SessionID: resolveSessionID(*sessionID),
+		Transport: transportName,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
