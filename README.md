@@ -98,6 +98,7 @@ platform, not a replacement for either.**
 | [04-data-model.md](docs/04-data-model.md) | Rich internal schema, flattened SIEM-bound schema, the mapping and what it loses, what crosses to Wazuh, split retention |
 | [05-mcp-interpose-decision.md](docs/05-mcp-interpose-decision.md) | Why `mcp-interpose` is purpose-built rather than adopted, with the evaluation evidence |
 | [06-cohort-checklist.md](docs/06-cohort-checklist.md) | The path to the M0 and M1 exit criteria: blockers to close first, rollout order, how to measure each criterion |
+| [07-development-plan.md](docs/07-development-plan.md) | What comes next, in order: branches to land, decisions to make, what needs a real machine or a cohort, and what to build after |
 | [deploy/wazuh/README.md](deploy/wazuh/README.md) | Wazuh rules, SCA policy, FIM and localfile config, install and verification steps |
 | [deploy/wazuh/runbooks/](deploy/wazuh/runbooks/) | One runbook per detector, written for an analyst with no access to our source |
 
