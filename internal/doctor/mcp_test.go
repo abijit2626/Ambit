@@ -138,3 +138,41 @@ func TestFlagValue(t *testing.T) {
 		}
 	}
 }
+
+func TestPlainHTTPToAnotherHostWarns(t *testing.T) {
+	got := mcpFindings(t, `{"mcpServers":{
+		"far":{"command":"mcp-interpose","args":["-server","far","-url","http://mcp.example.com/mcp?key=QUERY-SECRET"]},
+		"near":{"command":"mcp-interpose","args":["-server","near","-url","http://127.0.0.1:8080/mcp"]},
+		"named":{"command":"mcp-interpose","args":["-server","named","-url=http://localhost:9000/mcp"]},
+		"tls":{"command":"mcp-interpose","args":["-server","tls","-url","https://mcp.example.com/mcp"]}}}`, "", "")
+	if !detailWith(got, Warn, `"far" (project scope`) || !detailWith(got, Warn, "unencrypted") {
+		t.Errorf("plain http to another host must warn: %+v", got)
+	}
+	for _, name := range []string{`"near"`, `"named"`, `"tls"`} {
+		if detailWith(got, Warn, name) {
+			t.Errorf("%s is loopback or https and must not warn: %+v", name, got)
+		}
+	}
+	for _, f := range got {
+		if strings.Contains(f.Detail, "QUERY-SECRET") || strings.Contains(f.Detail, "mcp.example.com") {
+			t.Errorf("a finding repeats the URL: %s", f.Detail)
+		}
+	}
+}
+
+func TestCleartextRemote(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"":                        false,
+		"http://10.0.0.5/mcp":     true,
+		"http://[::1]:8080/mcp":   false,
+		"HTTP://Example.com/mcp":  true,
+		"https://example.com/mcp": false,
+		"http://localhost/mcp":    false,
+		"http://127.0.0.2/mcp":    false,
+		"::not a url":             false,
+	} {
+		if got := cleartextRemote(raw); got != want {
+			t.Errorf("cleartextRemote(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
