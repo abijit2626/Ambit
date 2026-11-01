@@ -234,6 +234,7 @@ Per endpoint, in this order. Ask for 5–10 volunteers who have been told what i
 
 | Criterion | How to exercise it | Expect |
 | --- | --- | --- |
+| Every MCP server the cohort uses is interposed | `ambitd doctor` in each project directory, on each endpoint | "all N MCP servers are behind mcp-interpose", and no `-server` name differing from its key |
 | Every MCP server the cohort uses has an approved baseline | `mcp-interpose -server NAME -show` for each server, on each endpoint | Every one says approved |
 | A deliberately mutated server triggers D4 within a session | On a test endpoint, change an approved server's tool description (a test server you control, not a vendor's), start a session | Rule 100234 (level 12) in the same session, or 100237 if the server announced the change |
 | Killing `ambitd` fires D7 | Stop the daemon, leave the agent running | Rule 100314 via SCA check 10007, within the SCA scan interval |
