@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -109,6 +111,9 @@ func CheckMCP(files []MCPFile) []Finding {
 				case server != name:
 					add(Warn, "%s is interposed as -server %q; ambitd joins annotations by the key, so this server's tool calls carry none", where, server)
 				}
+				if cleartextRemote(flagValue(s.Args, "url")) {
+					add(Warn, "%s is bridged with -url over plain http to a host that is not this machine, so its headers, session id and every tool result cross the network unencrypted; use https", where)
+				}
 				continue
 			}
 			remote := s.URL != "" || strings.EqualFold(s.Type, "http") || strings.EqualFold(s.Type, "sse")
@@ -146,6 +151,24 @@ func mcpPaths(files []MCPFile) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// cleartextRemote says whether an mcp-interpose -url is http:// to anything but this machine. The URL
+// itself is never repeated in a finding: its query string can carry a key.
+func cleartextRemote(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Scheme, "http") {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
 }
 
 func isInterposer(command string) bool {
