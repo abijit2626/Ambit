@@ -139,6 +139,7 @@ type Report struct {
 	Interesting   Fraction `json:"interesting_fraction"`
 	Sessions      Sessions `json:"sessions"`
 	NotMeasurable []string `json:"not_measured_here"`
+	Egress        *Egress  `json:"egress,omitempty"`
 
 	seen   map[string]*sessionSeen
 	lastTS time.Time
@@ -401,6 +402,10 @@ func (r *Report) WriteText(w io.Writer, verbose bool) {
 		if r.LegacyHealth > 0 {
 			p("  %d health events came from an ambitd too old to report; upgrade and collect again", r.LegacyHealth)
 		}
+		if r.Egress != nil {
+			p("")
+			r.Egress.writeText(p)
+		}
 		return
 	}
 	p("  window:     %s to %s (%s), %d run(s)", r.WindowStart, r.WindowEnd, span(r.WindowStart, r.WindowEnd), len(r.Runs))
@@ -471,6 +476,11 @@ func (r *Report) WriteText(w io.Writer, verbose bool) {
 		p("")
 	}
 
+	if r.Egress != nil {
+		r.Egress.writeText(p)
+		p("")
+	}
+
 	p("measured elsewhere")
 	for _, s := range r.NotMeasurable {
 		p("  %s", s)
@@ -517,20 +527,26 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	cfgPath := fs.String("config", "", "ambitd config JSON to read trajectory_path from")
 	traj := fs.String("trajectory", "", "trajectory spool to read; default is trajectory_path from -config")
+	events := fs.String("events", "", "SIEM-bound events file to read D9's egress_destination from; default is events_path from -config")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	verbose := fs.Bool("v", false, "list every run")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	path := *traj
-	if path == "" {
+	path, eventsPath := *traj, *events
+	if path == "" || eventsPath == "" {
 		cfg, err := config.Load(*cfgPath)
 		if err != nil {
 			fmt.Fprintln(stderr, "ambitd report:", err)
 			return 1
 		}
-		path = cfg.TrajectoryPath
+		if path == "" {
+			path = cfg.TrajectoryPath
+		}
+		if eventsPath == "" {
+			eventsPath = cfg.EventsPath
+		}
 	}
 	files, err := SpoolFiles(path)
 	if err != nil {
@@ -545,6 +561,14 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "ambitd report:", err)
 		return 1
+	}
+	// D9 is read from the events file, which a report on a copied spool may not have; then the section
+	// is left out rather than reported as zero.
+	if evFiles, err := EventsFiles(eventsPath); err == nil && len(evFiles) > 0 {
+		if r.Egress, err = BuildEgress(evFiles); err != nil {
+			fmt.Fprintln(stderr, "ambitd report:", err)
+			return 1
+		}
 	}
 	if *asJSON {
 		enc := json.NewEncoder(stdout)

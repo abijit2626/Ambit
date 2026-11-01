@@ -180,7 +180,8 @@ testdata/agentdojo/      per-tool MCP labels for AgentDojo's four suites, and li
 ```sh
 ./scripts/dev-local.sh          # run it against your own Claude Code sessions
 ./scripts/dev-local.sh --status  # what was collected, then the M0 readout
-ambitd report -config <config>   # M0 criteria from the spool: hook p99, loss, restarts, interesting fraction
+ambitd report -config <config>   # M0 criteria from the spool: hook p99, loss, restarts, interesting fraction;
+                                 # and D9's new destinations per day, from events.jsonl
 ambitd doctor -config <config>   # will ambitd hear from Claude Code? hooks, sandbox allowlist, OTel protocol, health,
                                  # which MCP servers mcp-interpose stands in front of, and whether D9's
                                  # egress profile loads

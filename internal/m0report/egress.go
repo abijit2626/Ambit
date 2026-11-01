@@ -1,0 +1,140 @@
+package m0report
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"time"
+)
+
+var egressKind = []byte(`"kind":"egress_destination"`)
+
+// FirstWeekDays is how long the egress profile is taken to be learning. It is a reading aid for the cohort
+// review, not a threshold: whether a learning period exists, and how long, is still undecided (docs/07).
+const FirstWeekDays = 7
+
+// Egress is D9's shadow profile as the endpoint's events.jsonl shows it: how many destinations were new
+// to the endpoint, when, and how. It is not an M0 criterion; it is what the cohort review reads before
+// anyone writes a rule on a new destination.
+type Egress struct {
+	Files        []string       `json:"files"`
+	Destinations int            `json:"new_destinations"`
+	BySource     map[string]int `json:"by_source,omitempty"`
+	Days         []EgressDay    `json:"days,omitempty"`
+
+	// FirstWeekPerDay and LaterPerDay are means over calendar days, empty days included, from the
+	// first event's day: its first FirstWeekDays days, and every day after up to the last event.
+	FirstWeekPerDay float64 `json:"first_week_per_day"`
+	LaterPerDay     float64 `json:"later_per_day"`
+	LaterDays       int     `json:"later_days"`
+}
+
+type EgressDay struct {
+	Day          string `json:"day"`
+	Destinations int    `json:"new_destinations"`
+}
+
+// EventsFiles is events.jsonl and its rotated copies, the SIEM-bound sink where egress_destination lives.
+func EventsFiles(eventsPath string) ([]string, error) {
+	return SpoolFiles(eventsPath)
+}
+
+// BuildEgress reads egress_destination events from files. A line that is not one is skipped without
+// being parsed, as health lines are in the spool.
+func BuildEgress(files []string) (*Egress, error) {
+	g := &Egress{Files: files, BySource: map[string]int{}}
+	perDay := map[string]int{}
+	for _, path := range files {
+		if err := scanEgress(path, g, perDay); err != nil {
+			return nil, err
+		}
+	}
+	if len(perDay) == 0 {
+		g.BySource = nil
+		return g, nil
+	}
+	days := make([]string, 0, len(perDay))
+	for d := range perDay {
+		days = append(days, d)
+	}
+	sort.Strings(days)
+	for _, d := range days {
+		g.Days = append(g.Days, EgressDay{Day: d, Destinations: perDay[d]})
+	}
+
+	first, _ := time.Parse(time.DateOnly, days[0])
+	last, _ := time.Parse(time.DateOnly, days[len(days)-1])
+	span := int(last.Sub(first).Hours()/24) + 1
+	weekDays := min(span, FirstWeekDays)
+	week, later := 0, 0
+	for d, n := range perDay {
+		t, _ := time.Parse(time.DateOnly, d)
+		if int(t.Sub(first).Hours()/24) < FirstWeekDays {
+			week += n
+		} else {
+			later += n
+		}
+	}
+	g.FirstWeekPerDay = float64(week) / float64(weekDays)
+	if g.LaterDays = span - weekDays; g.LaterDays > 0 {
+		g.LaterPerDay = float64(later) / float64(g.LaterDays)
+	}
+	return g, nil
+}
+
+func scanEgress(path string, g *Egress, perDay map[string]int) error {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 1<<20)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 && bytes.Contains(line, egressKind) {
+			var e struct {
+				TS     string `json:"ts"`
+				Source string `json:"egress_source"`
+			}
+			if json.Unmarshal(line, &e) == nil && len(e.TS) >= len(time.DateOnly) {
+				if t, perr := time.Parse(time.RFC3339Nano, e.TS); perr == nil {
+					perDay[t.UTC().Format(time.DateOnly)]++
+					g.Destinations++
+					src := e.Source
+					if src == "" {
+						src = "unknown"
+					}
+					g.BySource[src]++
+				}
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+	}
+}
+
+func (g *Egress) writeText(p func(string, ...any)) {
+	p("D9 new destinations (shadow; not an M0 criterion)")
+	if g.Destinations == 0 {
+		p("  no egress_destination events in %d file(s); D9's profile may be off, or nothing new was contacted", len(g.Files))
+		return
+	}
+	p("  %d new destinations over %d day(s) with any; bash %d, sandbox %d", g.Destinations, len(g.Days), g.BySource["bash"], g.BySource["sandbox"])
+	if g.LaterDays > 0 {
+		p("  first %d days: %.1f a day   after: %.1f a day over %d day(s)", FirstWeekDays, g.FirstWeekPerDay, g.LaterPerDay, g.LaterDays)
+	} else {
+		p("  %.1f a day; the window is inside the first %d days, so there is no later rate yet", g.FirstWeekPerDay, FirstWeekDays)
+	}
+}
