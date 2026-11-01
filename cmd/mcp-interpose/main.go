@@ -55,7 +55,7 @@ func run() (int, error) {
 		transport   = flag.String("transport", "http", "with -url: http (Streamable HTTP) or sse (the 2024-11-05 HTTP+SSE transport)")
 		headers     headerFlags
 	)
-	flag.Var(headerValue{&headers, false}, "header", "with -url: a request header, as 'Name: value'; repeatable. Visible to anyone who can list processes")
+	flag.Var(headerValue{&headers, false}, "header", "with -url: a request header that is not a credential, as 'Name: value'; repeatable. Visible to anyone who can list processes, so credential headers are refused here")
 	flag.Var(headerValue{&headers, true}, "header-env", "with -url: a request header whose value is read from an environment variable, as 'Name=VAR'; repeatable")
 	flag.Parse()
 
@@ -319,6 +319,9 @@ func (hs headerFlags) resolve(getenv func(string) string) (http.Header, error) {
 			return nil, fmt.Errorf("-header %q: want 'Name: value'", h.raw)
 		}
 		value = strings.TrimSpace(value)
+		if !h.fromEnv && isCredentialHeader(name) {
+			return nil, fmt.Errorf("-header %s: a credential on the command line is in every process listing and in Claude Code's MCP configuration; pass it with -header-env %s=VARIABLE", name, name)
+		}
 		if h.fromEnv {
 			v := getenv(value)
 			if v == "" {
@@ -332,6 +335,28 @@ func (hs headerFlags) resolve(getenv func(string) string) (http.Header, error) {
 		out.Add(name, value)
 	}
 	return out, nil
+}
+
+// credentialParts are header-name parts that mark a credential. "key" counts only after a word that
+// makes it one (X-Api-Key, Ocp-Apim-Subscription-Key), so Idempotency-Key is not refused.
+var credentialParts = map[string]bool{
+	"authorization": true, "cookie": true, "token": true, "secret": true, "password": true,
+	"passwd": true, "auth": true, "session": true, "credential": true, "credentials": true, "apikey": true,
+}
+
+var keyQualifiers = map[string]bool{"api": true, "access": true, "secret": true, "private": true, "subscription": true, "auth": true}
+
+func isCredentialHeader(name string) bool {
+	parts := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool { return r == '-' || r == '_' || r == '.' })
+	for i, p := range parts {
+		if credentialParts[p] {
+			return true
+		}
+		if p == "key" && i > 0 && keyQualifiers[parts[i-1]] {
+			return true
+		}
+	}
+	return false
 }
 
 func adminMode(dir, server string, approve, revoke bool) (int, error) {
