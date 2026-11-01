@@ -96,6 +96,7 @@ FUZZ_TARGETS := \
 	./internal/egress:FuzzLoadAnyFile \
 	./internal/otlp:FuzzDecodeNeverPanics \
 	./internal/toolscan:FuzzScanFieldsNeverPanics \
+	./internal/labelsuggest:FuzzSuggestionsNeverRelaxWithoutTheHintAndANameThatReads \
 	./internal/baseline:FuzzFileNameStaysInTheDirectory \
 	./internal/baseline:FuzzObserveWithAnyRecordOnDisk \
 	./internal/config:FuzzLoadAnyFile \
