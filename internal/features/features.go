@@ -199,6 +199,11 @@ func (e *Extractor) Destinations(text string) []string {
 				if m[1] < len(hw) && hw[m[1]] == '(' {
 					continue
 				}
+				// Nor is a dotted name passed unquoted as an argument, as in dict(os.environ) or
+				// f(sys.argv[1]): a host in code is a string, so an opening quote comes before it.
+				if m[0] > 0 && strings.IndexByte("([,", hw[m[0]-1]) >= 0 {
+					continue
+				}
 				if !inPath[strings.ToLower(h)] && !looksLikeFilename(h) {
 					out[Registrable(h)] = true
 				}
