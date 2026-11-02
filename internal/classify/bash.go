@@ -724,6 +724,9 @@ func innerCommand(tool string, args []string) (string, bool) {
 		if isPython(tool) {
 			return pythonModule(args)
 		}
+		if inner, ok := windowsInner(tool, args); ok {
+			return inner, true
+		}
 	}
 	return "", false
 }
