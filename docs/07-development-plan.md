@@ -49,7 +49,9 @@ These choices block later work. Each one lists its options.
    `egress_source` value.
 3. **Should a learning period come before any D9 alert?** For example, the first N days, or the
    first M destinations, on each endpoint. The answer depends on the cohort's numbers (stage 4),
-   but the shape of the rule depends on this choice.
+   but the shape of the rule depends on this choice. `ambitd report` shows, on each endpoint, how
+   many alerts a rule on every new destination would have fired after a learning period of 0, 3,
+   7, 14 and 30 days, and how many a day.
 4. **Which tenancy model for third-party monitoring?** The options are in
    [02](02-architecture.md#tenancy-for-third-party-monitoring). This blocks any MSSP pilot.
 
