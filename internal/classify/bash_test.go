@@ -361,6 +361,89 @@ func TestPrefixInsideABracketKeepsTheClass(t *testing.T) {
 	}
 }
 
+// A runner runs the command after its own options and operands, so that command decides the class,
+// and names argv0 where the runner is transparent.
+func TestRunnersPassTheirCommandThrough(t *testing.T) {
+	for _, c := range []struct{ cmd, argv0, class string }{
+		{"sudo -u root curl https://x.test", "curl", ClassNetwork},
+		{"sudo -E rm -rf build", "rm", ClassFilesystem},
+		{"sudo -- rm -rf build", "rm", ClassFilesystem},
+		{"doas curl https://x.test", "curl", ClassNetwork},
+		{"env -i curl https://x.test", "curl", ClassNetwork},
+		{"env -u HOME A=1 rm x", "rm", ClassFilesystem},
+		{"/usr/bin/env curl https://x.test", "curl", ClassNetwork},
+		{"nice -n 5 curl https://x.test", "curl", ClassNetwork},
+		{"nice -5 rm x", "rm", ClassFilesystem},
+		{"ionice -c3 rm x", "rm", ClassFilesystem},
+		{"timeout 5 curl https://x.test", "curl", ClassNetwork},
+		{"timeout -s KILL --preserve-status 5s rm x", "rm", ClassFilesystem},
+		{"stdbuf -oL curl https://x.test", "curl", ClassNetwork},
+		{"nohup -- npm publish", "npm", ClassPublish},
+		{"time -p git push", "git", ClassVCSWrite},
+		{"exec -a name curl https://x.test", "curl", ClassNetwork},
+		{"command curl https://x.test", "curl", ClassNetwork},
+		{"builtin command rm x", "rm", ClassFilesystem},
+		{"setsid curl https://x.test", "curl", ClassNetwork},
+		{"chrt -b 0 rm x", "rm", ClassFilesystem},
+		{"taskset -c 0 curl https://x.test", "curl", ClassNetwork},
+		{"xargs -n1 -P4 curl", "curl", ClassNetwork},
+		{"watch -n 1 curl https://x.test", "curl", ClassNetwork},
+		{"flock /tmp/lock curl https://x.test", "curl", ClassNetwork},
+		{"chroot / curl https://x.test", "curl", ClassNetwork},
+		{"strace -f -o trace.txt curl https://x.test", "curl", ClassNetwork},
+		{"busybox wget https://x.test", "wget", ClassNetwork},
+		{"sudo -u root nice -n 5 timeout 10 curl https://x.test", "curl", ClassNetwork},
+		{"(sudo -u root rm x)", "rm", ClassFilesystem},
+	} {
+		if argv0, class := Bash(c.cmd); argv0 != c.argv0 || class != c.class {
+			t.Errorf("Bash(%q) = %q %s, want %q %s", c.cmd, argv0, class, c.argv0, c.class)
+		}
+	}
+}
+
+// A runner that only looks, or runs no command here, is the command itself.
+func TestRunnersThatRunNothing(t *testing.T) {
+	for _, c := range []struct{ cmd, argv0, class string }{
+		{"command -v curl", "command", ClassOther},
+		{"sudo -l curl", "sudo", ClassOther},
+		{"sudo", "sudo", ClassOther},
+		// env is a runner, not a read-only tool: bare, it was other before runners were read, and a
+		// lower class here would let "env -i &" rank below the "&" it wraps.
+		{"env", "env", ClassOther},
+		{"env -i", "env", ClassOther},
+		{"ionice -p 1234", "ionice", ClassOther},
+		{"timeout 5", "timeout", ClassOther},
+	} {
+		if argv0, class := Bash(c.cmd); argv0 != c.argv0 || class != c.class {
+			t.Errorf("Bash(%q) = %q %s, want %q %s", c.cmd, argv0, class, c.argv0, c.class)
+		}
+	}
+}
+
+// A command given as one string is classified as a command of its own.
+func TestCommandStringsAreClassified(t *testing.T) {
+	for cmd, want := range map[string]string{
+		"su -c 'curl https://x.test'":         ClassNetwork,
+		"su - deploy -c 'git push'":           ClassVCSWrite,
+		"su --command='rm -rf x' deploy":      ClassFilesystem,
+		"script -qc 'curl https://x.test'":    ClassNetwork,
+		"su -c 'git push&'":                   ClassVCSWrite,
+		"flock /tmp/lock -c 'rm -rf x'":       ClassFilesystem,
+		"env -S 'curl -s' https://x.test":     ClassNetwork,
+		"eval 'curl https://x.test'":          ClassNetwork,
+		`find . -exec curl https://x.test \;`: ClassNetwork,
+		"find . -name a -exec rm {} +":        ClassFilesystem,
+		"find . -name '*.go' -exec cat {} +":  ClassReadOnly,
+		"find . -delete":                      ClassFilesystem,
+		"find . -fprint out.txt":              ClassFilesystem,
+		"find . -name '*.go'":                 ClassReadOnly,
+	} {
+		if _, got := Bash(cmd); got != want {
+			t.Errorf("Bash(%q) = %s, want %s", cmd, got, want)
+		}
+	}
+}
+
 // A redirect is a write only when it has a target. ">;" is a syntax error; counting it made "cat >;"
 // filesystem alone but read_only once wrapped and split at the ";", which the fuzzer reads as wrapping
 // lowering the class.
