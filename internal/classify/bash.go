@@ -858,7 +858,8 @@ func hasWriteRedirect(command string) bool {
 		rest = strings.TrimLeft(rest, ">")
 		// ">|" overrides noclobber and is still a write to the word after it.
 		rest = strings.TrimPrefix(rest, "|")
-		rest = strings.TrimLeft(rest, " \t")
+		// The same blanks tokenize splits words at.
+		rest = strings.TrimLeft(rest, " \t\r\v\f")
 		if strings.HasPrefix(rest, "&") {
 			continue
 		}
