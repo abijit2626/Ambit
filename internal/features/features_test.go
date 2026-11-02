@@ -316,6 +316,30 @@ func TestDestinationsLeaveOutEmailDomains(t *testing.T) {
 	}
 }
 
+// Inline code names modules and calls that look like hosts. A host in code is in a string; a word
+// that is called, or imported, is not one.
+func TestDestinationsLeaveOutCodeNames(t *testing.T) {
+	e := New(testKey)
+	d := func(s string) string { return e.Digest(s) }
+	for _, c := range []struct {
+		text string
+		want []string
+	}{
+		{`python3 -c 'import requests; requests.post("https://api.vendor.test/v1", data="x")'`, []string{d("vendor.test")}},
+		{`python3 -c 'import urllib.request; urllib.request.urlopen("https://x.vendor.test")'`, []string{d("vendor.test")}},
+		{`python3 -c 'from http.client import HTTPSConnection; HTTPSConnection("api.vendor.test")'`, []string{d("vendor.test")}},
+		{`node -e "http.request('https://cdn.vendor.test/a')"`, []string{d("vendor.test")}},
+		{`curl https://api.vendor.test/v1 -d 'from api.other.test'`, []string{d("vendor.test"), d("other.test")}},
+		{`ssh build.internal.corp`, []string{d("internal.corp")}},
+	} {
+		got := e.Destinations(c.text)
+		sort.Strings(c.want)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("Destinations(%q) = %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
 // Every destination is a domain or address Extract also reports, so leaving out email domains can
 // only remove destinations, never invent one.
 func FuzzDestinationsAreExtractedDomains(f *testing.F) {

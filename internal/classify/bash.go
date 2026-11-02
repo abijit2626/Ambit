@@ -24,6 +24,8 @@ var networkTools = map[string]bool{
 	"dig": true, "nslookup": true, "host": true, "ping": true, "traceroute": true,
 	"aws": true, "gcloud": true, "az": true, "kubectl": true, "gh": true, "glab": true,
 	"doctl": true, "heroku": true, "flyctl": true, "vercel": true, "netlify": true,
+	// Package runners that fetch what they run, as "npm exec" and "uv run" already count.
+	"npx": true, "pnpx": true, "bunx": true, "uvx": true,
 
 	"plink": true, "pscp": true, "psftp": true, "bitsadmin": true,
 
@@ -199,7 +201,7 @@ func classifyCommand(command string, depth int) string {
 		best = ClassPublish
 	}
 	if severity(ClassNetwork) > severity(best) &&
-		(powershellNetwork.MatchString(bare) || powershellNewObject.MatchString(command)) {
+		(powershellNetwork.MatchString(bare) || powershellNewObject.MatchString(command) || inlineCodeReachesNetwork(command)) {
 		best = ClassNetwork
 	}
 	return best
@@ -702,6 +704,10 @@ func innerCommand(tool string, args []string) (string, bool) {
 			}
 			return joinArgs(args[i:]), true
 		}
+	default:
+		if isPython(tool) {
+			return pythonModule(args)
+		}
 	}
 	return "", false
 }
@@ -869,4 +875,126 @@ func hasWriteRedirect(command string) bool {
 		}
 	}
 	return false
+}
+
+// An interpreter given code on its command line, as in python -c or node -e, is classed by what the
+// code uses: a network API of its language makes the command network. A URL alone does not, since
+// code that only prints one connects nowhere. Code is read from the whole command, not a segment,
+// because splitSegments cuts at a ";" inside the quoted code.
+type inlineLanguage struct {
+	code    func(flag string) bool // whether option flag takes the code as its value
+	modules func(flag string) string
+	api     *regexp.Regexp
+}
+
+var inlineLanguages = map[string]inlineLanguage{
+	"python": {
+		code: func(f string) bool { return f == "-c" || shortClusterEndsWith(f, 'c') },
+		api:  regexp.MustCompile(`\b(?:urllib|urllib2|urllib3|requests|httpx|aiohttp|http\.client|httplib|socket|ftplib|smtplib|telnetlib|paramiko|websocket|websockets|urlopen|pycurl)\b`),
+	},
+	"node": {
+		code: func(f string) bool { return f == "-e" || f == "-p" || f == "--eval" || f == "--print" || f == "eval" },
+		api: regexp.MustCompile(`\bfetch\s*\(|\b(?:require|import)\s*\(\s*['"](?:node:)?(?:https?|http2|net|tls|dgram|dns)['"]|\bfrom\s+['"](?:node:)?(?:https?|http2|net|tls|dgram|dns)['"]|` +
+			`\b(?:https?|http2|net|tls|dgram)\.(?:get|request|connect|createConnection|createSocket)\s*\(|\bWebSocket\b|\bXMLHttpRequest\b|\baxios\b|\bDeno\.connect`),
+	},
+	"perl": {
+		code: func(f string) bool {
+			return f == "-e" || f == "-E" || shortClusterEndsWith(f, 'e') || shortClusterEndsWith(f, 'E')
+		},
+		modules: func(f string) string { return strings.TrimPrefix(strings.TrimPrefix(f, "-M"), "-m") },
+		api:     regexp.MustCompile(`\b(?:LWP|HTTP::Tiny|HTTP::Request|IO::Socket|Net::(?:HTTP|FTP|SMTP|Ping)|Socket|Mojo::UserAgent|WWW::Mechanize)\b`),
+	},
+	"ruby": {
+		code:    func(f string) bool { return f == "-e" || shortClusterEndsWith(f, 'e') },
+		modules: func(f string) string { return strings.TrimPrefix(f, "-r") },
+		api:     regexp.MustCompile(`\bNet::(?:HTTP|FTP|SMTP)\b|\bopen-uri\b|\bURI\.open\b|\b(?:TCPSocket|UDPSocket|Socket)\b|\bnet/(?:http|ftp|smtp)\b|\bsocket\b|\b(?:Faraday|HTTParty|RestClient|Excon)\b`),
+	},
+	"php": {
+		code: func(f string) bool { return f == "-r" },
+		api:  regexp.MustCompile(`(?i)\bcurl_init\b|\bfsockopen\b|\bstream_socket_client\b|\bget_headers\b|\b(?:file_get_contents|fopen|file|readfile|copy)\s*\(\s*['"](?:https?|ftp)://`),
+	},
+}
+
+// The interpreter's name may follow a separator, a bracket or a quote ("bash -c 'python -c ...'"),
+// and carry a path or .exe.
+var interpreterWord = regexp.MustCompile(`(?i)(?:^|[\s;&|(!{'"` + "`" + `])(?:[^\s;&|'"]*[/\\])?(python[0-9.]*|py|node|nodejs|deno|bun|perl[0-9.]*|ruby[0-9.]*|php[0-9.]*)(?:\.exe)?(?:\s|$)`)
+
+func inlineLanguageOf(name string) (inlineLanguage, bool) {
+	name = strings.ToLower(name)
+	switch {
+	case isPython(name):
+		return inlineLanguages["python"], true
+	case name == "node" || name == "nodejs" || name == "deno" || name == "bun":
+		return inlineLanguages["node"], true
+	case strings.HasPrefix(name, "perl"):
+		return inlineLanguages["perl"], true
+	case strings.HasPrefix(name, "ruby"):
+		return inlineLanguages["ruby"], true
+	case strings.HasPrefix(name, "php"):
+		return inlineLanguages["php"], true
+	}
+	return inlineLanguage{}, false
+}
+
+func inlineCodeReachesNetwork(command string) bool {
+	for _, m := range interpreterWord.FindAllStringSubmatchIndex(command, -1) {
+		lang, ok := inlineLanguageOf(command[m[2]:m[3]])
+		if !ok {
+			continue
+		}
+		args := tokenize(command[m[1]:])
+		for i := 0; i < len(args); i++ {
+			f := stripQuotes(args[i])
+			if lang.modules != nil && len(f) > 2 && f[0] == '-' && f[1] != '-' {
+				if mod := lang.modules(f); mod != f && lang.api.MatchString(mod) {
+					return true
+				}
+			}
+			if lang.code(f) {
+				if i+1 < len(args) && lang.api.MatchString(stripQuotes(args[i+1])) {
+					return true
+				}
+				break
+			}
+			// deno eval and node's flags come before the code; the first other word is a script.
+			if !strings.HasPrefix(f, "-") && f != "eval" {
+				break
+			}
+		}
+	}
+	return false
+}
+
+// shortClusterEndsWith says whether f is a cluster of short options, such as perl's "-ne" or
+// python's "-Im", whose last letter is c, so the next word is that option's value.
+func shortClusterEndsWith(f string, c byte) bool {
+	return len(f) > 2 && f[0] == '-' && f[1] != '-' && f[len(f)-1] == c
+}
+
+func isPython(name string) bool {
+	return name == "py" || (strings.HasPrefix(name, "python") && strings.Trim(name[len("python"):], "0123456789.") == "")
+}
+
+// pythonModule is the command "python -m module args" runs, read as "module args", so that
+// python -m pip install and python -m twine upload class as pip and twine do.
+func pythonModule(args []string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		a := stripQuotes(args[i])
+		switch {
+		case a == "-m" || shortClusterEndsWith(a, 'm'):
+			// "-m pip", or run together after other flags: "-Im pip".
+			if i+1 < len(args) {
+				return joinArgs(args[i+1:]), true
+			}
+			return "", false
+		case strings.HasPrefix(a, "-m") && len(a) > 2:
+			return joinArgs(append([]string{a[2:]}, args[i+1:]...)), true
+		case a == "-W" || a == "-X":
+			i++
+		case a == "-c" || shortClusterEndsWith(a, 'c') || !strings.HasPrefix(a, "-"):
+			// -c's code, or a script: no module.
+			return "", false
+		}
+	}
+	return "", false
 }

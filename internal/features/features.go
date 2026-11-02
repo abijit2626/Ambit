@@ -167,7 +167,8 @@ func (e *Extractor) Extract(text string) *event.Features {
 // example.org or repo.git, though both remain domains the text carries for every other purpose.
 func (e *Extractor) Destinations(text string) []string {
 	out := map[string]bool{}
-	for _, w := range strings.FieldsFunc(text, isRegexpSpace) {
+	words := strings.FieldsFunc(text, isRegexpSpace)
+	for wi, w := range words {
 		if strings.Contains(w, "://") {
 			for _, m := range reURL.FindAllString(w, -1) {
 				if h := hostFromURL(m); h != "" {
@@ -182,13 +183,22 @@ func (e *Extractor) Destinations(text string) []string {
 		// path in this word: a URL contributes its host only, and "repo.git" in its path is not somewhere
 		// it goes. The text is never rewritten and matches are only ever dropped, so every destination is
 		// one Extract also reports.
+		if importedModule(words, wi) {
+			continue
+		}
 		inPath := urlPathHosts(w)
 		hostWords := []string{w}
 		if strings.Contains(w, "@") {
 			hostWords = strings.FieldsFunc(stripEmails(w), isRegexpSpace)
 		}
 		for _, hw := range hostWords {
-			for _, h := range reHost.FindAllString(hw, -1) {
+			for _, m := range reHost.FindAllStringIndex(hw, -1) {
+				h := hw[m[0]:m[1]]
+				// In code, "requests.post(" and "urllib.request.urlopen(" are calls, not hosts: a
+				// host in code is in a string, and nothing calls it.
+				if m[1] < len(hw) && hw[m[1]] == '(' {
+					continue
+				}
 				if !inPath[strings.ToLower(h)] && !looksLikeFilename(h) {
 					out[Registrable(h)] = true
 				}
@@ -202,6 +212,19 @@ func (e *Extractor) Destinations(text string) []string {
 		}
 	}
 	return e.digestSet(out)
+}
+
+// importedModule says whether words[i] names a module in code rather than a host: it follows
+// "import" ("import urllib.request"), or sits between "from" and "import" ("from http.client
+// import HTTPConnection").
+func importedModule(words []string, i int) bool {
+	word := func(j int) string {
+		if j < 0 || j >= len(words) {
+			return ""
+		}
+		return strings.Trim(words[j], "'\"`;(")
+	}
+	return word(i-1) == "import" || (word(i-1) == "from" && word(i+1) == "import")
 }
 
 // urlPathHosts is the hostname-shaped words in the paths, queries and fragments of the URLs in w.
