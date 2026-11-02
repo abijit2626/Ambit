@@ -78,7 +78,11 @@ clean:
 replay: build
 	./bin/$(BIN3)$(EXE) $(ARGS) testdata/replay
 
-FUZZTIME ?= 30s
+# FUZZTIME is a count of inputs per target ("100000x"), not a duration. With a duration, go test fails
+# the target with "context deadline exceeded" when the time runs out while a worker is still on a slow
+# input, as the targets that write files can be; that is a failure with no failing input. A count has no
+# deadline. A duration ("30s") still works, with that risk.
+FUZZTIME ?= 100000x
 FUZZ_TARGETS := \
 	./internal/redact:FuzzRedactIsAFixedPoint \
 	./internal/redact:FuzzRedactStripsADelimitedSecret \

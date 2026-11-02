@@ -63,9 +63,10 @@ jobs:
 
       # A short fuzz round over every fuzz target. The seed inputs already run as ordinary tests; this
       # adds mutation for a few seconds each, which is how the bash-classifier wrapping bypass was found.
-      # Five seconds keeps the round near two minutes; `make fuzz FUZZTIME=...` runs it longer by hand.
+      # Ten thousand inputs each keeps the round near two minutes; `make fuzz` runs ten times that by hand.
+      # It is a count, not a duration: a duration can fail with "context deadline exceeded" and no input.
       - name: make fuzz
-        run: make fuzz FUZZTIME=5s
+        run: make fuzz FUZZTIME=10000x
 
       # staticcheck catches what vet does not. It found a fuzz check that compared a hash with
       # itself, so it could never fail. Pinned in the Makefile.
