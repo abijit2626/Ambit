@@ -52,6 +52,20 @@ func FuzzBashWrappingNeverLowersTheClass(f *testing.F) {
 			"if true; then " + cmd + "; fi",
 			"for i in 1; do " + cmd + "; done",
 			"while " + cmd + "; do sleep 1; done",
+			"sudo -u root " + cmd,
+			"doas " + cmd,
+			"env -i " + cmd,
+			"nice -n 5 " + cmd,
+			"timeout 5 " + cmd,
+			"stdbuf -oL " + cmd,
+			"exec -a x " + cmd,
+			"command " + cmd,
+			"xargs " + cmd,
+			"watch -n 1 " + cmd,
+			"flock /tmp/l " + cmd,
+			"eval " + cmd,
+			"su -c '" + cmd + "'",
+			"find . -exec " + cmd + " +",
 		} {
 			if _, wc := Bash(wrapped); severity(wc) < severity(class) {
 				t.Errorf("wrapping lowered the class: %q is %s, but %q is %s", cmd, class, wrapped, wc)

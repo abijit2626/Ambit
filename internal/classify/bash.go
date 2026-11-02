@@ -3,6 +3,7 @@ package classify
 import (
 	"encoding/base64"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf16"
 )
@@ -260,6 +261,9 @@ func classifyTool(tool string, args []string) string {
 	if filesystemTools[tool] {
 		return ClassFilesystem
 	}
+	if tool == "find" && slices.ContainsFunc(args, func(a string) bool { return findWriteActions[stripQuotes(a)] }) {
+		return ClassFilesystem
+	}
 	if readOnlyTools[tool] {
 		return ClassReadOnly
 	}
@@ -386,16 +390,136 @@ func skipPrefix(tokens []string) int {
 		// "(A=1" are each a prefix behind a bracket. Every check below sees the word without it.
 		t := strings.TrimLeft(tokens[i], "({")
 		switch {
-		case t == "&" || t == "sudo" || t == "env" || t == "nohup" || t == "exec" || t == "time":
+		case t == "&":
 		// A keyword, or opening brackets alone: "(", "{(", "!", "(!".
 		case shellKeywords[t] || t == "":
 		case envAssignment.MatchString(t):
 		default:
-			return i
+			r, ok := runners[baseName(t)]
+			if !ok {
+				return i
+			}
+			next, ok := r.skip(tokens, i+1)
+			if !ok {
+				return i
+			}
+			i = next
+			continue
 		}
 		i++
 	}
 	return i
+}
+
+// A runner runs the command that follows its own options and operands: sudo, timeout, nice, xargs and
+// the like. The command it runs, not the runner, is what the segment does, so skipPrefix steps over the
+// runner to it. A runner that runs nothing here (no command follows, or an option such as "command -v"
+// or "sudo -l" means it only looks), or that takes its command as one string ("env -S", "flock -c"), is
+// itself the command word, and innerCommand reads any string it was given.
+type runner struct {
+	value      string   // short options that take a value, attached ("-n5") or as the next word
+	long       []string // long options that take the next word as their value when no "=" is attached
+	none       string   // short options after which the runner runs no command of its own
+	noneLong   []string // long options with that meaning
+	positional int      // operands before the command: timeout's duration, chroot's root, flock's lock
+}
+
+var runners = map[string]runner{
+	"sudo":        {value: "CDgprRtTUu", long: []string{"user", "group", "prompt", "close-from", "chdir", "role", "type", "command-timeout", "other-user", "chroot"}, none: "eKlvV", noneLong: []string{"list", "edit", "validate", "version", "help"}},
+	"doas":        {value: "u", none: "CLs"},
+	"env":         {value: "uC", long: []string{"unset", "chdir"}, none: "S", noneLong: []string{"split-string"}},
+	"nice":        {value: "n", long: []string{"adjustment"}},
+	"ionice":      {value: "cn", long: []string{"class", "classdata"}, none: "pPu", noneLong: []string{"pid", "pgid", "uid"}},
+	"timeout":     {value: "ks", long: []string{"kill-after", "signal"}, positional: 1},
+	"stdbuf":      {value: "eio", long: []string{"input", "output", "error"}},
+	"nohup":       {},
+	"time":        {value: "fo", long: []string{"format", "output"}},
+	"exec":        {value: "a"},
+	"command":     {none: "vV"},
+	"builtin":     {},
+	"setsid":      {},
+	"chrt":        {value: "DPT", long: []string{"sched-runtime", "sched-period", "sched-deadline"}, none: "mp", noneLong: []string{"max", "pid"}, positional: 1},
+	"taskset":     {none: "p", noneLong: []string{"pid"}, positional: 1},
+	"unbuffer":    {},
+	"caffeinate":  {value: "tw"},
+	"xargs":       {value: "adEILnPs", long: []string{"arg-file", "delimiter", "max-args", "max-procs", "max-chars", "max-lines"}},
+	"watch":       {value: "nq", long: []string{"interval", "equexit"}},
+	"flock":       {value: "Ew", long: []string{"conflict-exit-code", "timeout", "wait"}, none: "c", noneLong: []string{"command"}, positional: 1},
+	"chroot":      {positional: 1},
+	"strace":      {value: "abeEIoOPsSuUX", none: "p"},
+	"ltrace":      {value: "aAeFlnosuwxX", none: "p"},
+	"proxychains": {value: "f"},
+	"torsocks":    {value: "aPpu"},
+	"firejail":    {},
+	"cgexec":      {value: "g"},
+	"busybox":     {},
+}
+
+func init() { runners["proxychains4"] = runners["proxychains"] }
+
+// skip returns where the command that the runner at tokens[i] runs starts, or false when it runs none
+// of its own here.
+func (r runner) skip(tokens []string, j int) (int, bool) {
+	for j < len(tokens) {
+		a := stripQuotes(tokens[j])
+		if a == "--" {
+			j++
+			break
+		}
+		if len(a) < 2 || a[0] != '-' {
+			break
+		}
+		if r.runsNothing(a) {
+			return 0, false
+		}
+		if strings.HasPrefix(a, "--") {
+			name, _, attached := strings.Cut(a[2:], "=")
+			if !attached && slices.Contains(r.long, name) {
+				j++
+			}
+			j++
+			continue
+		}
+		takes := false
+		for k := 1; k < len(a); k++ {
+			if strings.IndexByte(r.value, a[k]) >= 0 {
+				// "-n" takes the next word; "-n5" has its value attached.
+				takes = k == len(a)-1
+				break
+			}
+		}
+		if takes {
+			j++
+		}
+		j++
+	}
+	j += r.positional
+	// flock takes -c after its lock file: "flock /tmp/l -c 'cmd'".
+	if j >= len(tokens) || r.runsNothing(stripQuotes(tokens[j])) {
+		return 0, false
+	}
+	return j, true
+}
+
+// runsNothing says whether option word a means the runner runs no command of its own, before any
+// value-taking letter in a cluster.
+func (r runner) runsNothing(a string) bool {
+	if name, ok := strings.CutPrefix(a, "--"); ok {
+		name, _, _ = strings.Cut(name, "=")
+		return slices.Contains(r.noneLong, name)
+	}
+	if len(a) < 2 || a[0] != '-' {
+		return false
+	}
+	for k := 1; k < len(a); k++ {
+		if strings.IndexByte(r.none, a[k]) >= 0 {
+			return true
+		}
+		if strings.IndexByte(r.value, a[k]) >= 0 {
+			return false
+		}
+	}
+	return false
 }
 
 func argv0Of(seg string) string {
@@ -543,6 +667,22 @@ func innerCommand(tool string, args []string) (string, bool) {
 		}
 	case "wsl":
 		return wslInner(args)
+	case "su", "script", "flock":
+		// The command is the value of -c (also run together, as in "su -lc" or "script -qc").
+		if v, _, ok := optionString(args, 'c', "command"); ok {
+			return v, true
+		}
+	case "env":
+		// env -S splits one string into the command and its first arguments.
+		if v, rest, ok := optionString(args, 'S', "split-string"); ok {
+			return joinArgs(append([]string{v}, rest...)), true
+		}
+	case "eval":
+		if len(args) > 0 {
+			return joinArgs(args), true
+		}
+	case "find":
+		return findExecs(args)
 	case "iex", "invoke-expression":
 		if len(args) > 0 {
 			return joinArgs(args), true
@@ -558,6 +698,64 @@ func innerCommand(tool string, args []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// optionString finds a short option, alone or last in a cluster ("-c", "-lc"), or a long option, and
+// returns its value, attached or the next word, and the words after it. It stops at "--".
+func optionString(args []string, short byte, long string) (value string, rest []string, ok bool) {
+	next := func(i int) (string, []string, bool) {
+		if i+1 >= len(args) {
+			return "", nil, false
+		}
+		return stripQuotes(args[i+1]), args[i+2:], true
+	}
+	for i, a := range args {
+		s := stripQuotes(a)
+		switch {
+		case s == "--":
+			return "", nil, false
+		case s == "--"+long:
+			return next(i)
+		case strings.HasPrefix(s, "--"+long+"="):
+			return s[len(long)+3:], args[i+1:], true
+		case len(s) >= 2 && s[0] == '-' && s[1] != '-':
+			if k := strings.IndexByte(s[1:], short); k >= 0 {
+				if v := s[k+2:]; v != "" {
+					return v, args[i+1:], true
+				}
+				return next(i)
+			}
+		}
+	}
+	return "", nil, false
+}
+
+// find's actions that write files of their own, rather than only list them.
+var findWriteActions = map[string]bool{"-delete": true, "-fprint": true, "-fprint0": true, "-fprintf": true, "-fls": true}
+
+// findExecs is every command find runs with -exec, -execdir, -ok or -okdir, joined as one command
+// line. Each ends at ";" or at "+" after "{}". splitSegments has already cut at the ";", so an escaped
+// one arrives as a bare "\".
+func findExecs(args []string) (string, bool) {
+	var cmds []string
+	for i := 0; i < len(args); i++ {
+		switch stripQuotes(args[i]) {
+		case "-exec", "-execdir", "-ok", "-okdir":
+			j := i + 1
+			for j < len(args) {
+				s := stripQuotes(args[j])
+				if s == ";" || s == `\;` || s == `\` || (s == "+" && stripQuotes(args[j-1]) == "{}") {
+					break
+				}
+				j++
+			}
+			if j > i+1 {
+				cmds = append(cmds, joinArgs(args[i+1:j]))
+			}
+			i = j
+		}
+	}
+	return strings.Join(cmds, "; "), len(cmds) > 0
 }
 
 func psIs(name, full string, min int) bool {
