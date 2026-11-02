@@ -225,7 +225,7 @@ func classifySegment(seg string, depth int) string {
 			}
 		}
 	}
-	if severity(class) < severity(ClassNetwork) && reachesRemoteShare(seg) {
+	if severity(class) < severity(ClassNetwork) && (reachesRemoteShare(seg) || opensSocket(seg)) {
 		class = ClassNetwork
 	}
 	if class == ClassReadOnly && hasWriteRedirect(seg) {
