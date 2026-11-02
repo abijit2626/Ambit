@@ -196,6 +196,14 @@ func classifyCommand(command string, depth int) string {
 		best = ClassOther
 	}
 
+	if depth < maxUnwrapDepth {
+		for _, inner := range inlineCodeCommands(command) {
+			if c := classifyCommand(inner, depth+1); severity(c) > severity(best) {
+				best = c
+			}
+		}
+	}
+
 	bare := blankQuoted(command)
 	if severity(ClassPublish) > severity(best) && powershellPublish.MatchString(bare) {
 		best = ClassPublish
@@ -902,6 +910,9 @@ type inlineLanguage struct {
 	code    func(flag string) bool // whether option flag takes the code as its value
 	modules func(flag string) string
 	api     *regexp.Regexp
+
+	name  string         // the key in inlineLanguages
+	spawn *regexp.Regexp // the language's calls that run a command; see subprocess.go
 }
 
 var inlineLanguages = map[string]inlineLanguage{
@@ -954,6 +965,14 @@ func inlineLanguageOf(name string) (inlineLanguage, bool) {
 }
 
 func inlineCodeReachesNetwork(command string) bool {
+	return eachInlineCode(command, func(lang inlineLanguage, code string, _ bool) bool {
+		return lang.api.MatchString(code)
+	})
+}
+
+// eachInlineCode calls visit with each piece of code given to an interpreter on the command line, and
+// with each module it is told to load (module true), until visit returns true.
+func eachInlineCode(command string, visit func(lang inlineLanguage, code string, module bool) bool) bool {
 	for _, m := range interpreterWord.FindAllStringSubmatchIndex(command, -1) {
 		lang, ok := inlineLanguageOf(command[m[2]:m[3]])
 		if !ok {
@@ -966,12 +985,12 @@ func inlineCodeReachesNetwork(command string) bool {
 		for tok, ok := sc.next(); ok; tok, ok = sc.next() {
 			f := stripQuotes(tok)
 			if lang.modules != nil && len(f) > 2 && f[0] == '-' && f[1] != '-' {
-				if mod := lang.modules(f); mod != f && lang.api.MatchString(mod) {
+				if mod := lang.modules(f); mod != f && visit(lang, mod, true) {
 					return true
 				}
 			}
 			if lang.code(f) {
-				if code, ok := sc.next(); ok && lang.api.MatchString(stripQuotes(code)) {
+				if code, ok := sc.next(); ok && visit(lang, unquoteCode(code), false) {
 					return true
 				}
 				break
