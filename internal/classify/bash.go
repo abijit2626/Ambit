@@ -382,11 +382,13 @@ var shellKeywords = map[string]bool{
 func skipPrefix(tokens []string) int {
 	i := 0
 	for i < len(tokens) {
-		t := tokens[i]
+		// The tokenizer leaves an opening bracket on the word after it, so "(sudo", "{env", "(!" and
+		// "(A=1" are each a prefix behind a bracket. Every check below sees the word without it.
+		t := strings.TrimLeft(tokens[i], "({")
 		switch {
 		case t == "&" || t == "sudo" || t == "env" || t == "nohup" || t == "exec" || t == "time":
-		// A keyword or an opening bracket, alone or run together: "(", "{", "!", "(!".
-		case shellKeywords[strings.TrimLeft(t, "({")] || strings.Trim(t, "({") == "":
+		// A keyword, or opening brackets alone: "(", "{(", "!", "(!".
+		case shellKeywords[t] || t == "":
 		case envAssignment.MatchString(t):
 		default:
 			return i
