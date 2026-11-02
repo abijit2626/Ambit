@@ -26,6 +26,15 @@ var networkTools = map[string]bool{
 	"doctl": true, "heroku": true, "flyctl": true, "vercel": true, "netlify": true,
 	// Package runners that fetch what they run, as "npm exec" and "uv run" already count.
 	"npx": true, "pnpx": true, "bunx": true, "uvx": true,
+	// Cloud storage and sync clients: each moves files to or from somewhere else, which is what an
+	// exfiltration needs.
+	"rclone": true, "s3cmd": true, "s5cmd": true, "gsutil": true, "bq": true, "azcopy": true,
+	"sshfs": true, "smbclient": true, "lftp": true, "tftp": true,
+	// Tunnels: each exposes this machine, or reaches another, through a third party.
+	"ngrok": true, "cloudflared": true, "tailscale": true,
+	// Other clients that make a request or a connection.
+	"xh": true, "https": true, "curlie": true, "wget2": true, "axel": true, "websocat": true,
+	"wscat": true, "grpcurl": true, "mosh": true, "nmap": true, "whois": true, "ssh-copy-id": true,
 
 	"plink": true, "pscp": true, "psftp": true, "bitsadmin": true,
 
@@ -86,6 +95,8 @@ var networkSubcommands = map[string][]string{
 	"dotnet": {"restore", "add", "tool"},
 
 	"net": {"use", "view"},
+
+	"openssl": {"s_client"},
 }
 
 var vcsWriteSubcommands = []string{"push"}
@@ -200,12 +211,20 @@ func classifyCommand(command string, depth int) string {
 		best = ClassOther
 	}
 
-	if severity(best) >= severity(ClassPublish) {
-		return best
-	}
 	// Each pattern runs only where the words it needs appear; see prefilter.go. The words are
 	// looked for in command, which holds everything bare does.
 	ft := newFoldText(command)
+	if depth < maxUnwrapDepth && ft.mayHold(interpreterWords) {
+		for _, inner := range inlineCodeCommands(command) {
+			if c := classifyCommand(inner, depth+1); severity(c) > severity(best) {
+				best = c
+			}
+		}
+	}
+
+	if severity(best) >= severity(ClassPublish) {
+		return best
+	}
 	bare := blankQuoted(command)
 	if ft.mayHold(powershellPublishWords) && powershellPublish.MatchString(bare) {
 		best = ClassPublish
@@ -237,7 +256,7 @@ func classifySegment(seg string, depth int) string {
 			}
 		}
 	}
-	if severity(class) < severity(ClassNetwork) && reachesRemoteShare(seg) {
+	if severity(class) < severity(ClassNetwork) && (reachesRemoteShare(seg) || opensSocket(seg)) {
 		class = ClassNetwork
 	}
 	if class == ClassReadOnly && hasWriteRedirect(seg) {
@@ -736,6 +755,9 @@ func innerCommand(tool string, args []string) (string, bool) {
 		if isPython(tool) {
 			return pythonModule(args)
 		}
+		if inner, ok := windowsInner(tool, args); ok {
+			return inner, true
+		}
 	}
 	return "", false
 }
@@ -914,6 +936,9 @@ type inlineLanguage struct {
 	code    func(flag string) bool // whether option flag takes the code as its value
 	modules func(flag string) string
 	api     *regexp.Regexp
+
+	name  string         // the key in inlineLanguages
+	spawn *regexp.Regexp // the language's calls that run a command; see subprocess.go
 }
 
 var inlineLanguages = map[string]inlineLanguage{
@@ -966,6 +991,14 @@ func inlineLanguageOf(name string) (inlineLanguage, bool) {
 }
 
 func inlineCodeReachesNetwork(command string) bool {
+	return eachInlineCode(command, func(lang inlineLanguage, code string, _ bool) bool {
+		return lang.api.MatchString(code)
+	})
+}
+
+// eachInlineCode calls visit with each piece of code given to an interpreter on the command line, and
+// with each module it is told to load (module true), until visit returns true.
+func eachInlineCode(command string, visit func(lang inlineLanguage, code string, module bool) bool) bool {
 	for _, m := range interpreterWord.FindAllStringSubmatchIndex(command, -1) {
 		lang, ok := inlineLanguageOf(command[m[2]:m[3]])
 		if !ok {
@@ -978,12 +1011,12 @@ func inlineCodeReachesNetwork(command string) bool {
 		for tok, ok := sc.next(); ok; tok, ok = sc.next() {
 			f := stripQuotes(tok)
 			if lang.modules != nil && len(f) > 2 && f[0] == '-' && f[1] != '-' {
-				if mod := lang.modules(f); mod != f && lang.api.MatchString(mod) {
+				if mod := lang.modules(f); mod != f && visit(lang, mod, true) {
 					return true
 				}
 			}
 			if lang.code(f) {
-				if code, ok := sc.next(); ok && lang.api.MatchString(stripQuotes(code)) {
+				if code, ok := sc.next(); ok && visit(lang, unquoteCode(code), false) {
 					return true
 				}
 				break

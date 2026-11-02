@@ -91,6 +91,7 @@ FUZZ_TARGETS := \
 	./internal/features:FuzzDestinationsAreExtractedDomains \
 	./internal/classify:FuzzBashWrappingNeverLowersTheClass \
 	./internal/classify:FuzzTokenScannerSplitsAsTokenizeDid \
+	./internal/classify:FuzzCredentialPathsAreCredentialWordsOfTheCommand \
 	./internal/classify:FuzzPrefilterNeverSkipsAMatch \
 	./internal/mcp:FuzzRelayIsByteExact \
 	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \
@@ -111,9 +112,13 @@ FUZZ_TARGETS := \
 	./internal/doctor:FuzzMCPFindingsNeverRepeatASecret \
 	./internal/m0report:FuzzBuildFromAnySpool
 
+# FUZZ_KEEP_GOING=1 runs every target even after one fails, and fails at the end naming them all;
+# the nightly job uses it so one failure does not hide the others.
 fuzz:
-	@for t in $(FUZZ_TARGETS); do \
+	@failed=; for t in $(FUZZ_TARGETS); do \
 		pkg=$${t%%:*}; name=$${t##*:}; \
 		echo "== $$name ($(FUZZTIME))"; \
-		go test $$pkg -run '^$$' -fuzz "^$$name\$$" -fuzztime $(FUZZTIME) -fuzzminimizetime 10s || exit 1; \
-	done
+		go test $$pkg -run '^$$' -fuzz "^$$name\$$" -fuzztime $(FUZZTIME) -fuzzminimizetime 10s || { \
+			failed="$$failed $$name"; [ -n "$(FUZZ_KEEP_GOING)" ] || exit 1; }; \
+	done; \
+	if [ -n "$$failed" ]; then echo "fuzz targets that failed:$$failed"; exit 1; fi

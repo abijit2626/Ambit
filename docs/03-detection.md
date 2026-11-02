@@ -90,7 +90,10 @@ Two things this surfaced, worth stating rather than only in code comments:
 
 **Bit B — sensitive data accessed.** Set by:
 - Read of a credential path: `~/.ssh/**`, `~/.aws/**`, `~/.config/gcloud/**`,
-  `**/.env*`, `.npmrc`, `.netrc`, `**/id_*`, keystores, wallet files
+  `**/.env*`, `.npmrc`, `.netrc`, `**/id_*`, keystores, wallet files. A Bash command that
+  names one counts as a read of it, as in `cat ~/.ssh/id_rsa` or `curl -d @.env …`, and a
+  redirect to one as a write; the event carries the path as a `Read` would, so D1's rule
+  100201 and D2's sweep see it too
 - Read of a file whose content trips the edge secrets classifier
 - Read outside the session's working-directory boundary
 - An MCP tool returning data from a system labelled sensitive: the `sensitive` tool label

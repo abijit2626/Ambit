@@ -32,6 +32,26 @@ type Egress struct {
 	FirstWeekPerDay float64 `json:"first_week_per_day"`
 	LaterPerDay     float64 `json:"later_per_day"`
 	LaterDays       int     `json:"later_days"`
+
+	// Learning is what a rule alerting on every new destination would have fired, for each of
+	// LearningPeriods; see learningRows.
+	Learning []LearningRow `json:"learning,omitempty"`
+}
+
+// LearningPeriods are the learning periods the report tries, in days. Decision 3 in docs/07 is
+// whether D9 alerts only after one, and how long; these rows are the evidence for it.
+var LearningPeriods = []int{0, 3, 7, 14, 30}
+
+// LearningRow is what a rule that alerts on every new destination would have fired on this endpoint
+// had it stayed silent for the first Days days of the window: Alerts in all, PerDay over the
+// AlertDays calendar days after the learning period up to the last event. Covered is false when the
+// window ends inside the learning period, so the row says nothing yet.
+type LearningRow struct {
+	Days      int     `json:"days"`
+	Covered   bool    `json:"covered"`
+	Alerts    int     `json:"alerts"`
+	AlertDays int     `json:"alert_days"`
+	PerDay    float64 `json:"alerts_per_day"`
 }
 
 type EgressDay struct {
@@ -84,7 +104,29 @@ func BuildEgress(files []string) (*Egress, error) {
 	if g.LaterDays = span - weekDays; g.LaterDays > 0 {
 		g.LaterPerDay = float64(later) / float64(g.LaterDays)
 	}
+	g.Learning = learningRows(perDay, first, span)
 	return g, nil
+}
+
+// learningRows counts, for each learning period, the new destinations after it. The window starts on
+// the first egress_destination's day, which is close to when the profile started: an empty profile
+// reports its first destinations as soon as anything is contacted.
+func learningRows(perDay map[string]int, first time.Time, span int) []LearningRow {
+	rows := make([]LearningRow, 0, len(LearningPeriods))
+	for _, l := range LearningPeriods {
+		row := LearningRow{Days: l, Covered: span > l, AlertDays: max(span-l, 0)}
+		for d, n := range perDay {
+			t, _ := time.Parse(time.DateOnly, d)
+			if int(t.Sub(first).Hours()/24) >= l {
+				row.Alerts += n
+			}
+		}
+		if row.AlertDays > 0 {
+			row.PerDay = float64(row.Alerts) / float64(row.AlertDays)
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func scanEgress(path string, g *Egress, perDay map[string]int) error {
@@ -136,5 +178,15 @@ func (g *Egress) writeText(p func(string, ...any)) {
 		p("  first %d days: %.1f a day   after: %.1f a day over %d day(s)", FirstWeekDays, g.FirstWeekPerDay, g.LaterPerDay, g.LaterDays)
 	} else {
 		p("  %.1f a day; the window is inside the first %d days, so there is no later rate yet", g.FirstWeekPerDay, FirstWeekDays)
+	}
+	if len(g.Learning) > 0 {
+		p("  a rule alerting on each new destination, silent for a learning period of:")
+		for _, r := range g.Learning {
+			if !r.Covered {
+				p("    %2d days: the window ends inside it; no evidence yet", r.Days)
+				continue
+			}
+			p("    %2d days: %d alert(s), %.1f a day over %d day(s)", r.Days, r.Alerts, r.PerDay, r.AlertDays)
+		}
 	}
 }
