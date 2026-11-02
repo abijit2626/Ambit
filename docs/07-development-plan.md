@@ -16,32 +16,21 @@ Each item says who it needs:
 
 ## Stage 1 — Land the open branches
 
-Ten branches are pushed and not yet merged. Each was cut from `main` at the same commit. Each passed
-`go vet`, gofmt, staticcheck and the tests of the packages it touches on its own. Merged together
-they merge cleanly and pass the whole suite, including the race tests, the smoke tests and
-`make lint`. CI runs the rest on each pull request.
+*Done.* Every branch this plan started with is merged, and so is the code work it listed as
+needing nothing else: `govulncheck` in CI, the `mcp-interpose -url` smoke test, local or remote
+on `mcp_list`, and the doctor check that the egress profile loads. Later rounds added, among
+others:
 
-| Branch | What it does |
-| --- | --- |
-| `ambit-staticcheck-ci` | Runs staticcheck in CI (`make lint`). Fixes a fuzz check that compared a hash with itself and so could never fail. |
-| `ambit-registrable-public-suffixes` | `bbc.co.uk` and `mycompany.github.io` stay separate registrable domains. Before, trusting one GitHub Pages site trusted all of them, and every ngrok tunnel was one D9 destination. |
-| `ambit-doctor-mcp-coverage` | `ambitd doctor` says which MCP servers are behind `mcp-interpose`, which are not, and which use a `-server` name that differs from the key. |
-| `ambit-labelsuggest-reference-servers` | `-suggest-labels` is tested against the reference MCP servers' tool names. It skips a server-name prefix and never suggests `read_only` for a tool that fetches an address the agent supplies. |
-| `ambit-egress-fuzz` | Fuzz targets for the egress profile and the sandbox target parser. They found two bugs, fixed on the same branch. |
-| `ambit-config-egress-path-check` | Refuses an `egress_profile_path` that points at a sink or the HMAC key. |
-| `ambit-replay-egress-scenarios` | Two replay scenarios that pin D9's destination profile, one benign and one attack. |
-| `ambit-runbook-d9-egress` | The D9 runbook uses `egress_destination` in triage and says where to read it. |
-| `ambit-interpose-header-secret-check` | `mcp-interpose -header` refuses a credential header and points to `-header-env`. |
-| `ambit-development-plan` | This document. |
+- `ambitd report` counts D9's new destinations per day, and compares the first week with later
+  ones
+- `ambitd doctor` checks that ambitd's files are private and warns on `-url` over plain http
+- the hourly health event carries the egress profile's state
+- D9 no longer counts email domains or URL path words as destinations
+- the Bash classifier reads through runners (`sudo -u`, `timeout`, `xargs`, `find -exec`, ...),
+  and through code given to an interpreter on the command line (`python -c`, `node -e`, ...)
+- CI fuzzes every target by a count of inputs, so a slow input cannot fail it on time alone
 
-Two branches touch the same part of a file, but in different hunks:
-
-- the Makefile: staticcheck and egress-fuzz
-- the README: doctor, labelsuggest, replay and the header check
-
-**Done when:** all ten are merged and CI is green on `main`.
-
-**Who:** you, after review. A merge conflict or a CI failure is code work.
+New work follows the same rule: one branch per change, cut from `main`, merged once CI is green.
 
 ## Stage 2 — Decide
 
@@ -99,9 +88,10 @@ TODO.md section 3, in order:
    - the interesting fraction, compared with the 2–5% estimate
    - no `Too many fields for JSON decoder` in the manager log
    - zero developer-visible change, confirmed by asking each volunteer
-4. **Read D9's shadow data.** How many `egress_destination` events per endpoint per day? How many in
-   the first week, against later weeks? Which were hosts nobody contacted, read from text that only
-   named them? This is the input to decision 3 and to the first D9 rule.
+4. **Read D9's shadow data.** `ambitd report` on each endpoint gives the new destinations per day,
+   by source, and the first week's daily rate against later weeks'. Read a sample of the
+   `egress_destination` events beside it: which were hosts nobody contacted, read from text that
+   only named them? This is the input to decision 3 and to the first D9 rule.
 5. **Record the cohort's MCP tool lists.** Run `ambitd doctor` in each project to confirm the
    servers are interposed. Then run `mcp-interpose -suggest-labels`. Add each server's tool list to
    `internal/labelsuggest/reference_test.go`, and correct the heuristics where they guess wrong.
@@ -139,17 +129,17 @@ These items wait on stages 3–5, because their correct form depends on what tho
 
 ## Code work that needs nothing above
 
-These items can start at any time, each on its own branch:
+Nothing is waiting here at the moment. What remains is in the stages above, which each need a
+machine, the cohort or a decision first. The likeliest code work while those run:
 
-- `mcp-interpose -url` in the smoke script, run against a small HTTP MCP server the script starts.
-  Today the HTTP bridge is covered only by Go tests.
-- `govulncheck` in CI. The development environment's proxy refuses `vuln.go.dev`, so it was not run
-  for this plan; GitHub's runners can reach it.
-- `mcp_list` events that say whether a server is local or remote. An analyst triaging D4 on a
-  remote server has different questions to ask. This adds a field, so it needs a check against the
-  field ceiling.
-- An `ambitd doctor` check that the egress profile loads, so a damaged profile shows up before
-  someone wonders why D9 is quiet.
+- **A fix for each failure a stage 3 or stage 4 run turns up.** Send the failing output; it can
+  be reproduced against a fixture and fixed on its own branch.
+- **The classifier's known gaps** ([README](../README.md#known-limitations)): a script file, code
+  that reaches the network through a subprocess, and runners outside its table, such as GNU
+  `parallel`. Close them when the cohort's commands show they matter.
+- **Longer fuzz runs.** `make fuzz` runs 100,000 inputs per target, ten times CI's round. Every
+  run so far that went past CI's count found a classifier bug, so it is worth repeating after
+  each classifier change.
 
 ## Errata
 
