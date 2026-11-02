@@ -92,6 +92,7 @@ FUZZ_TARGETS := \
 	./internal/classify:FuzzBashWrappingNeverLowersTheClass \
 	./internal/classify:FuzzTokenScannerSplitsAsTokenizeDid \
 	./internal/classify:FuzzCredentialPathsAreCredentialWordsOfTheCommand \
+	./internal/classify:FuzzPrefilterNeverSkipsAMatch \
 	./internal/mcp:FuzzRelayIsByteExact \
 	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \
 	./internal/mcp:FuzzParseNeverPanics \

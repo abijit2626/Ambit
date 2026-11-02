@@ -170,6 +170,10 @@ func localUNCHost(h string) bool {
 }
 
 func reachesRemoteShare(text string) bool {
+	// uncShare needs two backslashes and uncShareSlash two slashes, both literal.
+	if !strings.Contains(text, `\\`) && !strings.Contains(text, "//") {
+		return false
+	}
 	for _, m := range uncShare.FindAllStringSubmatch(text, -1) {
 		if !localUNCHost(m[1]) {
 			return true
@@ -207,7 +211,10 @@ func classifyCommand(command string, depth int) string {
 		best = ClassOther
 	}
 
-	if depth < maxUnwrapDepth {
+	// Each pattern runs only where the words it needs appear; see prefilter.go. The words are
+	// looked for in command, which holds everything bare does.
+	ft := newFoldText(command)
+	if depth < maxUnwrapDepth && ft.mayHold(interpreterWords) {
 		for _, inner := range inlineCodeCommands(command) {
 			if c := classifyCommand(inner, depth+1); severity(c) > severity(best) {
 				best = c
@@ -215,12 +222,17 @@ func classifyCommand(command string, depth int) string {
 		}
 	}
 
+	if severity(best) >= severity(ClassPublish) {
+		return best
+	}
 	bare := blankQuoted(command)
-	if severity(ClassPublish) > severity(best) && powershellPublish.MatchString(bare) {
+	if ft.mayHold(powershellPublishWords) && powershellPublish.MatchString(bare) {
 		best = ClassPublish
 	}
 	if severity(ClassNetwork) > severity(best) &&
-		(powershellNetwork.MatchString(bare) || powershellNewObject.MatchString(command) || inlineCodeReachesNetwork(command)) {
+		((ft.mayHold(powershellNetworkWords) && powershellNetwork.MatchString(bare)) ||
+			(ft.mayHold(powershellNewObjectWords) && powershellNewObject.MatchString(command)) ||
+			(ft.mayHold(interpreterWords) && inlineCodeReachesNetwork(command))) {
 		best = ClassNetwork
 	}
 	return best
