@@ -463,6 +463,10 @@ type runner struct {
 	none       string   // short options after which the runner runs no command of its own
 	noneLong   []string // long options with that meaning
 	positional int      // operands before the command: timeout's duration, chroot's root, flock's lock
+	// userOption is the option that names the user to run as, for a runner such as runuser whose
+	// other form, without it, takes a user name as its first operand and the command as a -c
+	// string, as su does. Without that option the runner is the command, and innerCommand reads -c.
+	userOption, userLong string
 }
 
 var runners = map[string]runner{
@@ -494,6 +498,30 @@ var runners = map[string]runner{
 	"firejail":    {},
 	"cgexec":      {value: "g"},
 	"busybox":     {},
+
+	"parallel": {value: "ajnNLSIdECsP", long: []string{
+		"jobs", "max-args", "max-lines", "max-procs", "max-chars", "max-replace-args", "sshlogin",
+		"sshloginfile", "arg-file", "colsep", "delimiter", "delay", "timeout", "tmpdir", "joblog",
+		"results", "halt", "memfree", "load", "retries", "workdir", "env", "transferfile", "return",
+		"basefile", "tagstring", "header", "block", "nice"}},
+	"systemd-run": {value: "pEMHu", long: []string{
+		"unit", "property", "description", "slice", "uid", "gid", "nice", "working-directory",
+		"setenv", "machine", "host", "on-active", "on-boot", "on-startup", "on-unit-active",
+		"on-unit-inactive", "on-calendar", "timer-property", "path-property", "socket-property",
+		"service-type"}, none: "S", noneLong: []string{"shell"}},
+	"runuser":   {value: "ugGsw", long: []string{"user", "group", "supp-group", "shell", "whitelist-environment"}, none: "c", noneLong: []string{"command"}, userOption: "u", userLong: "user"},
+	"pkexec":    {long: []string{"user"}},
+	"sg":        {none: "c", positional: 1},
+	"setpriv":   {long: []string{"reuid", "regid", "ruid", "rgid", "euid", "egid", "groups", "inh-caps", "ambient-caps", "bounding-set", "securebits", "selinux-label", "apparmor-profile", "landlock-access", "landlock-rule", "pdeathsig"}},
+	"unshare":   {value: "SGRw", long: []string{"root", "wd", "setuid", "setgid", "map-user", "map-group"}},
+	"nsenter":   {value: "tSG", long: []string{"target", "setuid", "setgid"}},
+	"sshpass":   {value: "pfdP"},
+	"ssh-agent": {value: "aEPtO", none: "k"},
+	"faketime":  {value: "p", positional: 1},
+	"numactl":   {value: "NmCpiP", long: []string{"interleave", "membind", "cpunodebind", "physcpubind", "preferred", "preferred-many", "weighted-interleave"}, none: "sH", noneLong: []string{"show", "hardware"}},
+	"prlimit":   {value: "o", long: []string{"output"}, none: "p", noneLong: []string{"pid"}},
+
+	"dbus-run-session": {long: []string{"config-file", "dbus-daemon"}},
 }
 
 func init() { runners["proxychains4"] = runners["proxychains"] }
@@ -501,6 +529,7 @@ func init() { runners["proxychains4"] = runners["proxychains"] }
 // skip returns where the command that the runner at tokens[i] runs starts, or false when it runs none
 // of its own here.
 func (r runner) skip(tokens []string, j int) (int, bool) {
+	namedUser := false
 	for j < len(tokens) {
 		a := stripQuotes(tokens[j])
 		if a == "--" {
@@ -515,6 +544,7 @@ func (r runner) skip(tokens []string, j int) (int, bool) {
 		}
 		if strings.HasPrefix(a, "--") {
 			name, _, attached := strings.Cut(a[2:], "=")
+			namedUser = namedUser || (r.userLong != "" && name == r.userLong)
 			if !attached && slices.Contains(r.long, name) {
 				j++
 			}
@@ -524,6 +554,7 @@ func (r runner) skip(tokens []string, j int) (int, bool) {
 		takes := false
 		for k := 1; k < len(a); k++ {
 			if strings.IndexByte(r.value, a[k]) >= 0 {
+				namedUser = namedUser || (r.userOption != "" && a[k] == r.userOption[0])
 				// "-n" takes the next word; "-n5" has its value attached.
 				takes = k == len(a)-1
 				break
@@ -533,6 +564,9 @@ func (r runner) skip(tokens []string, j int) (int, bool) {
 			j++
 		}
 		j++
+	}
+	if r.userOption != "" && !namedUser {
+		return 0, false
 	}
 	j += r.positional
 	// flock takes -c after its lock file: "flock /tmp/l -c 'cmd'".
@@ -708,7 +742,7 @@ func innerCommand(tool string, args []string) (string, bool) {
 		}
 	case "wsl":
 		return wslInner(args)
-	case "su", "script", "flock":
+	case "su", "script", "flock", "runuser", "sg":
 		// The command is the value of -c (also run together, as in "su -lc" or "script -qc"). The words
 		// after it are joined on, as for "bash -c": a quoted command can arrive split at a "&" or ";"
 		// inside its quotes, and the rest of it is in those words.

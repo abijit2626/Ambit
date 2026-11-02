@@ -71,6 +71,10 @@ func FuzzBashWrappingNeverLowersTheClass(f *testing.F) {
 				"flock /tmp/l "+cmd,
 				"eval "+cmd,
 				"su -c '"+cmd+"'",
+				"parallel -j 4 "+cmd,
+				"systemd-run --user -p X=1 "+cmd,
+				"runuser -u root -- "+cmd,
+				"unshare -r -n "+cmd,
 			)
 		}
 		for _, wrapped := range wraps {
