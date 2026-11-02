@@ -90,6 +90,7 @@ FUZZ_TARGETS := \
 	./internal/features:FuzzPerWordExtractionChangesNothing \
 	./internal/features:FuzzDestinationsAreExtractedDomains \
 	./internal/classify:FuzzBashWrappingNeverLowersTheClass \
+	./internal/classify:FuzzTokenScannerSplitsAsTokenizeDid \
 	./internal/mcp:FuzzRelayIsByteExact \
 	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \
 	./internal/mcp:FuzzParseNeverPanics \

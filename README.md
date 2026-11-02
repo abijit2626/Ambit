@@ -499,10 +499,15 @@ team executes a runbook against a sample alert.
 - **A Bash command's class is read from its text.** The classifier reads through shells
   (`bash -c`, `cmd /c`, PowerShell's `-EncodedCommand`), through runners that start another
   command (`sudo`, `env`, `timeout`, `nice`, `xargs`, `watch`, `flock` and similar), and through
-  commands given as a string (`su -c`, `eval`, `find -exec`). It does not read code an
-  interpreter runs (`python -c`, `node -e`), a command built at run time, or a runner it does not
-  know (GNU `parallel`). Those are classed as the interpreter or runner, usually `other`, so D1
-  and D9 do not see them as network commands. The sandbox's own denials still do.
+  commands given as a string (`su -c`, `eval`, `find -exec`). Code given to an interpreter on the
+  command line (`python -c`, `node -e`, `deno eval`, `perl -e`, `ruby -e`, `php -r`) is network
+  when it names a network API of its language, such as `urllib`, `requests`, `fetch(`, `LWP` or
+  `Net::HTTP`, and `python -m pip install` is classed as `pip install`. It does not read a script
+  file, code that reaches the network some other way (a subprocess, an API it does not list), a
+  command built at run time, or a runner it does not know (GNU `parallel`). Those are classed as
+  the interpreter or runner, usually `other`, so D1 and D9 do not see them as network commands.
+  The sandbox's own denials still do. A network API name in code that never calls it, such as
+  `import socket` alone, still counts.
 - **The system-service installers: Windows has run on one real machine, where the upgrade,
   restart and fresh install each passed once.** `scripts/install-system.sh` and `.ps1`
   install `ambitd` to run from boot, with the service manager set to bring it back if it

@@ -171,3 +171,18 @@ func TestEmailAndPathWordsAreNotDestinations(t *testing.T) {
 		t.Errorf("destination = %v, want the API's %s", got[0]["egress_dest_digest"], want)
 	}
 }
+
+// Code given to an interpreter on the command line is a network command when it uses a network
+// API, so the host it names reaches the destination profile like curl's would.
+func TestInlineInterpreterCodeReportsItsDestination(t *testing.T) {
+	c, events := newEgressCollector(t, filepath.Join(t.TempDir(), "profile.txt"))
+	c.Handle(bashPre("s1", `python3 -c 'import requests; requests.post("https://api.new-vendor.test/v1", data="x")'`))
+	c.Handle(bashPre("s1", `python3 -c 'print("https://other-vendor.test/")'`))
+	got := egressEvents(t, events)
+	if len(got) != 1 {
+		t.Fatalf("egress_destination events = %d, want 1: the request, not the print", len(got))
+	}
+	if want := c.ext.Digest(features.Registrable("api.new-vendor.test")); got[0]["egress_dest_digest"] != want {
+		t.Errorf("digest = %v, want new-vendor.test's %s", got[0]["egress_dest_digest"], want)
+	}
+}
