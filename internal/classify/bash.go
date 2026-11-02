@@ -350,36 +350,52 @@ func splitSegments(command string) []string {
 
 func tokenize(seg string) []string {
 	var toks []string
-	var cur strings.Builder
-	flush := func() {
-		if cur.Len() > 0 {
-			toks = append(toks, cur.String())
-			cur.Reset()
-		}
+	sc := tokenScanner{s: seg}
+	for tok, ok := sc.next(); ok; tok, ok = sc.next() {
+		toks = append(toks, tok)
 	}
-	for i := 0; i < len(seg); i++ {
-		c := seg[i]
+	return toks
+}
+
+// tokenScanner yields tokenize's words one at a time, so a caller that needs only the first few words
+// after a point does not split the whole rest of a long command. Splitting it once per match made
+// inlineCodeReachesNetwork quadratic: seconds for a 64KB command that names an interpreter often.
+type tokenScanner struct {
+	s string
+	i int
+}
+
+func (t *tokenScanner) next() (string, bool) {
+	var cur strings.Builder
+	for ; t.i < len(t.s); t.i++ {
+		c := t.s[t.i]
 		switch {
 		case c == '"' || c == '\'':
-			if j := strings.IndexByte(seg[i+1:], c); j >= 0 {
-				cur.WriteString(seg[i : i+j+2])
-				i += j + 1
+			if j := strings.IndexByte(t.s[t.i+1:], c); j >= 0 {
+				cur.WriteString(t.s[t.i : t.i+j+2])
+				t.i += j + 1
 			} else {
 				cur.WriteByte(c)
 			}
-		case c == ' ' || c == '\t' || c == '\r' || c == '\v' || c == '\f':
-			flush()
-		case c == ')' || c == '`':
-			flush()
-		case c == '$' && i+1 < len(seg) && seg[i+1] == '(':
-			flush()
-			i++
+		case c == ' ' || c == '\t' || c == '\r' || c == '\v' || c == '\f' || c == ')' || c == '`':
+			if cur.Len() > 0 {
+				t.i++
+				return cur.String(), true
+			}
+		case c == '$' && t.i+1 < len(t.s) && t.s[t.i+1] == '(':
+			t.i++
+			if cur.Len() > 0 {
+				t.i++
+				return cur.String(), true
+			}
 		default:
 			cur.WriteByte(c)
 		}
 	}
-	flush()
-	return toks
+	if cur.Len() > 0 {
+		return cur.String(), true
+	}
+	return "", false
 }
 
 var envAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
@@ -943,16 +959,19 @@ func inlineCodeReachesNetwork(command string) bool {
 		if !ok {
 			continue
 		}
-		args := tokenize(command[m[1]:])
-		for i := 0; i < len(args); i++ {
-			f := stripQuotes(args[i])
+		// Only the words up to the code are read, one at a time: the scan stops at the code or at the
+		// first word that is not an option, so each match costs what it reads, not the rest of the
+		// command.
+		sc := tokenScanner{s: command, i: m[1]}
+		for tok, ok := sc.next(); ok; tok, ok = sc.next() {
+			f := stripQuotes(tok)
 			if lang.modules != nil && len(f) > 2 && f[0] == '-' && f[1] != '-' {
 				if mod := lang.modules(f); mod != f && lang.api.MatchString(mod) {
 					return true
 				}
 			}
 			if lang.code(f) {
-				if i+1 < len(args) && lang.api.MatchString(stripQuotes(args[i+1])) {
+				if code, ok := sc.next(); ok && lang.api.MatchString(stripQuotes(code)) {
 					return true
 				}
 				break
