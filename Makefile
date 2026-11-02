@@ -91,6 +91,7 @@ FUZZ_TARGETS := \
 	./internal/features:FuzzDestinationsAreExtractedDomains \
 	./internal/classify:FuzzBashWrappingNeverLowersTheClass \
 	./internal/classify:FuzzTokenScannerSplitsAsTokenizeDid \
+	./internal/classify:FuzzPrefilterNeverSkipsAMatch \
 	./internal/mcp:FuzzRelayIsByteExact \
 	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \
 	./internal/mcp:FuzzParseNeverPanics \
