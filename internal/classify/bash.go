@@ -110,7 +110,7 @@ var readOnlyTools = map[string]bool{
 	"stat": true, "du": true, "df": true, "pwd": true, "echo": true,
 	"which": true, "type": true, "basename": true, "dirname": true,
 	"sort": true, "uniq": true, "cut": true, "tr": true, "diff": true,
-	"jq": true, "yq": true, "date": true, "env": true, "printenv": true,
+	"jq": true, "yq": true, "date": true, "printenv": true,
 	"ps": true, "top": true, "uname": true, "whoami": true, "id": true,
 
 	"dir": true, "findstr": true, "where": true, "hostname": true, "ver": true,
@@ -672,9 +672,11 @@ func innerCommand(tool string, args []string) (string, bool) {
 	case "wsl":
 		return wslInner(args)
 	case "su", "script", "flock":
-		// The command is the value of -c (also run together, as in "su -lc" or "script -qc").
-		if v, _, ok := optionString(args, 'c', "command"); ok {
-			return v, true
+		// The command is the value of -c (also run together, as in "su -lc" or "script -qc"). The words
+		// after it are joined on, as for "bash -c": a quoted command can arrive split at a "&" or ";"
+		// inside its quotes, and the rest of it is in those words.
+		if v, rest, ok := optionString(args, 'c', "command"); ok {
+			return joinArgs(append([]string{v}, rest...)), true
 		}
 	case "env":
 		// env -S splits one string into the command and its first arguments.

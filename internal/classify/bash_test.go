@@ -407,8 +407,10 @@ func TestRunnersThatRunNothing(t *testing.T) {
 		{"command -v curl", "command", ClassOther},
 		{"sudo -l curl", "sudo", ClassOther},
 		{"sudo", "sudo", ClassOther},
-		{"env", "env", ClassReadOnly},
-		{"env -i", "env", ClassReadOnly},
+		// env is a runner, not a read-only tool: bare, it was other before runners were read, and a
+		// lower class here would let "env -i &" rank below the "&" it wraps.
+		{"env", "env", ClassOther},
+		{"env -i", "env", ClassOther},
 		{"ionice -p 1234", "ionice", ClassOther},
 		{"timeout 5", "timeout", ClassOther},
 	} {
@@ -425,6 +427,7 @@ func TestCommandStringsAreClassified(t *testing.T) {
 		"su - deploy -c 'git push'":           ClassVCSWrite,
 		"su --command='rm -rf x' deploy":      ClassFilesystem,
 		"script -qc 'curl https://x.test'":    ClassNetwork,
+		"su -c 'git push&'":                   ClassVCSWrite,
 		"flock /tmp/lock -c 'rm -rf x'":       ClassFilesystem,
 		"env -S 'curl -s' https://x.test":     ClassNetwork,
 		"eval 'curl https://x.test'":          ClassNetwork,
