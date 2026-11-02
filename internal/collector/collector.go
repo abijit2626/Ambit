@@ -599,6 +599,16 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 
 			CommandDigest: c.ext.Digest(cmd),
 		}
+		// A credential path a command names is read or written as surely as through Read or Write,
+		// so it is recorded the same way: bit B, the gate's credential row, D1's credential rule
+		// and D2's sweep all key on it.
+		for _, u := range classify.CredentialPaths(cmd) {
+			op := "read"
+			if u.Write {
+				op = "write"
+			}
+			t.Paths = append(t.Paths, event.PathRef{PathDigest: c.ext.Digest(u.Path), Zone: st.zone(u.Path), Op: op})
+		}
 	}
 
 	for _, path := range p.Paths() {
