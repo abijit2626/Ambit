@@ -440,3 +440,24 @@ func TestCommandStringsAreClassified(t *testing.T) {
 		}
 	}
 }
+
+// A redirect is a write only when it has a target. ">;" is a syntax error; counting it made "cat >;"
+// filesystem alone but read_only once wrapped and split at the ";", which the fuzzer reads as wrapping
+// lowering the class.
+func TestRedirectNeedsATarget(t *testing.T) {
+	for cmd, want := range map[string]string{
+		"cat >;":           ClassReadOnly,
+		"cat > )":          ClassReadOnly,
+		"cat >":            ClassReadOnly,
+		"cat a >&2":        ClassReadOnly,
+		"cat a > out.txt":  ClassFilesystem,
+		"cat a >> out.txt": ClassFilesystem,
+		"cat a >| out.txt": ClassFilesystem,
+		"cat a &> out.txt": ClassFilesystem,
+		"(cat a > out)":    ClassFilesystem,
+	} {
+		if _, got := Bash(cmd); got != want {
+			t.Errorf("Bash(%q) = %s, want %s", cmd, got, want)
+		}
+	}
+}

@@ -311,6 +311,10 @@ func splitSegments(command string) []string {
 			cut(i)
 			start = i + 1
 		case '|':
+			if i > 0 && command[i-1] == '>' {
+				// ">|" is a redirect that overrides noclobber, not a pipe.
+				continue
+			}
 			cut(i)
 			start = i + 1
 			if i+1 < n && command[i+1] == '&' {
@@ -850,11 +854,15 @@ func hasWriteRedirect(command string) bool {
 		}
 		rest := command[i+1:]
 		rest = strings.TrimLeft(rest, ">")
+		// ">|" overrides noclobber and is still a write to the word after it.
+		rest = strings.TrimPrefix(rest, "|")
 		rest = strings.TrimLeft(rest, " \t")
 		if strings.HasPrefix(rest, "&") {
 			continue
 		}
-		if rest != "" {
+		// A write needs a target. ">;" or "> )" is a syntax error, not a write, and counting it would
+		// make "cat >;" filesystem on its own but read_only once it is wrapped and split at the ";".
+		if rest != "" && !strings.ContainsRune(";|)\n", rune(rest[0])) {
 			return true
 		}
 	}
