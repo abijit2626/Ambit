@@ -26,6 +26,15 @@ var networkTools = map[string]bool{
 	"doctl": true, "heroku": true, "flyctl": true, "vercel": true, "netlify": true,
 	// Package runners that fetch what they run, as "npm exec" and "uv run" already count.
 	"npx": true, "pnpx": true, "bunx": true, "uvx": true,
+	// Cloud storage and sync clients: each moves files to or from somewhere else, which is what an
+	// exfiltration needs.
+	"rclone": true, "s3cmd": true, "s5cmd": true, "gsutil": true, "bq": true, "azcopy": true,
+	"sshfs": true, "smbclient": true, "lftp": true, "tftp": true,
+	// Tunnels: each exposes this machine, or reaches another, through a third party.
+	"ngrok": true, "cloudflared": true, "tailscale": true,
+	// Other clients that make a request or a connection.
+	"xh": true, "https": true, "curlie": true, "wget2": true, "axel": true, "websocat": true,
+	"wscat": true, "grpcurl": true, "mosh": true, "nmap": true, "whois": true, "ssh-copy-id": true,
 
 	"plink": true, "pscp": true, "psftp": true, "bitsadmin": true,
 
@@ -86,6 +95,8 @@ var networkSubcommands = map[string][]string{
 	"dotnet": {"restore", "add", "tool"},
 
 	"net": {"use", "view"},
+
+	"openssl": {"s_client"},
 }
 
 var vcsWriteSubcommands = []string{"push"}
