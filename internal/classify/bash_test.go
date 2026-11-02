@@ -452,6 +452,8 @@ func TestRedirectNeedsATarget(t *testing.T) {
 		"cat >;":           ClassReadOnly,
 		"cat > )":          ClassReadOnly,
 		"cat >":            ClassReadOnly,
+		"cat >\f":          ClassReadOnly,
+		"cat >\v\r":        ClassReadOnly,
 		"cat a >&2":        ClassReadOnly,
 		"cat a > out.txt":  ClassFilesystem,
 		"cat a >> out.txt": ClassFilesystem,
