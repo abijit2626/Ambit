@@ -471,3 +471,12 @@ func FilesWritten(command string) []WrittenFile {
 	}
 	return out
 }
+
+// Max is whichever of two classes says more about what a command can do: publish over vcs_write over
+// network over filesystem over other over read_only.
+func Max(a, b string) string {
+	if severity(b) > severity(a) {
+		return b
+	}
+	return a
+}
