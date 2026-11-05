@@ -932,8 +932,10 @@ func wslInner(args []string) (string, bool) {
 func baseName(tok string) string {
 
 	// A leading "!" is pipeline negation run into the word, as in "(!cp" or "!(cp"; it never names
-	// the command, and keeping it would let the negation hide the command from its class.
-	if t := strings.TrimRight(strings.TrimLeft(tok, "\"'(){}[]!"), "\"'(){}[]"); t != "" {
+	// the command, and keeping it would let the negation hide the command from its class. A leading
+	// "&" is the same: an ampersand splitSegments did not cut at, run into the word after it, or
+	// PowerShell's call operator written without a space.
+	if t := strings.TrimRight(strings.TrimLeft(tok, "\"'(){}[]!&"), "\"'(){}[]"); t != "" {
 		tok = t
 	}
 	tok = strings.ReplaceAll(tok, `\`, "/")

@@ -518,3 +518,16 @@ func TestPythonModuleIsItsCommand(t *testing.T) {
 		}
 	}
 }
+
+// An ampersand run into the command word does not hide it.
+func TestAmpersandRunIntoTheCommandWord(t *testing.T) {
+	for cmd, want := range map[string]string{
+		"& &dd if=/dev/zero of=x":             ClassFilesystem,
+		"bash -c '& &dd of=x'":                ClassFilesystem,
+		`&"C:\tools\curl.exe" https://x.test`: ClassNetwork,
+	} {
+		if _, got := Bash(cmd); got != want {
+			t.Errorf("Bash(%q) = %s, want %s", cmd, got, want)
+		}
+	}
+}
