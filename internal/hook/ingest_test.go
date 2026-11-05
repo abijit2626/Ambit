@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -190,5 +192,65 @@ func TestStatsReportTheQueueDrops(t *testing.T) {
 	}
 	if got := s.Stats().QueueDropped; got == 0 {
 		t.Error("Stats.QueueDropped is zero with a queue of 1 and five payloads")
+	}
+}
+
+// A handler that panics on one payload loses that payload only: the session's later payloads, and
+// other sessions', are still handled, the panic is counted, and the process lives on.
+func TestAPanickingPayloadIsLostAndIngestCarriesOn(t *testing.T) {
+	r := newSlowRecorder(0)
+	h := HandlerFunc(func(p *Payload) {
+		if p.ToolUseID == "boom" {
+			panic("a hostile payload")
+		}
+		r.Handle(p)
+	})
+	in := newIngest(h, 0)
+	var reported []string
+	var mu sync.Mutex
+	in.onPanic = func(v any, stack []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		reported = append(reported, fmt.Sprint(v))
+		if len(stack) == 0 {
+			t.Error("no stack reported")
+		}
+	}
+	for _, id := range []string{"t1", "boom", "t2"} {
+		in.enqueue(&Payload{SessionID: "s1", ToolUseID: id})
+	}
+	in.enqueue(&Payload{SessionID: "s2", ToolUseID: "u1"})
+	if !in.wait(2 * time.Second) {
+		t.Fatal("ingest did not drain after a panic")
+	}
+	seen, _ := r.snapshot()
+	if fmt.Sprint(seen["s1"]) != "[t1 t2]" || fmt.Sprint(seen["s2"]) != "[u1]" {
+		t.Errorf("handled = %v, want s1 [t1 t2] and s2 [u1]", seen)
+	}
+	if n := in.panicked.Load(); n != 1 {
+		t.Errorf("panicked = %d, want 1", n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reported) != 1 || reported[0] != "a hostile payload" {
+		t.Errorf("reported = %v", reported)
+	}
+}
+
+// The server reports handler panics in its stats, which the hourly health event counts as dropped.
+func TestServerStatsCountHandlerPanics(t *testing.T) {
+	s, err := NewServer(Options{
+		Handler: HandlerFunc(func(*Payload) { panic("boom") }),
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ingest.enqueue(&Payload{SessionID: "s1"})
+	if !s.ingest.wait(2 * time.Second) {
+		t.Fatal("ingest did not drain")
+	}
+	if got := s.Stats().HandlerPanics; got != 1 {
+		t.Errorf("HandlerPanics = %d, want 1", got)
 	}
 }

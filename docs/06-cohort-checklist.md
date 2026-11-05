@@ -89,7 +89,8 @@ Each one will otherwise cost the cohort a week to discover.
    each slow response, which says when they happened.
 
 4. **"Event loss" counts what ambitd saw and failed to keep.** `ambitd report` adds three
-   counters per run: events refused because the sink queue was full (`dropped_events`), lines a
+   counters per run: events refused because the sink queue was full, or whose handling panicked
+   (`dropped_events`; ambitd logs each panic and carries on), lines a
    sink failed to write (`write_errors`), and hook requests ambitd could not read or parse
    (`parse_errors`), over the lines the spool did write. An unparseable body also sets the health
    status to `degraded`. Two things are reported beside the number rather than in it, because

@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,12 @@ type ingest struct {
 	sessions map[string]*sessionQueue
 
 	dropped atomic.Int64
+
+	// panicked counts payloads whose handler panicked. The payload is lost, but its session's queue
+	// and every other session carry on: one malformed or hostile payload cannot stop ambitd, which
+	// would end collection until a restart and is itself what D7 alerts on.
+	panicked atomic.Int64
+	onPanic  func(v any, stack []byte)
 }
 
 type sessionQueue struct {
@@ -70,8 +77,20 @@ func (in *ingest) run(session string, q *sessionQueue) {
 		q.pending[0] = nil
 		q.pending = q.pending[1:]
 		in.mu.Unlock()
-		in.h.Handle(p)
+		in.handle(p)
 	}
+}
+
+func (in *ingest) handle(p *Payload) {
+	defer func() {
+		if v := recover(); v != nil {
+			in.panicked.Add(1)
+			if in.onPanic != nil {
+				in.onPanic(v, debug.Stack())
+			}
+		}
+	}()
+	in.h.Handle(p)
 }
 
 // wait reports whether everything enqueued so far has been handled, waiting up to timeout for it to be.
