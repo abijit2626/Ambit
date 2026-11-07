@@ -140,6 +140,7 @@ type Report struct {
 	Sessions      Sessions `json:"sessions"`
 	NotMeasurable []string `json:"not_measured_here"`
 	Egress        *Egress  `json:"egress,omitempty"`
+	Commands      Commands `json:"commands"`
 
 	seen   map[string]*sessionSeen
 	lastTS time.Time
@@ -178,6 +179,7 @@ func Build(files []string) (*Report, error) {
 	}
 	sort.Slice(r.Runs, func(i, j int) bool { return r.Runs[i].firstT.Before(r.Runs[j].firstT) })
 	r.summarize()
+	r.Commands.finish()
 	return r, nil
 }
 
@@ -228,6 +230,12 @@ func (r *Report) addHookEvent(line []byte) {
 		Session struct {
 			SessionID string `json:"session_id"`
 		} `json:"session"`
+		Tool *struct {
+			Bash *struct {
+				Argv0        string `json:"argv0"`
+				CommandClass string `json:"command_class"`
+			} `json:"bash"`
+		} `json:"tool"`
 	}
 	if json.Unmarshal(line, &e) != nil || e.Source != string(event.SourceHook) || e.Session.SessionID == "" {
 		return
@@ -235,6 +243,10 @@ func (r *Report) addHookEvent(line []byte) {
 	ts, _ := time.Parse(time.RFC3339Nano, e.TS)
 	if ts.After(r.lastTS) {
 		r.lastTS = ts
+	}
+	// One count per call: the PreToolUse, which every call has, and not its PostToolUse too.
+	if e.Kind == event.KindToolPre && e.Tool != nil && e.Tool.Bash != nil && e.Tool.Bash.CommandClass != "" {
+		r.Commands.add(e.Tool.Bash.CommandClass, e.Tool.Bash.Argv0)
 	}
 	s := r.seen[e.Session.SessionID]
 	if s == nil {
@@ -406,6 +418,8 @@ func (r *Report) WriteText(w io.Writer, verbose bool) {
 			p("")
 			r.Egress.writeText(p)
 		}
+		p("")
+		r.Commands.writeText(p)
 		return
 	}
 	p("  window:     %s to %s (%s), %d run(s)", r.WindowStart, r.WindowEnd, span(r.WindowStart, r.WindowEnd), len(r.Runs))
@@ -480,6 +494,9 @@ func (r *Report) WriteText(w io.Writer, verbose bool) {
 		r.Egress.writeText(p)
 		p("")
 	}
+
+	r.Commands.writeText(p)
+	p("")
 
 	p("measured elsewhere")
 	for _, s := range r.NotMeasurable {
