@@ -94,7 +94,11 @@ TODO.md section 3, in order:
    by source, and the first week's daily rate against later weeks'. Read a sample of the
    `egress_destination` events beside it: which were hosts nobody contacted, read from text that
    only named them? This is the input to decision 3 and to the first D9 rule.
-5. **Record the cohort's MCP tool lists.** Run `ambitd doctor` in each project to confirm the
+5. **Read the classifier's coverage.** The same report counts the cohort's Bash and PowerShell
+   commands by class and names the ten most often classed `other`. A runner (a tool that starts
+   another command) or a network tool in that list is a classifier gap: add it to
+   `internal/classify` with a test, and a replay scenario if a detector depends on it.
+6. **Record the cohort's MCP tool lists.** Run `ambitd doctor` in each project to confirm the
    servers are interposed. Then run `mcp-interpose -suggest-labels`. Add each server's tool list to
    `internal/labelsuggest/reference_test.go`, and correct the heuristics where they guess wrong.
 
