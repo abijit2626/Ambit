@@ -28,19 +28,22 @@ func TestWriteTargetsOfABashCommand(t *testing.T) {
 		"bash <<'EOF'\necho hi > ~/.ssh/rc\nEOF":             {"~/.ssh/rc"},
 		"python3 <<'EOF'\nif a > b: pass\nEOF":               nil,
 
-		"echo hi >&2":                      nil,
-		"grep x f 2>/dev/null":             nil,
-		"diff <(ls a) <(ls b)":             nil,
-		"tee >(gzip > x.gz) < in":          {"x.gz"},
-		"echo x > NUL":                     nil,
-		"awk '$1 > 5' data.txt":            nil,
-		`node -e "a => a > 1"`:             nil,
-		"ls -la src/ && cat README.md":     nil,
-		"echo 'a > b'":                     nil,
-		"exec 3>&1":                        nil,
-		"cat </etc/passwd":                 nil,
-		"(( count > limit ))":              {"limit"},
-		"printf %s x > /dev/tcp/x.test/80": nil,
+		"echo hi >&2":                             nil,
+		"grep x f 2>/dev/null":                    nil,
+		"diff <(ls a) <(ls b)":                    nil,
+		"tee >(gzip > x.gz) < in":                 {"x.gz"},
+		"echo x > NUL":                            nil,
+		"awk '$1 > 5' data.txt":                   nil,
+		`node -e "a => a > 1"`:                    nil,
+		"ls -la src/ && cat README.md":            nil,
+		"echo 'a > b'":                            nil,
+		"git commit -m 'pipe it | tee ~/.bashrc'": nil,
+		`echo "x; cd /etc" > f`:                   {"f"},
+		"grep -E 'a|b' x > out":                   {"out"},
+		"exec 3>&1":                               nil,
+		"cat </etc/passwd":                        nil,
+		"(( count > limit ))":                     {"limit"},
+		"printf %s x > /dev/tcp/x.test/80":        nil,
 	} {
 		if got := WriteTargets(cmd); !reflect.DeepEqual(got, want) {
 			t.Errorf("WriteTargets(%q) = %q, want %q", cmd, got, want)
@@ -140,6 +143,27 @@ func FuzzWriteTargetsAreWordsOfTheCommand(f *testing.F) {
 			if base := w[strings.LastIndex(w, "/")+1:]; base != "" && !strings.Contains(cmd, base) {
 				t.Fatalf("WriteTargets(%q) gave %q, whose last part is not in the command", cmd, w)
 			}
+		}
+	})
+}
+
+// Without quotes, splitOutsideQuotes cuts where splitSegments does; the classifier's segments are not
+// changed by it.
+func FuzzSplitOutsideQuotesMatchesSplitSegmentsWithoutQuotes(f *testing.F) {
+	for _, s := range []string{"a; b | c && d & e", "a >| b", "a &> b; c 2>&1 | d", "x\ny"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, cmd string) {
+		if strings.ContainsAny(cmd, "'\"") {
+			for _, seg := range splitOutsideQuotes(cmd) {
+				if !strings.Contains(cmd, seg) {
+					t.Fatalf("splitOutsideQuotes(%q) gave %q, not part of the command", cmd, seg)
+				}
+			}
+			return
+		}
+		if a, b := splitOutsideQuotes(cmd), splitSegments(cmd); !reflect.DeepEqual(a, b) {
+			t.Fatalf("%q: splitOutsideQuotes %q, splitSegments %q", cmd, a, b)
 		}
 	})
 }

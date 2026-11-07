@@ -93,6 +93,7 @@ FUZZ_TARGETS := \
 	./internal/classify:FuzzTokenScannerSplitsAsTokenizeDid \
 	./internal/classify:FuzzCredentialPathsAreCredentialWordsOfTheCommand \
 	./internal/classify:FuzzWriteTargetsAreWordsOfTheCommand \
+	./internal/classify:FuzzSplitOutsideQuotesMatchesSplitSegmentsWithoutQuotes \
 	./internal/classify:FuzzPrefilterNeverSkipsAMatch \
 	./internal/classify:FuzzDataHeredocBodyIsData \
 	./internal/classify:FuzzClosedHeredocKeepsWhatFollows \

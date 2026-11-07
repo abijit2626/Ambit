@@ -37,7 +37,7 @@ func WriteTargets(command string) []string {
 
 func writeTargets(command string, depth int, out *[]string, seen map[string]bool) {
 	dir, lost := "", false // where a cd in the command went: "" for where it started
-	for _, seg := range splitSegments(command) {
+	for _, seg := range splitOutsideQuotes(command) {
 		tokens := tokenize(seg)
 		i := skipPrefix(tokens)
 		tool := ""

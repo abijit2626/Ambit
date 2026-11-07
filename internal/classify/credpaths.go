@@ -39,7 +39,7 @@ func CredentialPaths(command string) []PathUse {
 }
 
 func credentialPaths(command string, depth int, out *[]PathUse, seen map[PathUse]bool) {
-	for _, seg := range splitSegments(command) {
+	for _, seg := range splitOutsideQuotes(command) {
 		pendingWrite, pending := false, false
 		tokens := tokenize(seg)
 		// Every operand of tee is a file it writes, as in "echo k | tee .env".
