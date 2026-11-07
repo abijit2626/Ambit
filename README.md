@@ -496,18 +496,32 @@ team executes a runbook against a sample alert.
   enforcement keys (bypass mode, sandbox, egress allowlist) that the observation-only M0
   bundle deliberately omits, so deploying both makes D12 fire on every endpoint. The `_m0`
   policy files assert only what the M0 bundle sets.
-- **A Bash command's class is read from its text.** The classifier reads through shells
-  (`bash -c`, `cmd /c`, PowerShell's `-EncodedCommand`), through runners that start another
-  command (`sudo`, `env`, `timeout`, `nice`, `xargs`, `watch`, `flock` and similar), and through
-  commands given as a string (`su -c`, `eval`, `find -exec`). Code given to an interpreter on the
-  command line (`python -c`, `node -e`, `deno eval`, `perl -e`, `ruby -e`, `php -r`) is network
-  when it names a network API of its language, such as `urllib`, `requests`, `fetch(`, `LWP` or
-  `Net::HTTP`, and `python -m pip install` is classed as `pip install`. It does not read a script
-  file, code that reaches the network some other way (a subprocess, an API it does not list), a
-  command built at run time, or a runner it does not know (GNU `parallel`). Those are classed as
-  the interpreter or runner, usually `other`, so D1 and D9 do not see them as network commands.
-  The sandbox's own denials still do. A network API name in code that never calls it, such as
-  `import socket` alone, still counts.
+- **A Bash command's class is read from its text, and from the scripts the session wrote.**
+  - *What it reads through:* shells (`bash -c`, `cmd /c`, PowerShell's `-EncodedCommand`); about
+    40 runners that start another command (`sudo`, `env`, `timeout`, `nice`, `xargs`, `parallel`,
+    `systemd-run`, `runuser`, `nsenter`, and Windows' `runas`, `schtasks /tr`, `wmic process call
+    create`, `forfiles /c`); and commands given as a string (`su -c`, `eval`, `find -exec`).
+  - *Code:* code given to an interpreter on the command line (`python -c`, `node -e`, `deno eval`,
+    `perl -e`, `ruby -e`, `php -r`), in a here-document (`python3 - <<'EOF'`) or a here-string, is
+    network when it names a network API of its language (`urllib`, `requests`, `socket`, `fetch(`,
+    `LWP`, `Net::HTTP`), and is classed at least as every command it launches (`os.system`,
+    `subprocess.run`, `child_process.exec`, backticks). `python -m pip install` is `pip install`.
+  - *Here-documents:* a body fed to a shell is commands, to an interpreter is code, and to a data
+    reader (`cat > README.md`, `tee`, `git commit -F -`) is data, so a README with a `curl` example
+    is not a network command. A body written to a file and run, in the same command or a later
+    one, is classed as that script.
+  - *Scripts:* each session remembers the class of the scripts it wrote (by Write, Edit or a
+    here-document; only the class, never the content), and running one, as `python3 upload.py` or
+    `./up.sh`, is classed at least as that script.
+  - *Sockets and tools:* a redirect to `/dev/tcp/host/port` is network, and so are cloud sync and
+    tunnel tools (`rclone`, `gsutil`, `azcopy`, `ngrok`, `cloudflared`).
+
+  It does not read a script the session did not write, code that reaches the network through an
+  API it does not list, a command built at run time, or a runner outside its table. Those are
+  classed as the interpreter or runner, usually `other`, so D1 and D9 do not see them as network
+  commands; the sandbox's own denials still do. A network API name in code that never calls it,
+  such as `import socket` alone, still counts. A script's own destinations are not D9
+  destinations: only the hosts in the command's text are.
 - **The system-service installers: Windows has run on one real machine, where the upgrade,
   restart and fresh install each passed once.** `scripts/install-system.sh` and `.ps1`
   install `ambitd` to run from boot, with the service manager set to bring it back if it
