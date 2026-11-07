@@ -56,6 +56,10 @@ type Expect struct {
 	Exfil      *bool  `json:"exfil"`
 	ExfilClass string `json:"exfil_class"`
 
+	// BashClass is the class the classifier gives a Bash or PowerShell command: network, read_only
+	// and the rest. It pins what a detector depends on, such as a here-document read as data.
+	BashClass string `json:"bash_class"`
+
 	// Derived lists the kinds of event ambitd derived from this step and sent to the SIEM (session_mode,
 	// session_no_prompt, sandbox_denial, egress_destination, fp_sighting), in any order. An empty list asserts none.
 	Derived *[]string `json:"derived"`

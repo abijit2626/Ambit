@@ -56,6 +56,8 @@ type StepResult struct {
 	ExfilClass string `json:"exfil_class,omitempty"`
 	ExfilFrom  int    `json:"exfil_from,omitempty"`
 
+	BashClass string `json:"bash_class,omitempty"`
+
 	Hostile *bool `json:"hostile,omitempty"`
 
 	Derived []string `json:"derived,omitempty"`
@@ -186,6 +188,9 @@ func fillFromEvent(sr *StepResult, e *event.Event, stepOfEvent map[string]int, s
 	sr.Kind = e.Kind
 	sr.R2 = bits(e.R2)
 	sr.Taint = e.Provenance.Taint
+	if e.Tool != nil && e.Tool.Bash != nil {
+		sr.BashClass = e.Tool.Bash.CommandClass
+	}
 	sr.Decision = e.Policy.Decision
 	if len(e.Policy.RuleIDs) > 0 {
 		sr.Rule = e.Policy.RuleIDs[0]
@@ -319,6 +324,9 @@ func check(st *Step, sr *StepResult) []string {
 	}
 	if ex.ExfilClass != "" && ex.ExfilClass != sr.ExfilClass {
 		fail("expected sensitive-data edge class %q, got %q", ex.ExfilClass, sr.ExfilClass)
+	}
+	if ex.BashClass != "" && ex.BashClass != sr.BashClass {
+		fail("expected command class %q, got %q", ex.BashClass, sr.BashClass)
 	}
 	if ex.Decision != "" && ex.Decision != decisionName(sr.Decision) {
 		fail("expected session verdict %q, got %q", ex.Decision, decisionName(sr.Decision))
