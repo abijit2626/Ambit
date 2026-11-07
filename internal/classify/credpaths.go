@@ -41,10 +41,15 @@ func CredentialPaths(command string) []PathUse {
 func credentialPaths(command string, depth int, out *[]PathUse, seen map[PathUse]bool) {
 	for _, seg := range splitSegments(command) {
 		pendingWrite, pending := false, false
-		sc := tokenScanner{s: seg}
-		for tok, ok := sc.next(); ok; tok, ok = sc.next() {
+		tokens := tokenize(seg)
+		// Every operand of tee is a file it writes, as in "echo k | tee .env".
+		tee := -1
+		if i := skipPrefix(tokens); i < len(tokens) && baseName(tokens[i]) == "tee" {
+			tee = i
+		}
+		for k, tok := range tokens {
 			w := stripQuotes(tok)
-			write := false
+			write := tee >= 0 && k > tee
 			if pending {
 				write, pending = pendingWrite, false
 			}

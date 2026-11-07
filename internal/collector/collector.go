@@ -607,12 +607,27 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 		// A credential path a command names is read or written as surely as through Read or Write,
 		// so it is recorded the same way: bit B, the gate's credential row, D1's credential rule
 		// and D2's sweep all key on it.
+		credentialWrites := map[string]bool{}
 		for _, u := range classify.CredentialPaths(cmd) {
 			op := "read"
 			if u.Write {
 				op = "write"
+				credentialWrites[u.Path] = true
 			}
 			t.Paths = append(t.Paths, event.PathRef{PathDigest: c.ext.Digest(u.Path), Zone: st.zone(u.Path), Op: op})
+		}
+		// A file a redirect or tee writes is written as surely as through Write, so it is recorded the
+		// same way, by the file it resolves to: one outside the working directory sets Rule-of-Two bit C
+		// and the gate's write-outside row, as "echo … >> ~/.bashrc" should. A word whose file the
+		// command does not spell out, as in "> $OUT", is left out, as is a credential path the loop
+		// above already recorded as written.
+		for _, w := range classify.WriteTargets(cmd) {
+			if credentialWrites[w] {
+				continue
+			}
+			if path, zone, ok := st.shellPath(w); ok {
+				t.Paths = append(t.Paths, event.PathRef{PathDigest: c.ext.Digest(path), Zone: zone, Op: "write"})
+			}
 		}
 		c.applyScripts(st, p, t, cmd)
 	}
@@ -1012,6 +1027,21 @@ func (s *sessionState) zone(path string) string {
 		return event.ZoneUnknown
 	}
 	return z.Zone(path)
+}
+
+// shellPath is the file a word from a Bash command names, resolved against the session's home and
+// working directories, and its zone.
+func (s *sessionState) shellPath(word string) (path, zone string, ok bool) {
+	s.mu.Lock()
+	z := s.zoner
+	s.mu.Unlock()
+	if z == nil {
+		return "", "", false
+	}
+	if path, ok = z.ShellPath(word); !ok {
+		return "", "", false
+	}
+	return path, z.Zone(path), true
 }
 
 func (s *sessionState) snapshotR2() event.R2 {

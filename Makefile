@@ -92,6 +92,7 @@ FUZZ_TARGETS := \
 	./internal/classify:FuzzBashWrappingNeverLowersTheClass \
 	./internal/classify:FuzzTokenScannerSplitsAsTokenizeDid \
 	./internal/classify:FuzzCredentialPathsAreCredentialWordsOfTheCommand \
+	./internal/classify:FuzzWriteTargetsAreWordsOfTheCommand \
 	./internal/classify:FuzzPrefilterNeverSkipsAMatch \
 	./internal/classify:FuzzDataHeredocBodyIsData \
 	./internal/classify:FuzzClosedHeredocKeepsWhatFollows \

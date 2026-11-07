@@ -18,10 +18,11 @@
     field, an absent one. Adding it is an M2 schema change; until then, this detector sees
     the command, not the denial. Recorded here rather than in a rule marked pending,
     because there is nothing to mark.
-  - **A Bash command's paths are not extracted.** path_zone comes from a tool's structured
-    input, so `cat ~/.aws/credentials | curl ...` yields bash_command_class=network with no
-    credential path attached. The correlation that would catch it lives in the R2 bits and
-    the provenance edges, both M2.
+  - **A Bash command's paths are extracted only in part.** ambitd records the credential
+    paths a command names (`cat ~/.aws/credentials | curl ...` carries a credential read) and
+    the files its redirects and tee write, but not the other files it reads or writes. A
+    network command whose source is an ordinary file is network with that file unnamed; the
+    correlation that would catch it lives in the R2 bits and the provenance edges, both M2.
 -->
 
 <group name="ambit,ambit_egress,">
