@@ -110,3 +110,27 @@ func isCredentialPath(p string) bool {
 	n := normalize(p)
 	return isCredential(strings.ToLower(n), strings.ToLower(path.Base(n)))
 }
+
+// ScriptCredentialPaths is each credential path a script names: for a shell script, as
+// CredentialPaths reads a command; for code, each string literal that is one, as in
+// open(os.path.expanduser("~/.aws/credentials")). They are reads: running the script opens them.
+func ScriptCredentialPaths(scriptPath, content string) []PathUse {
+	switch kind := scriptKind(scriptPath, content); {
+	case kind == "":
+		return nil
+	case shellRunners[kind] || kind == "pwsh" || kind == "powershell":
+		return CredentialPaths(content)
+	}
+	var out []PathUse
+	seen := map[string]bool{}
+	for _, lit := range stringLiterals(content) {
+		if len(out) == maxCredentialPaths {
+			break
+		}
+		if !seen[lit] && !strings.ContainsAny(lit, " \t\n") && !strings.Contains(lit, "://") && isCredentialPath(lit) {
+			seen[lit] = true
+			out = append(out, PathUse{Path: lit})
+		}
+	}
+	return out
+}

@@ -2,6 +2,7 @@ package collector
 
 import (
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/abijit2626/ambit/internal/classify"
@@ -15,6 +16,10 @@ import (
 // the scripts it wrote, by path, and a command that runs one is classed at least as that script is.
 // Only the class is kept, never the content.
 //
+// The destinations a network script names and the credential paths it reads are kept the same way,
+// as keyed digests, and come with it when it runs: D9 reports the destinations, with egress_source
+// "script", and the paths reach bit B, the gate, D1 and D2 as a Read of them would.
+//
 // A script is recorded from Write's content, Edit's and MultiEdit's new text (raising the class it
 // had, since an edit adds to a file ambitd may not have seen whole), and a Bash here-document written
 // to a file. classify.ScriptClass decides what is a script, by shebang or extension.
@@ -23,27 +28,57 @@ import (
 // writing many scripts cannot push out the one written last before it runs.
 const maxSessionScripts = 256
 
+// maxScriptDestinations and maxScriptPaths bound what one script contributes when it runs.
+const (
+	maxScriptDestinations = 32
+	maxScriptPaths        = 16
+)
+
+// scriptFacts is what ambitd keeps about a script the session wrote, all of it derived when the
+// script was written: its class, the keyed digests of the destinations it names when it is a network
+// script, and the credential paths it names, as digests with their zone. Never the content.
+type scriptFacts struct {
+	class string
+	dests []string
+	paths []event.PathRef
+}
+
+func (f scriptFacts) merge(g scriptFacts) scriptFacts {
+	f.class = classify.Max(f.class, g.class)
+	for _, d := range g.dests {
+		if len(f.dests) < maxScriptDestinations && !slices.Contains(f.dests, d) {
+			f.dests = append(f.dests, d)
+		}
+	}
+	for _, p := range g.paths {
+		if len(f.paths) < maxScriptPaths && !slices.Contains(f.paths, p) {
+			f.paths = append(f.paths, p)
+		}
+	}
+	return f
+}
+
 type sessionScripts struct {
-	class map[string]string
+	facts map[string]scriptFacts
 	order []string
 }
 
-func (s *sessionScripts) remember(key, class string, raise bool) {
-	if s.class == nil {
-		s.class = map[string]string{}
+func (s *sessionScripts) remember(key string, f scriptFacts, raise bool) {
+	if s.facts == nil {
+		s.facts = map[string]scriptFacts{}
 	}
-	if old, ok := s.class[key]; ok {
+	if old, ok := s.facts[key]; ok {
 		if raise {
-			class = classify.Max(old, class)
+			f = old.merge(f)
 		}
-		s.class[key] = class
+		s.facts[key] = f
 		return
 	}
 	if len(s.order) >= maxSessionScripts {
-		delete(s.class, s.order[0])
+		delete(s.facts, s.order[0])
 		s.order = s.order[1:]
 	}
-	s.class[key] = class
+	s.facts[key] = f
 	s.order = append(s.order, key)
 }
 
@@ -67,36 +102,52 @@ func scriptKey(p, cwd, home string) string {
 	return path.Clean(p)
 }
 
+// factsOf derives what is kept about a script from its content, or false when it is not a script.
+func (c *Collector) factsOf(st *sessionState, file, content string) (scriptFacts, bool) {
+	class, ok := classify.ScriptClass(file, content)
+	if !ok {
+		return scriptFacts{}, false
+	}
+	f := scriptFacts{class: class}
+	if classify.IsNetworkClass(class) {
+		// Redacted first, as a command's text is: a secret in the script is not a destination.
+		clean, _ := c.red.Redact(content)
+		f.dests = c.ext.Destinations(clean)
+		if len(f.dests) > maxScriptDestinations {
+			f.dests = f.dests[:maxScriptDestinations]
+		}
+	}
+	for _, u := range classify.ScriptCredentialPaths(file, content) {
+		if len(f.paths) == maxScriptPaths {
+			break
+		}
+		f.paths = append(f.paths, event.PathRef{PathDigest: c.ext.Digest(u.Path), Zone: st.zone(u.Path), Op: "read"})
+	}
+	return f, true
+}
+
 // recordScripts remembers the scripts a tool call writes.
 func (c *Collector) recordScripts(st *sessionState, p *hook.Payload) {
 	if p.HookEventName != hook.EvPreToolUse {
 		return
 	}
-	cwd := p.CWD
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if cwd == "" {
-		cwd = st.cwd
+	type written struct {
+		file, content string
+		raise         bool
 	}
-	note := func(file, content string, raise bool) {
-		if class, ok := classify.ScriptClass(file, content); ok {
-			if key := scriptKey(file, cwd, st.home); key != "" {
-				st.scripts.remember(key, class, raise)
-			}
-		}
-	}
+	var ws []written
 	file := p.StringField("file_path")
 	switch p.ToolName {
 	case "Write":
-		note(file, p.StringField("content"), false)
+		ws = append(ws, written{file, p.StringField("content"), false})
 	case "Edit":
-		note(file, p.StringField("new_string"), true)
+		ws = append(ws, written{file, p.StringField("new_string"), true})
 	case "MultiEdit":
 		if edits, ok := p.ToolInput["edits"].([]any); ok {
 			for _, e := range edits {
 				if m, ok := e.(map[string]any); ok {
 					if s, ok := m["new_string"].(string); ok {
-						note(file, s, true)
+						ws = append(ws, written{file, s, true})
 					}
 				}
 			}
@@ -104,26 +155,70 @@ func (c *Collector) recordScripts(st *sessionState, p *hook.Payload) {
 	}
 	if cmd := p.Command(); cmd != "" {
 		for _, w := range classify.FilesWritten(cmd) {
-			note(w.Path, w.Content, false)
+			ws = append(ws, written{w.Path, w.Content, false})
+		}
+	}
+	if len(ws) == 0 {
+		return
+	}
+	// The facts are derived before the session is locked: st.zone takes the lock itself.
+	type fact struct {
+		file  string
+		f     scriptFacts
+		raise bool
+	}
+	var fs []fact
+	for _, w := range ws {
+		if f, ok := c.factsOf(st, w.file, w.content); ok {
+			fs = append(fs, fact{w.file, f, w.raise})
+		}
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	cwd := p.CWD
+	if cwd == "" {
+		cwd = st.cwd
+	}
+	for _, f := range fs {
+		if key := scriptKey(f.file, cwd, st.home); key != "" {
+			st.scripts.remember(key, f.f, f.raise)
 		}
 	}
 }
 
-// scriptClassFor raises a Bash command's class to that of any script it runs that the session wrote.
-func (c *Collector) scriptClassFor(st *sessionState, p *hook.Payload, b *event.Bash, cmd string) {
+// runScripts is what the scripts a command runs, that the session wrote, add up to.
+func (c *Collector) runScripts(st *sessionState, p *hook.Payload, cmd string) (scriptFacts, bool) {
 	runs := classify.ScriptsRun(cmd)
 	if len(runs) == 0 {
-		return
+		return scriptFacts{}, false
 	}
-	cwd := p.CWD
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	cwd := p.CWD
 	if cwd == "" {
 		cwd = st.cwd
 	}
+	var all scriptFacts
+	found := false
 	for _, r := range runs {
-		if class, ok := st.scripts.class[scriptKey(r.Path, cwd, st.home)]; ok {
-			b.CommandClass = classify.Max(b.CommandClass, class)
+		if f, ok := st.scripts.facts[scriptKey(r.Path, cwd, st.home)]; ok {
+			all, found = all.merge(f), true
+		}
+	}
+	return all, found
+}
+
+// applyScripts gives a Bash command what the scripts it runs do: at least their class, and the
+// credential paths they read, recorded as a Read of them would be.
+func (c *Collector) applyScripts(st *sessionState, p *hook.Payload, t *event.Tool, cmd string) {
+	f, ok := c.runScripts(st, p, cmd)
+	if !ok {
+		return
+	}
+	t.Bash.CommandClass = classify.Max(t.Bash.CommandClass, f.class)
+	for _, ref := range f.paths {
+		if !slices.Contains(t.Paths, ref) {
+			t.Paths = append(t.Paths, ref)
 		}
 	}
 }

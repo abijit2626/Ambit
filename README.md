@@ -510,9 +510,11 @@ team executes a runbook against a sample alert.
     reader (`cat > README.md`, `tee`, `git commit -F -`) is data, so a README with a `curl` example
     is not a network command. A body written to a file and run, in the same command or a later
     one, is classed as that script.
-  - *Scripts:* each session remembers the class of the scripts it wrote (by Write, Edit or a
-    here-document; only the class, never the content), and running one, as `python3 upload.py` or
-    `./up.sh`, is classed at least as that script.
+  - *Scripts:* each session remembers what the scripts it wrote do (by Write, Edit or a
+    here-document): their class, the keyed digests of the destinations a network script names, and
+    the credential paths it reads, never the content. Running one, as `python3 upload.py` or
+    `./up.sh`, is classed at least as that script, reports its destinations to D9 with
+    `egress_source` `script`, and reads its credential paths as a `Read` of them would.
   - *Sockets and tools:* a redirect to `/dev/tcp/host/port` is network, and so are cloud sync and
     tunnel tools (`rclone`, `gsutil`, `azcopy`, `ngrok`, `cloudflared`).
 
@@ -520,8 +522,7 @@ team executes a runbook against a sample alert.
   API it does not list, a command built at run time, or a runner outside its table. Those are
   classed as the interpreter or runner, usually `other`, so D1 and D9 do not see them as network
   commands; the sandbox's own denials still do. A network API name in code that never calls it,
-  such as `import socket` alone, still counts. A script's own destinations are not D9
-  destinations: only the hosts in the command's text are.
+  such as `import socket` alone, still counts.
 - **The system-service installers: Windows has run on one real machine, where the upgrade,
   restart and fresh install each passed once.** `scripts/install-system.sh` and `.ps1`
   install `ambitd` to run from boot, with the service manager set to bring it back if it

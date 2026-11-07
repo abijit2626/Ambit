@@ -385,6 +385,9 @@ type SandboxDenial struct {
 const (
 	EgressSourceBash    = "bash"
 	EgressSourceSandbox = "sandbox"
+	// EgressSourceScript is a destination named in a script the session wrote, which a Bash
+	// command then ran: the command's text does not name it.
+	EgressSourceScript = "script"
 )
 
 // Egress is a destination new to this endpoint's profile: the keyed digest of its registrable domain,

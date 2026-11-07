@@ -29,6 +29,13 @@ func (c *Collector) emitEgress(st *sessionState, p *hook.Payload, e *event.Event
 		for _, d := range c.ext.Destinations(clean) {
 			c.newDestination(st, e, event.EgressSourceBash, d)
 		}
+		// The destinations of the scripts it runs that the session wrote, which the command's text
+		// does not name: python3 upload.py contacts what upload.py names.
+		if f, ok := c.runScripts(st, p, p.Command()); ok {
+			for _, d := range f.dests {
+				c.newDestination(st, e, event.EgressSourceScript, d)
+			}
+		}
 	}
 	for _, x := range toolDenials(p, e) {
 		if !strings.HasPrefix(x.op, "network") {

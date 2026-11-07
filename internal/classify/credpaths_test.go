@@ -55,6 +55,17 @@ func FuzzCredentialPathsAreCredentialWordsOfTheCommand(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, cmd string) {
+		for _, script := range []string{"x.py", "x.sh"} {
+			paths := ScriptCredentialPaths(script, cmd)
+			if len(paths) > maxCredentialPaths {
+				t.Fatalf("%s: %d paths, more than the cap", script, len(paths))
+			}
+			for _, u := range paths {
+				if !isCredentialPath(u.Path) || !strings.Contains(cmd, u.Path) {
+					t.Errorf("ScriptCredentialPaths(%s, %q) reported %q", script, cmd, u.Path)
+				}
+			}
+		}
 		got := CredentialPaths(cmd)
 		if len(got) > maxCredentialPaths {
 			t.Fatalf("%d paths, more than the cap", len(got))
