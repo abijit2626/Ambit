@@ -82,6 +82,17 @@ func TestRunChecksEveryAssertionKind(t *testing.T) {
 	if !run(t, src).Failed() {
 		t.Error("a wrong taint assertion passed")
 	}
+
+	right := strings.Replace(exfil, `"crosses":true}`, `"crosses":true,"bash_class":"network"}`, 1)
+	if right == exfil {
+		t.Fatal("test premise broken: nothing replaced")
+	}
+	if r := run(t, right); r.Failed() {
+		t.Errorf("a right bash_class assertion failed: %v", r.Steps[2].Failures)
+	}
+	if !run(t, strings.Replace(right, `"bash_class":"network"`, `"bash_class":"read_only"`, 1)).Failed() {
+		t.Error("a wrong bash_class assertion passed")
+	}
 }
 
 func TestRunReportsAnUnmodelledHookAsOneFailure(t *testing.T) {
