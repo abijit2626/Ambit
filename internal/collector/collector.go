@@ -59,6 +59,9 @@ type sessionState struct {
 
 	// goal is the session's latest prompt, redacted, kept only while the goal-drift judge is on.
 	goal string
+
+	// scripts is the class of each script the session wrote, by path; see scripts.go.
+	scripts sessionScripts
 }
 
 // observePrompting records the parts of a session's shape that "no prompt before a tool call" needs, and
@@ -467,6 +470,8 @@ func (c *Collector) build(p *hook.Payload) (*event.Event, *event.Event, *session
 		if c.fillTool(e, p, st) {
 			sighting = fpSighting(e, st)
 		}
+		// After fillTool, so a command is classed by the scripts written before it, not by itself.
+		c.recordScripts(st, p)
 	case event.KindInstructionsLoaded, event.KindConfigChange, event.KindFileChanged:
 		c.fillConfig(e, p, st)
 	}
@@ -599,6 +604,7 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 
 			CommandDigest: c.ext.Digest(cmd),
 		}
+		c.scriptClassFor(st, p, t.Bash, cmd)
 		// A credential path a command names is read or written as surely as through Read or Write,
 		// so it is recorded the same way: bit B, the gate's credential row, D1's credential rule
 		// and D2's sweep all key on it.
