@@ -193,13 +193,23 @@ func Bash(command string) (argv0, class string) {
 	argv0 = argv0Of(segments[0])
 	best := classifyCommand(command, 0)
 
-	if best == ClassReadOnly && hasWriteRedirect(command) {
+	// A here-document's body is not part of the command line, so a ">" in it redirects nothing.
+	text := command
+	if outer, docs := splitHeredocs(command); len(docs) > 0 {
+		text = strings.ReplaceAll(outer, heredocMark, " ")
+	}
+	if best == ClassReadOnly && hasWriteRedirect(text) {
 		best = ClassFilesystem
 	}
 	return argv0, best
 }
 
 func classifyCommand(command string, depth int) string {
+	if depth < maxUnwrapDepth {
+		if outer, docs := splitHeredocs(command); len(docs) > 0 {
+			return classifyHeredocs(outer, docs, depth)
+		}
+	}
 
 	best := ""
 	for _, seg := range splitSegments(command) {
@@ -1053,6 +1063,17 @@ func eachInlineCode(command string, visit func(lang inlineLanguage, code string,
 			}
 			if lang.code(f) {
 				if code, ok := sc.next(); ok && visit(lang, unquoteCode(code), false) {
+					return true
+				}
+				break
+			}
+			// A here-string is the program on stdin: python3 <<< "code", or <<<"code" run together.
+			if rest, ok := strings.CutPrefix(tok, "<<<"); ok {
+				code := rest
+				if code == "" {
+					code, _ = sc.next()
+				}
+				if code != "" && visit(lang, unquoteCode(code), false) {
 					return true
 				}
 				break

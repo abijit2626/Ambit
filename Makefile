@@ -93,6 +93,9 @@ FUZZ_TARGETS := \
 	./internal/classify:FuzzTokenScannerSplitsAsTokenizeDid \
 	./internal/classify:FuzzCredentialPathsAreCredentialWordsOfTheCommand \
 	./internal/classify:FuzzPrefilterNeverSkipsAMatch \
+	./internal/classify:FuzzDataHeredocBodyIsData \
+	./internal/classify:FuzzClosedHeredocKeepsWhatFollows \
+	./internal/classify:FuzzSplitHeredocsNeverPanics \
 	./internal/mcp:FuzzRelayIsByteExact \
 	./internal/mcp:FuzzCanonicalJSONIsAFixedPoint \
 	./internal/mcp:FuzzParseNeverPanics \

@@ -25,7 +25,16 @@ const maxCredentialPaths = 16
 // "< .env" reads. A word in a URL is somewhere else's file, not this machine's, and does not count.
 func CredentialPaths(command string) []PathUse {
 	var out []PathUse
-	credentialPaths(command, 0, &out, map[PathUse]bool{})
+	seen := map[PathUse]bool{}
+	// A here-document read as data names paths it does not open, as a README naming ~/.ssh/id_rsa
+	// does; one run as commands or code is read like the rest of the command.
+	outer, docs := splitHeredocs(command)
+	credentialPaths(strings.ReplaceAll(outer, heredocMark, " "), 0, &out, seen)
+	for _, d := range docs {
+		if d.kind != docData && len(out) < maxCredentialPaths {
+			credentialPaths(d.body, 1, &out, seen)
+		}
+	}
 	return out
 }
 
