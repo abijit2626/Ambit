@@ -98,15 +98,15 @@ func TestAHeredocWrittenScriptRunsLater(t *testing.T) {
 func TestSessionScriptsAreBounded(t *testing.T) {
 	var s sessionScripts
 	for i := 0; i < maxSessionScripts+10; i++ {
-		s.remember(fmt.Sprintf("/s/%d.sh", i), classify.ClassNetwork, false)
+		s.remember(fmt.Sprintf("/s/%d.sh", i), scriptFacts{class: classify.ClassNetwork}, false)
 	}
-	if len(s.class) != maxSessionScripts || len(s.order) != maxSessionScripts {
-		t.Fatalf("%d remembered, want %d", len(s.class), maxSessionScripts)
+	if len(s.facts) != maxSessionScripts || len(s.order) != maxSessionScripts {
+		t.Fatalf("%d remembered, want %d", len(s.facts), maxSessionScripts)
 	}
-	if _, ok := s.class["/s/0.sh"]; ok {
+	if _, ok := s.facts["/s/0.sh"]; ok {
 		t.Error("the oldest script was kept")
 	}
-	if _, ok := s.class[fmt.Sprintf("/s/%d.sh", maxSessionScripts+9)]; !ok {
+	if _, ok := s.facts[fmt.Sprintf("/s/%d.sh", maxSessionScripts+9)]; !ok {
 		t.Error("the newest script was forgotten")
 	}
 }

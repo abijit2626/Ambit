@@ -173,7 +173,7 @@ func (g *Egress) writeText(p func(string, ...any)) {
 		p("  no egress_destination events in %d file(s); D9's profile may be off, or nothing new was contacted", len(g.Files))
 		return
 	}
-	p("  %d new destinations over %d day(s) with any; bash %d, sandbox %d", g.Destinations, len(g.Days), g.BySource["bash"], g.BySource["sandbox"])
+	p("  %d new destinations over %d day(s) with any; bash %d, script %d, sandbox %d", g.Destinations, len(g.Days), g.BySource["bash"], g.BySource["script"], g.BySource["sandbox"])
 	if g.LaterDays > 0 {
 		p("  first %d days: %.1f a day   after: %.1f a day over %d day(s)", FirstWeekDays, g.FirstWeekPerDay, g.LaterPerDay, g.LaterDays)
 	} else {
