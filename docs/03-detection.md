@@ -92,8 +92,8 @@ Two things this surfaced, worth stating rather than only in code comments:
 - Read of a credential path: `~/.ssh/**`, `~/.aws/**`, `~/.config/gcloud/**`,
   `**/.env*`, `.npmrc`, `.netrc`, `**/id_*`, keystores, wallet files. A Bash command that
   names one counts as a read of it, as in `cat ~/.ssh/id_rsa` or `curl -d @.env …`, and a
-  redirect to one as a write; the event carries the path as a `Read` would, so D1's rule
-  100201 and D2's sweep see it too
+  redirect or `tee` to one as a write; the event carries the path as a `Read` would, so D1's
+  rule 100201 and D2's sweep see it too
 - Read of a file whose content trips the edge secrets classifier
 - Read outside the session's working-directory boundary
 - An MCP tool returning data from a system labelled sensitive: the `sensitive` tool label
@@ -102,7 +102,11 @@ Two things this surfaced, worth stating rather than only in code comments:
 **Bit C — state change or external communication.** Set by:
 - Bash command with network capability (`curl`, `wget`, `nc`, `ssh`, `scp`,
   `git push`, package publish)
-- `Write` / `Edit` outside the working directory
+- `Write` / `Edit` outside the working directory, and a Bash redirect or `tee` to a file
+  outside it, as in `echo … >> ~/.bashrc` or `sudo tee -a /etc/hosts`. The target is resolved
+  against the session's home and working directory, and after a `cd` in the same command, to
+  where it went; a target the command does not spell out, as in `> "$OUT"`, is not counted,
+  and neither is a device such as `/dev/null`
 - An MCP tool that is not `readOnlyHint: true` — and per
   [02](02-architecture.md)'s asymmetry, a server *claiming* read-only earns no
   relaxation, so in practice treat every MCP tool on a non-internal server as

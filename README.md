@@ -517,6 +517,12 @@ team executes a runbook against a sample alert.
     `egress_source` `script`, and reads its credential paths as a `Read` of them would.
   - *Sockets and tools:* a redirect to `/dev/tcp/host/port` is network, and so are cloud sync and
     tunnel tools (`rclone`, `gsutil`, `azcopy`, `ngrok`, `cloudflared`).
+  - *Paths:* a credential path a command names is read or, after a redirect or `tee`, written,
+    as through `Read` or `Write`. Any other file a redirect or `tee` writes is a write of it,
+    resolved against the home and working directories and any `cd` before it in the command, so
+    `echo … >> ~/.bashrc` is a write outside the working directory (bit C, and the gate's
+    write-outside row). Other files a command reads or writes, as `cp a ~/.bashrc` does, are not
+    recorded.
 
   It does not read a script the session did not write, code that reaches the network through an
   API it does not list, a command built at run time, or a runner outside its table. Those are

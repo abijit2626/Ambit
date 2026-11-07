@@ -339,7 +339,36 @@ func IsNetworkClass(class string) bool {
 	return false
 }
 
-func splitSegments(command string) []string {
+func splitSegments(command string) []string { return splitSegmentsBy(command, command) }
+
+// splitOutsideQuotes is splitSegments that does not cut inside a quoted string, so the "| tee" in
+// git commit -m 'pipe it | tee log' stays part of the message. The classifier cuts there on purpose:
+// a command quoted for bash -c is classed by what it runs. A path read from a segment is not, and
+// a word in a message is not a file the command writes.
+func splitOutsideQuotes(command string) []string {
+	return splitSegmentsBy(command, maskQuoted(command))
+}
+
+// maskQuoted is s with every byte inside a closed pair of quotes replaced by 'x', the quotes kept, so
+// it has the length of s and no separator inside a quoted string. An unclosed quote is kept as
+// written, as tokenScanner keeps it.
+func maskQuoted(s string) string {
+	b := []byte(s)
+	for i := 0; i < len(b); i++ {
+		if c := b[i]; c == '"' || c == '\'' {
+			if j := strings.IndexByte(s[i+1:], c); j >= 0 {
+				for k := i + 1; k <= i+j; k++ {
+					b[k] = 'x'
+				}
+				i += j + 1
+			}
+		}
+	}
+	return string(b)
+}
+
+// splitSegmentsBy cuts command where view, a string of the same length, has a separator.
+func splitSegmentsBy(command, view string) []string {
 	var segs []string
 	start := 0
 	cut := func(end int) {
@@ -349,7 +378,7 @@ func splitSegments(command string) []string {
 	}
 	n := len(command)
 	for i := 0; i < n; i++ {
-		switch command[i] {
+		switch view[i] {
 		case '\n', ';':
 			cut(i)
 			start = i + 1
