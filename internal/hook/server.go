@@ -52,6 +52,8 @@ type Stats struct {
 	ParseErrors int64
 	// QueueDropped counts payloads the handler never saw because their session had too many waiting.
 	QueueDropped int64
+	// HandlerPanics counts payloads whose handler panicked; each is lost, and ambitd carries on.
+	HandlerPanics int64
 }
 
 type Options struct {
@@ -80,8 +82,15 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.Budget <= 0 {
 		opts.Budget = 5 * time.Millisecond
 	}
+	in := newIngest(opts.Handler, opts.SessionQueue)
+	log := opts.Logger
+	in.onPanic = func(v any, stack []byte) {
+		// The panic value and the stack say where; the payload itself is not logged, since it can
+		// hold anything the agent sent.
+		log.Error("hook payload handler panicked; the payload is lost and ambitd carries on", "panic", fmt.Sprint(v), "stack", string(stack))
+	}
 	s := &Server{
-		ingest:  newIngest(opts.Handler, opts.SessionQueue),
+		ingest:  in,
 		handler: opts.Handler,
 		decider: opts.Decider,
 		log:     opts.Logger,
@@ -186,9 +195,10 @@ func (s *Server) respond(w http.ResponseWriter, resp *Response, start time.Time)
 
 func (s *Server) Stats() Stats {
 	return Stats{
-		Latency:      s.latency.snapshot(),
-		ParseErrors:  s.parseErrors.Load(),
-		QueueDropped: s.ingest.dropped.Load(),
+		Latency:       s.latency.snapshot(),
+		ParseErrors:   s.parseErrors.Load(),
+		QueueDropped:  s.ingest.dropped.Load(),
+		HandlerPanics: s.ingest.panicked.Load(),
 	}
 }
 

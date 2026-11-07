@@ -26,7 +26,10 @@ Four signals, from three different places on purpose:
   now incomplete.
 - **100312**: the condition persisted across three heartbeats in fifteen minutes.
 - **100313**: `health_dropped_events` is present, which by construction means non-zero. Dropped
-  events are not recoverable; the sink writes a gap marker and continues.
+  events are not recoverable; the sink writes a gap marker and continues. The count also includes
+  hook payloads whose handling panicked: ambitd logs `hook payload handler panicked` with the
+  panic and the stack, drops that payload and carries on. A panic is a bug in ambitd, and a
+  payload that causes one on purpose is an attempt to stop collection, so read the log line.
 - **100314**: the Wazuh agent's SCA scan found no `ambitd` process. The report comes from a
   different process than the one being reported on, which is what makes it survive an adversary
   who kills ambitd.

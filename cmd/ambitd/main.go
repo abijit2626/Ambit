@@ -364,7 +364,7 @@ func (h *heartbeat) emit(final bool) {
 
 	status := "ok"
 
-	if es.Dropped > 0 || ts.Dropped > 0 || es.WriteErrs > 0 || ts.WriteErrs > 0 || hs.ParseErrors > 0 || hs.QueueDropped > 0 {
+	if es.Dropped > 0 || ts.Dropped > 0 || es.WriteErrs > 0 || ts.WriteErrs > 0 || hs.ParseErrors > 0 || hs.QueueDropped > 0 || hs.HandlerPanics > 0 {
 		status = "degraded"
 	}
 
@@ -407,7 +407,7 @@ func (h *heartbeat) emit(final bool) {
 		Health: &event.Health{
 			Status:        status,
 			QueueDepth:    es.QueueDepth + ts.QueueDepth,
-			DroppedEvents: es.Dropped + ts.Dropped + hs.QueueDropped,
+			DroppedEvents: es.Dropped + ts.Dropped + hs.QueueDropped + hs.HandlerPanics,
 			UptimeSec:     int64(time.Since(h.start).Seconds()),
 
 			RunID:   h.runID,
