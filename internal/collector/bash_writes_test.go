@@ -41,12 +41,15 @@ func TestBashRedirectOutsideTheWorkdirIsAWriteOutside(t *testing.T) {
 
 func TestBashWritesAreZonedWhereTheyResolve(t *testing.T) {
 	for cmd, want := range map[string][]string{
-		"go test ./... 2>&1 | tee test.log":    {event.ZoneWorkdir + " write"},
-		"echo k | sudo tee -a /etc/hosts":      {event.ZoneSystem + " write"},
-		"cd /etc/cron.d && echo x > job":       {event.ZoneSystem + " write"},
-		"echo x > ../../other/notes.txt":       {event.ZoneHome + " write"},
-		"echo TOKEN=1 > .env":                  {event.ZoneCredential + " write"},
-		"echo KEY=1 | tee .env":                {event.ZoneCredential + " write"},
+		"go test ./... 2>&1 | tee test.log": {event.ZoneWorkdir + " write"},
+		"echo k | sudo tee -a /etc/hosts":   {event.ZoneSystem + " write"},
+		"cd /etc/cron.d && echo x > job":    {event.ZoneSystem + " write"},
+		"echo x > ../../other/notes.txt":    {event.ZoneHome + " write"},
+		"echo TOKEN=1 > .env":               {event.ZoneCredential + " write"},
+		"echo KEY=1 | tee .env":             {event.ZoneCredential + " write"},
+		// One file, one record: by where it resolves after the cd, not also by the bare word.
+		"cd ~ && echo TOKEN=1 > .env":          {event.ZoneCredential + " write"},
+		"cd /etc && echo x > hosts > ~/.npmrc": {event.ZoneSystem + " write", event.ZoneCredential + " write"},
 		"echo x > /tmp/scratch":                {event.ZoneUnknown + " write"},
 		"echo x > \"$OUT\" && cmd 2>/dev/null": nil,
 		"ls -la src/ > /dev/null":              nil,

@@ -63,7 +63,7 @@ func credentialPaths(command string, depth int, out *[]PathUse, seen map[PathUse
 				}
 				continue
 			}
-			if op, rest, isRedirect := redirectWord(w); isRedirect {
+			if op, rest, isRedirect := redirect(w, 0); isRedirect {
 				if rest == "" {
 					pending, pendingWrite = true, op == '>'
 					continue
@@ -90,25 +90,6 @@ func credentialPaths(command string, depth int, out *[]PathUse, seen map[PathUse
 			}
 		}
 	}
-}
-
-// redirectWord reads a word that starts with a redirect: ">f", ">>f", "2>f", "&>f", "<f", or the
-// operator alone. It returns the operator, '>' or '<', and the target, "" when it is the next word.
-// ">&2" duplicates a descriptor and names no file.
-func redirectWord(w string) (op byte, rest string, ok bool) {
-	i := 0
-	for i < len(w) && (w[i] >= '0' && w[i] <= '9' || w[i] == '&') {
-		i++
-	}
-	if i >= len(w) || (w[i] != '>' && w[i] != '<') {
-		return 0, "", false
-	}
-	op = w[i]
-	rest = strings.TrimLeft(w[i:], "<>|")
-	if strings.HasPrefix(rest, "&") {
-		return 0, "", false
-	}
-	return op, rest, true
 }
 
 func isCredentialPath(p string) bool {

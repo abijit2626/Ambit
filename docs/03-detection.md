@@ -105,8 +105,10 @@ Two things this surfaced, worth stating rather than only in code comments:
 - `Write` / `Edit` outside the working directory, and a Bash redirect or `tee` to a file
   outside it, as in `echo … >> ~/.bashrc` or `sudo tee -a /etc/hosts`. The target is resolved
   against the session's home and working directory, and after a `cd` in the same command, to
-  where it went; a target the command does not spell out, as in `> "$OUT"`, is not counted,
-  and neither is a device such as `/dev/null`
+  where it went (not out of a subshell, a pipeline or the background); a target the command
+  does not spell out, as in `> "$OUT"`, is not counted, and neither is a device such as
+  `/dev/null`. A command substitution's writes count, inside double quotes too, as in
+  `echo "$(echo … >> ~/.bashrc)"`
 - An MCP tool that is not `readOnlyHint: true` — and per
   [02](02-architecture.md)'s asymmetry, a server *claiming* read-only earns no
   relaxation, so in practice treat every MCP tool on a non-internal server as

@@ -604,31 +604,33 @@ func (c *Collector) fillTool(e *event.Event, p *hook.Payload, st *sessionState) 
 
 			CommandDigest: c.ext.Digest(cmd),
 		}
-		// A credential path a command names is read or written as surely as through Read or Write,
-		// so it is recorded the same way: bit B, the gate's credential row, D1's credential rule
-		// and D2's sweep all key on it.
-		credentialWrites := map[string]bool{}
-		for _, u := range classify.CredentialPaths(cmd) {
-			op := "read"
-			if u.Write {
-				op = "write"
-				credentialWrites[u.Path] = true
-			}
-			t.Paths = append(t.Paths, event.PathRef{PathDigest: c.ext.Digest(u.Path), Zone: st.zone(u.Path), Op: op})
-		}
 		// A file a redirect or tee writes is written as surely as through Write, so it is recorded the
 		// same way, by the file it resolves to: one outside the working directory sets Rule-of-Two bit C
 		// and the gate's write-outside row, as "echo … >> ~/.bashrc" should. A word whose file the
-		// command does not spell out, as in "> $OUT", is left out, as is a credential path the loop
-		// above already recorded as written.
+		// command does not spell out, as in "> $OUT", is left out.
+		var writes []event.PathRef
+		written := map[string]bool{} // the words of the writes recorded by the file they resolve to
 		for _, w := range classify.WriteTargets(cmd) {
-			if credentialWrites[w] {
-				continue
-			}
-			if path, zone, ok := st.shellPath(w); ok {
-				t.Paths = append(t.Paths, event.PathRef{PathDigest: c.ext.Digest(path), Zone: zone, Op: "write"})
+			if path, zone, ok := st.shellPath(w.Path); ok {
+				writes = append(writes, event.PathRef{PathDigest: c.ext.Digest(path), Zone: zone, Op: "write"})
+				written[w.Word] = true
 			}
 		}
+		// A credential path a command names is read or written as surely as through Read or Write,
+		// so it is recorded the same way: bit B, the gate's credential row, D1's credential rule
+		// and D2's sweep all key on it. A credential path written above is recorded once, by the file
+		// it resolves to after any cd, as in "cd ~ && echo k > .env".
+		for _, u := range classify.CredentialPaths(cmd) {
+			op := "read"
+			if u.Write {
+				if written[u.Path] {
+					continue
+				}
+				op = "write"
+			}
+			t.Paths = append(t.Paths, event.PathRef{PathDigest: c.ext.Digest(u.Path), Zone: st.zone(u.Path), Op: op})
+		}
+		t.Paths = append(t.Paths, writes...)
 		c.applyScripts(st, p, t, cmd)
 	}
 

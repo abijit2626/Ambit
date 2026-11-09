@@ -521,8 +521,11 @@ team executes a runbook against a sample alert.
     as through `Read` or `Write`. Any other file a redirect or `tee` writes is a write of it,
     resolved against the home and working directories and any `cd` before it in the command, so
     `echo … >> ~/.bashrc` is a write outside the working directory (bit C, and the gate's
-    write-outside row). Other files a command reads or writes, as `cp a ~/.bashrc` does, are not
-    recorded.
+    write-outside row). A `cd` in a subshell, a pipeline or the background moves nothing after
+    it; the commands in `$(…)`, backticks and `<(…)` are read for writes, inside double quotes
+    too; and the command is read as both bash and PowerShell quote it, so a quote one escapes and
+    the other does not hides no write. Other files a command reads or writes, as `cp a ~/.bashrc`
+    does, are not recorded.
 
   It does not read a script the session did not write, code that reaches the network through an
   API it does not list, a command built at run time, or a runner outside its table. Those are

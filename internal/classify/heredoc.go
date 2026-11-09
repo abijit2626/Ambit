@@ -257,7 +257,7 @@ func readers(outer string, docs []heredoc) {
 func writtenFile(tool string, args []string) string {
 	for i, a := range args {
 		a = stripQuotes(a)
-		if op, rest, ok := redirectWord(a); ok && op == '>' {
+		if op, rest, ok := redirect(a, 0); ok && op == '>' {
 			if rest != "" {
 				return rest
 			}
