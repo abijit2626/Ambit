@@ -2,6 +2,7 @@ package m0report
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,5 +62,25 @@ func TestTopOtherIsBounded(t *testing.T) {
 	c.finish()
 	if len(c.TopOther) != topOther {
 		t.Errorf("%d names, want %d", len(c.TopOther), topOther)
+	}
+}
+
+// A spool with no commands gives an empty count, not null, to a reader of the JSON report.
+func TestNoCommandsIsAnEmptyCount(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "trajectory.jsonl")
+	line := `{"ts":"2026-11-01T10:00:00Z","source":"hook","kind":"tool_pre","session":{"session_id":"s1"},"tool":{"name":"Read"}}`
+	if err := os.WriteFile(p, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Build([]string{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(r.Commands)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"by_class":{}`) {
+		t.Errorf("commands = %s, want an empty by_class", b)
 	}
 }

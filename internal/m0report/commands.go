@@ -46,6 +46,9 @@ func (c *Commands) add(class, argv0 string) {
 }
 
 func (c *Commands) finish() {
+	if c.ByClass == nil {
+		c.ByClass = map[string]int{} // "by_class": {} for a spool with no commands, not null
+	}
 	for name, n := range c.other {
 		c.TopOther = append(c.TopOther, NameCount{name, n})
 	}
